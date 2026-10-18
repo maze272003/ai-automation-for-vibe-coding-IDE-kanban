@@ -8,7 +8,8 @@ import { backupFileName, pruneBackups } from './backup.ts';
 import * as schema from './schema.ts';
 
 export type AikSchema = typeof schema;
-export type AikDb = BetterSQLite3Database<AikSchema>;
+/** The plan's contract: a better-sqlite3 Drizzle database that exposes `$client` (used by the health route). */
+export type AikDb = BetterSQLite3Database<AikSchema> & { $client: Database.Database };
 export type AikTx = Parameters<Parameters<AikDb['transaction']>[0]>[0];
 /** Accepts either the database or a transaction (both extend the base class). */
 export type AikDbOrTx = BaseSQLiteDatabase<'sync', Database.RunResult, AikSchema>;
