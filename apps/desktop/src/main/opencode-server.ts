@@ -62,7 +62,7 @@ export function personalOpencodeExe(): PersonalExe | null {
 }
 
 interface Server {
-  proc: ChildProcess;
+  proc: ChildProcess | null;
   url: string;
   auth: string;
   directory: string;
@@ -97,8 +97,51 @@ function configContent(): Record<string, unknown> {
   return config;
 }
 
+function createApiClient(url: string, auth: string, directory: string) {
+  return async (method: string, p: string, body?: unknown) => {
+    const res = await fetch(new URL(p, url), {
+      method,
+      headers: { authorization: auth, 'content-type': 'application/json', 'x-opencode-directory': directory },
+      body: body === undefined ? undefined : JSON.stringify(body),
+      signal: AbortSignal.timeout(60_000),
+    });
+    const text = await res.text();
+    let json: unknown;
+    try {
+      json = JSON.parse(text);
+    } catch {
+      json = text;
+    }
+    return { status: res.status, body: json };
+  };
+}
+
 async function startServer(dataDir: string): Promise<Server | null> {
   const mode = readAppSettings(dataDir).opencodeMode;
+
+  if (mode === 'personal') {
+    // 1. If the user's OpenCode background service is already running (e.g. from their terminal CLI),
+    // connect to it directly so the desktop app and terminal share the exact same sessions & state.
+    const stateDir = process.env.XDG_STATE_HOME || path.join(process.env.USERPROFILE ?? '', '.local', 'state');
+    const svcFile = path.join(stateDir, 'opencode', 'service.json');
+    if (fs.existsSync(svcFile)) {
+      try {
+        const svc = JSON.parse(fs.readFileSync(svcFile, 'utf8')) as { url?: string; password?: string };
+        if (svc.url && svc.password) {
+          const auth = `Basic ${Buffer.from(`opencode:${svc.password}`).toString('base64')}`;
+          const directory = process.cwd();
+          const api = createApiClient(svc.url, auth, directory);
+          const ping = await api('GET', '/api/session/active').catch(() => null);
+          if (ping?.status === 200) {
+            return { proc: null, url: svc.url, auth, directory, api };
+          }
+        }
+      } catch {
+        // service.json unreadable or server unreachable; fall through to spawning
+      }
+    }
+  }
+
   let exe: string | null = null;
   let viaCmd = false;
   if (mode === 'personal') {
@@ -122,15 +165,15 @@ async function startServer(dataDir: string): Promise<Server | null> {
     GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'credential.helper', GIT_CONFIG_VALUE_0: '', GIT_TERMINAL_PROMPT: '0',
   };
   let env: NodeJS.ProcessEnv;
+  let directory = oc('workspace');
   if (mode === 'personal') {
-    // Personal mode (user-directed spec §18.2 deviation): the user's own CLI, config, login and
-    // providers are visible. Only the session DB is redirected so the app never pollutes the
-    // user's CLI session history.
+    // Personal mode: user's personal CLI, config, login, providers and session database are shared
+    // so the desktop app and the terminal CLI stay completely in sync.
     env = {
       ...process.env,
       ...common,
-      OPENCODE_DB: path.join(oc('db'), 'opencode.db'),
     };
+    directory = process.cwd();
   } else {
     // Managed mode: full isolation — redirected HOME/XDG roots, integrations disabled (SPK-1 patterns).
     const home = oc('home');
@@ -168,23 +211,7 @@ async function startServer(dataDir: string): Promise<Server | null> {
   });
   const url = (JSON.parse(first) as { url: string }).url;
   const auth = `Basic ${Buffer.from(`opencode:${password}`).toString('base64')}`;
-  const directory = oc('workspace');
-  const api = async (method: string, p: string, body?: unknown) => {
-    const res = await fetch(new URL(p, url), {
-      method,
-      headers: { authorization: auth, 'content-type': 'application/json', 'x-opencode-directory': directory },
-      body: body === undefined ? undefined : JSON.stringify(body),
-      signal: AbortSignal.timeout(60_000),
-    });
-    const text = await res.text();
-    let json: unknown;
-    try {
-      json = JSON.parse(text);
-    } catch {
-      json = text;
-    }
-    return { status: res.status, body: json };
-  };
+  const api = createApiClient(url, auth, directory);
   for (let i = 0; i < 150; i++) {
     const r = await api('GET', '/api/session/active').catch(() => ({ status: 0, body: null }));
     if (r.status === 200) break;
@@ -194,7 +221,7 @@ async function startServer(dataDir: string): Promise<Server | null> {
 }
 
 function getServer(dataDir: string): Promise<Server | null> {
-  if (server && server.proc.exitCode === null) return Promise.resolve(server);
+  if (server && (server.proc === null || server.proc.exitCode === null)) return Promise.resolve(server);
   starting ??= startServer(dataDir)
     .then((s) => {
       server = s;
@@ -208,11 +235,13 @@ function getServer(dataDir: string): Promise<Server | null> {
 
 export function stopOpencodeServer(): void {
   if (server) {
-    const proc = server.proc;
-    proc.stdin?.end(); // verified clean shutdown path on 2.0.32; older personal builds may assert/hang…
-    setTimeout(() => {
-      if (proc.exitCode === null) proc.kill(); // …so always keep a hard-kill backstop
-    }, 2_000).unref();
+    if (server.proc) {
+      const proc = server.proc;
+      proc.stdin?.end(); // verified clean shutdown path on 2.0.32; older personal builds may assert/hang…
+      setTimeout(() => {
+        if (proc.exitCode === null) proc.kill(); // …so always keep a hard-kill backstop
+      }, 2_000).unref();
+    }
     server = null;
   }
 }
@@ -240,7 +269,13 @@ export async function listOpencodeModels(dataDir: string): Promise<OpencodeModel
       });
     }
     if (models.length === 0) return { ok: false, error: 'The OpenCode server reported no models' };
-    models.sort((a, b) => a.providerID.localeCompare(b.providerID) || a.id.localeCompare(b.id));
+    models.sort((a, b) => {
+      // Prioritize configured / custom providers before the built-in free gateway models
+      const aIsGateway = a.providerID === 'opencode';
+      const bIsGateway = b.providerID === 'opencode';
+      if (aIsGateway !== bIsGateway) return aIsGateway ? 1 : -1;
+      return a.providerID.localeCompare(b.providerID) || a.id.localeCompare(b.id);
+    });
     return { ok: true, models };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : String(e) };

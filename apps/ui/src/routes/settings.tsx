@@ -38,7 +38,10 @@ function ModelPicker({ status }: { status: OpencodeStatus | null }) {
     if (result.ok) {
       setModels(result.models);
       setSelected((current) => {
-        if (current) return current;
+        const exists = current ? result.models.find((m) => `${m.providerID}/${m.id}` === current) : null;
+        if (exists && (exists.providerID !== 'opencode' || !result.models.some((m) => m.providerID !== 'opencode'))) {
+          return current;
+        }
         const first = result.models[0];
         if (!first) return current;
         localStorage.setItem(MODEL_STORAGE_KEY, JSON.stringify({ providerID: first.providerID, id: first.id }));
@@ -69,6 +72,8 @@ function ModelPicker({ status }: { status: OpencodeStatus | null }) {
     setMode(saved.opencodeMode);
     setSignedIn(null);
     setModels(null);
+    setSelected('');
+    localStorage.removeItem(MODEL_STORAGE_KEY);
     await refresh();
     void window.api.opencodeSignedIn().then(setSignedIn, () => setSignedIn(null));
     setModeBusy(false);
@@ -123,14 +128,13 @@ function ModelPicker({ status }: { status: OpencodeStatus | null }) {
             onChange={() => void switchMode('personal')}
             disabled={modeBusy}
           />
-          <span>Use my personal OpenCode CLI (your login, providers and config; separate session history)</span>
+          <span>Use my personal OpenCode CLI (synced with your terminal CLI, login, providers and sessions)</span>
         </label>
         {modeBusy && <p className="text-zinc-600 dark:text-zinc-400">Switching…</p>}
       </div>
       {mode === 'personal' && (
         <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
-          Personal mode uses the <code>opencode</code> on your PATH. Your skills and project instructions become visible
-          to prompts — that is what sharing your setup means.
+          Personal mode uses the <code>opencode</code> on your system, syncing sessions, providers, and models with your terminal CLI.
         </p>
       )}
       <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">Free gateway models need a free OpenCode account, signed in once.</p>
