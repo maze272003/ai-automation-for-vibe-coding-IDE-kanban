@@ -7,6 +7,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import type {
+  AppSettings,
   OpencodeChatResult,
   OpencodeLoginStartResult,
   OpencodeLoginWaitResult,
@@ -14,6 +15,36 @@ import type {
   OpencodeModelsResult,
 } from '@aik/contracts';
 import { opencodeExePath } from './opencode.ts';
+
+// ---- app settings (tiny JSON in the data dir; no secrets) ----
+
+const DEFAULT_SETTINGS: AppSettings = { opencodeMode: 'managed' };
+
+export function readAppSettings(dataDir: string): AppSettings {
+  try {
+    const raw = JSON.parse(fs.readFileSync(path.join(dataDir, 'settings.json'), 'utf8')) as Partial<AppSettings>;
+    return { opencodeMode: raw.opencodeMode === 'personal' ? 'personal' : 'managed' };
+  } catch {
+    return DEFAULT_SETTINGS;
+  }
+}
+
+export function writeAppSettings(dataDir: string, settings: AppSettings): AppSettings {
+  const next: AppSettings = { opencodeMode: settings.opencodeMode === 'personal' ? 'personal' : 'managed' };
+  fs.mkdirSync(dataDir, { recursive: true });
+  fs.writeFileSync(path.join(dataDir, 'settings.json'), JSON.stringify(next, null, 2));
+  return next;
+}
+
+/** Resolves the user's personal CLI from PATH (personal mode only; null when not installed). */
+export function personalOpencodeExe(): string | null {
+  try {
+    const hit = (execFileSync('where.exe', ['opencode'], { encoding: 'utf8' }).split(/\r?\n/)[0] ?? '').trim();
+    return hit && fs.existsSync(hit) ? hit : null;
+  } catch {
+    return null;
+  }
+}
 
 interface Server {
   proc: ChildProcess;
@@ -52,27 +83,50 @@ function configContent(): Record<string, unknown> {
 }
 
 async function startServer(dataDir: string): Promise<Server | null> {
-  const exe = process.env.AIK_OPENCODE_EXE ? path.resolve(process.env.AIK_OPENCODE_EXE) : opencodeExePath(dataDir);
-  if (!fs.existsSync(exe)) return null;
+  const mode = readAppSettings(dataDir).opencodeMode;
+  const exe =
+    mode === 'personal'
+      ? personalOpencodeExe()
+      : process.env.AIK_OPENCODE_EXE
+        ? path.resolve(process.env.AIK_OPENCODE_EXE)
+        : opencodeExePath(dataDir);
+  if (!exe) return null;
 
   const root = path.join(dataDir, 'opencode');
   const oc = (d: string) => path.join(root, d);
   for (const d of ['data', 'config', 'state', 'cache', 'db', 'tmp', 'home', 'workspace']) fs.mkdirSync(oc(d), { recursive: true });
-  const home = oc('home');
   const password = crypto.randomBytes(32).toString('base64url');
-  const env: NodeJS.ProcessEnv = {
-    ...process.env,
-    TEMP: oc('tmp'), TMP: oc('tmp'),
-    USERPROFILE: home, HOME: home, APPDATA: path.join(home, 'AppData', 'Roaming'), LOCALAPPDATA: path.join(home, 'AppData', 'Local'),
-    XDG_DATA_HOME: oc('data'), XDG_CONFIG_HOME: oc('config'), XDG_STATE_HOME: oc('state'), XDG_CACHE_HOME: oc('cache'),
-    OPENCODE_DB: path.join(oc('db'), 'opencode.db'),
-    OPENCODE_CONFIG_DIR: oc('config'),
-    OPENCODE_CONFIG_CONTENT: JSON.stringify(configContent()),
-    OPENCODE_DISABLE_PROJECT_CONFIG: '1', OPENCODE_DISABLE_CLAUDE_CODE: '1', OPENCODE_DISABLE_FILEWATCHER: '1',
-    OPENCODE_GIT_BASH_PATH: gitBashPath(),
+  // Common: per-start password and a neutralized git credential helper (no prompts, no helper access).
+  const common: NodeJS.ProcessEnv = {
     OPENCODE_PASSWORD: password,
     GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'credential.helper', GIT_CONFIG_VALUE_0: '', GIT_TERMINAL_PROMPT: '0',
   };
+  let env: NodeJS.ProcessEnv;
+  if (mode === 'personal') {
+    // Personal mode (user-directed spec §18.2 deviation): the user's own CLI, config, login and
+    // providers are visible. Only the session DB is redirected so the app never pollutes the
+    // user's CLI session history.
+    env = {
+      ...process.env,
+      ...common,
+      OPENCODE_DB: path.join(oc('db'), 'opencode.db'),
+    };
+  } else {
+    // Managed mode: full isolation — redirected HOME/XDG roots, integrations disabled (SPK-1 patterns).
+    const home = oc('home');
+    env = {
+      ...process.env,
+      ...common,
+      TEMP: oc('tmp'), TMP: oc('tmp'),
+      USERPROFILE: home, HOME: home, APPDATA: path.join(home, 'AppData', 'Roaming'), LOCALAPPDATA: path.join(home, 'AppData', 'Local'),
+      XDG_DATA_HOME: oc('data'), XDG_CONFIG_HOME: oc('config'), XDG_STATE_HOME: oc('state'), XDG_CACHE_HOME: oc('cache'),
+      OPENCODE_DB: path.join(oc('db'), 'opencode.db'),
+      OPENCODE_CONFIG_DIR: oc('config'),
+      OPENCODE_CONFIG_CONTENT: JSON.stringify(configContent()),
+      OPENCODE_DISABLE_PROJECT_CONFIG: '1', OPENCODE_DISABLE_CLAUDE_CODE: '1', OPENCODE_DISABLE_FILEWATCHER: '1',
+      OPENCODE_GIT_BASH_PATH: gitBashPath(),
+    };
+  }
   const proc = spawn(exe, ['serve', '--stdio', '--port', '0', '--print-logs'], { env, stdio: ['pipe', 'pipe', 'pipe'] });
   proc.stderr?.on('data', () => undefined); // keep the pipe drained; logs stay out of the app log
   const first = await new Promise<string>((resolve, reject) => {
@@ -81,7 +135,14 @@ async function startServer(dataDir: string): Promise<Server | null> {
       clearTimeout(timer);
       resolve(chunk.toString().split(/\r?\n/)[0] ?? '');
     });
-    proc.once('exit', () => reject(new Error('OpenCode server exited before becoming ready')));
+    proc.once('error', (e) => {
+      clearTimeout(timer);
+      reject(e instanceof Error ? e : new Error(String(e)));
+    });
+    proc.once('exit', () => {
+      clearTimeout(timer);
+      reject(new Error('OpenCode server exited before becoming ready'));
+    });
   });
   const url = (JSON.parse(first) as { url: string }).url;
   const auth = `Basic ${Buffer.from(`opencode:${password}`).toString('base64')}`;
@@ -112,11 +173,14 @@ async function startServer(dataDir: string): Promise<Server | null> {
 
 function getServer(dataDir: string): Promise<Server | null> {
   if (server && server.proc.exitCode === null) return Promise.resolve(server);
-  starting ??= startServer(dataDir).then((s) => {
-    server = s;
-    starting = null;
-    return s;
-  });
+  starting ??= startServer(dataDir)
+    .then((s) => {
+      server = s;
+      return s;
+    })
+    .finally(() => {
+      starting = null;
+    });
   return starting;
 }
 

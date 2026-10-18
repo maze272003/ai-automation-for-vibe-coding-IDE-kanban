@@ -4,7 +4,8 @@ import { BrowserWindow, dialog, ipcMain, shell, type IpcMainInvokeEvent } from '
 import path from 'node:path';
 import { z } from 'zod';
 import { installOpencode, opencodeStatus } from './opencode.ts';
-import { listOpencodeModels, opencodeChat, opencodeLoginStart, opencodeLoginWait, opencodeSignedIn } from './opencode-server.ts';
+import { listOpencodeModels, opencodeChat, opencodeLoginStart, opencodeLoginWait, opencodeSignedIn, readAppSettings, writeAppSettings } from './opencode-server.ts';
+import { stopOpencodeServer } from './opencode-server.ts';
 import type { DesktopPaths } from './paths.ts';
 import type { OrchestratorSupervisor } from './supervisor.ts';
 
@@ -113,6 +114,18 @@ export function registerBridge(deps: BridgeDeps): void {
   ipcMain.handle('aik:opencode-login-wait', async (event) => {
     assertTrusted(event, deps);
     return opencodeLoginWait(deps.paths.dataDir);
+  });
+
+  ipcMain.handle('aik:app-settings', (event) => {
+    assertTrusted(event, deps);
+    return readAppSettings(deps.paths.dataDir);
+  });
+
+  ipcMain.handle('aik:app-settings-set', (event, raw: unknown) => {
+    assertTrusted(event, deps);
+    const parsed = z.object({ opencodeMode: z.enum(['managed', 'personal']) }).parse(raw);
+    stopOpencodeServer(); // the next call starts a server in the new mode
+    return writeAppSettings(deps.paths.dataDir, parsed);
   });
 
   ipcMain.handle('aik:opencode-chat', async (event, raw: unknown) => {

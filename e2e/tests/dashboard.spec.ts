@@ -56,6 +56,17 @@ test('shows the underlying error when the model call fails', async () => {
   }
 });
 
+test('toggles between managed and personal OpenCode mode', async () => {
+  const { app, page } = await launchApp(makeTempDir());
+  await waitReady(page);
+  await page.getByRole('link', { name: 'Settings' }).click();
+  await page.getByLabel(/Use my personal OpenCode CLI/).check();
+  await expect(page.getByText(/Personal mode uses the/)).toBeVisible();
+  await page.getByLabel(/App-managed OpenCode/).check();
+  await expect(page.getByText(/Personal mode uses the/)).toHaveCount(0);
+  await app.close();
+});
+
 test('explains why a folder cannot be registered', async () => {
   const { app, page } = await launchApp(makeTempDir());
   await waitReady(page);

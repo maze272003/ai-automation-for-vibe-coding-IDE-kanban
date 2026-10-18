@@ -22,6 +22,8 @@ function ModelPicker({ status }: { status: OpencodeStatus | null }) {
   const [signedIn, setSignedIn] = useState<boolean | null>(null);
   const [login, setLogin] = useState<{ code: string } | null>(null);
   const [loginError, setLoginError] = useState<string | null>(null);
+  const [mode, setMode] = useState<'managed' | 'personal'>('managed');
+  const [modeBusy, setModeBusy] = useState(false);
   const [selected, setSelected] = useState(() => {
     const saved = loadSavedModel();
     return saved ? `${saved.providerID}/${saved.id}` : '';
@@ -49,11 +51,28 @@ function ModelPicker({ status }: { status: OpencodeStatus | null }) {
   };
 
   useEffect(() => {
-    if (status?.installed) {
+    if (status?.installed || mode === 'personal') {
       void refresh();
       void window.api.opencodeSignedIn().then(setSignedIn, () => setSignedIn(null));
     }
-  }, [status?.installed]);
+  }, [status?.installed, mode]);
+
+  useEffect(() => {
+    void window.api.getAppSettings().then((s) => setMode(s.opencodeMode), () => undefined);
+  }, []);
+
+  const switchMode = async (next: 'managed' | 'personal') => {
+    if (next === mode || modeBusy) return;
+    setModeBusy(true);
+    setModelsError(null);
+    const saved = await window.api.setAppSettings({ opencodeMode: next });
+    setMode(saved.opencodeMode);
+    setSignedIn(null);
+    setModels(null);
+    await refresh();
+    void window.api.opencodeSignedIn().then(setSignedIn, () => setSignedIn(null));
+    setModeBusy(false);
+  };
 
   const startLogin = async () => {
     setLoginError(null);
@@ -85,8 +104,40 @@ function ModelPicker({ status }: { status: OpencodeStatus | null }) {
   return (
     <section className="mt-6">
       <h2 className="font-semibold">Default model</h2>
-      <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">Served by the app's managed OpenCode — free gateway models need a free OpenCode account, signed in once.</p>
-      {!status?.installed && <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-400">Install OpenCode above to list models.</p>}
+      <div className="mt-2 flex flex-col gap-1 text-sm">
+        <label className="flex items-center gap-2">
+          <input
+            type="radio"
+            name="opencode-mode"
+            checked={mode === 'managed'}
+            onChange={() => void switchMode('managed')}
+            disabled={modeBusy}
+          />
+          <span>App-managed OpenCode (isolated — pinned {status?.pinned ?? '…'})</span>
+        </label>
+        <label className="flex items-center gap-2">
+          <input
+            type="radio"
+            name="opencode-mode"
+            checked={mode === 'personal'}
+            onChange={() => void switchMode('personal')}
+            disabled={modeBusy}
+          />
+          <span>Use my personal OpenCode CLI (your login, providers and config; separate session history)</span>
+        </label>
+        {modeBusy && <p className="text-zinc-600 dark:text-zinc-400">Switching…</p>}
+      </div>
+      {mode === 'personal' && (
+        <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
+          Personal mode uses the <code>opencode</code> on your PATH. Your skills and project instructions become visible
+          to prompts — that is what sharing your setup means.
+        </p>
+      )}
+      <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">Free gateway models need a free OpenCode account, signed in once.</p>
+      {!status?.installed && mode === 'managed' && <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-400">Install OpenCode above to list models.</p>}
+      {mode === 'personal' && modelsError && (
+        <p role="alert" className="mt-2 text-sm text-red-600">Is `opencode` on your PATH? {modelsError}</p>
+      )}
       {status?.installed && signedIn === false && (
         <div className="mt-2 flex flex-col items-start gap-2">
           <p className="text-sm">Sign in to use the free gateway models.</p>

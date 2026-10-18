@@ -40,6 +40,12 @@ export type OpencodeChatResult = { ok: true; text: string } | { ok: false; error
 export type OpencodeLoginStartResult = { ok: true; url: string; code: string } | { ok: false; error: string };
 export type OpencodeLoginWaitResult = { ok: true } | { ok: false; error: string };
 
+/** User's choice of which OpenCode the app runs (spec §18.2 deviation, user-directed): managed install or personal CLI. */
+export type OpencodeMode = 'managed' | 'personal';
+export interface AppSettings {
+  opencodeMode: OpencodeMode;
+}
+
 /** The only API the renderer can reach (exposed by the preload as `window.api`). */
 export interface AikWindowApi {
   request(method: HttpMethod, path: string, body?: unknown, idempotencyKey?: string): Promise<BridgeResponse>;
@@ -54,6 +60,8 @@ export interface AikWindowApi {
   opencodeSignedIn(): Promise<boolean>;
   opencodeLoginStart(): Promise<OpencodeLoginStartResult>;
   opencodeLoginWait(): Promise<OpencodeLoginWaitResult>;
+  getAppSettings(): Promise<AppSettings>;
+  setAppSettings(settings: AppSettings): Promise<AppSettings>;
   events: { subscribe(listener: (event: EventEnvelope) => void): () => void };
   system: { subscribe(listener: (state: SystemState) => void): () => void };
 }

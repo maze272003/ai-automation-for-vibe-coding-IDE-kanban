@@ -15,6 +15,8 @@ const api: AikWindowApi = {
   opencodeSignedIn: () => ipcRenderer.invoke('aik:opencode-signed-in') as Promise<boolean>,
   opencodeLoginStart: () => ipcRenderer.invoke('aik:opencode-login-start'),
   opencodeLoginWait: () => ipcRenderer.invoke('aik:opencode-login-wait'),
+  getAppSettings: () => ipcRenderer.invoke('aik:app-settings'),
+  setAppSettings: (settings) => ipcRenderer.invoke('aik:app-settings-set', settings),
   events: {
     subscribe(listener) {
       const handler = (_e: IpcRendererEvent, value: EventEnvelope) => listener(value);
