@@ -1,0 +1,13 @@
+node_modules/
+dist/
+*.log
+coverage/
+e2e/test-results/
+e2e/playwright-report/
+apps/desktop/dist/
+apps/ui/dist/
+spikes/**/node_modules/
+spikes/**/out/
+spikes/**/runtime/
+spikes/**/*.exe
+.env*
