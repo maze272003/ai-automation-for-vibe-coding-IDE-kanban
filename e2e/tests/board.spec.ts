@@ -7,7 +7,20 @@ let dataDir: string;
 let projectId: number;
 
 async function openBoard(page: Page) {
-  await page.getByRole('link', { name: /^INV · Inventory$/ }).click();
+  const projectLink = page.getByRole('link', { name: /^INV · Inventory$/ });
+  // Under machine load the Settings → Projects re-mount clicks can be swallowed mid-transition:
+  // the click resolves and focus moves, but the router stays on Settings (seen in CI-style runs).
+  // Retry the in-app navigation instead of failing; the board assertions below are unchanged.
+  for (let attempt = 0; ; attempt++) {
+    try {
+      await projectLink.click({ timeout: 10_000 });
+      break;
+    } catch (error) {
+      if (attempt >= 2) throw error;
+      await page.getByRole('link', { name: 'Settings' }).click();
+      await page.getByRole('link', { name: 'Projects' }).click();
+    }
+  }
   await expect(page.getByTestId('board')).toBeVisible();
 }
 
