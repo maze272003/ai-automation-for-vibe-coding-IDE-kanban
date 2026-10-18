@@ -35,6 +35,27 @@ test('suggests name and key from the chosen folder', async () => {
   await app.close();
 });
 
+test('shows the underlying error when the model call fails', async () => {
+  const exe = resolveOpencodeExe();
+  test.skip(!exe, 'no OpenCode binary available (spike copy or managed install)');
+  // Mirrors the real gateway 403 FreeTierError (fails fast, no retries) that used to surface as
+  // a misleading "The model returned no text".
+  const fault = { status: 403, errorMessage: "OpenCode's free tier can only be used from within OpenCode" };
+  const mock = await startMockLlm([fault]);
+  try {
+    const { app, page } = await launchApp(makeTempDir(), { AIK_OPENCODE_EXE: exe!, AIK_OPENCODE_BASE_URL: mock.url });
+    await waitReady(page);
+    await page.getByRole('link', { name: 'Settings' }).click();
+    await expect(page.getByLabel('Default model')).toHaveValue('mock/mock-model', { timeout: 30_000 });
+    await page.getByLabel('Test prompt').fill('Say hello.');
+    await page.getByRole('button', { name: 'Send test prompt' }).click();
+    await expect(page.getByTestId('model-test-reply')).toContainText('free tier', { timeout: 60_000 });
+    await app.close();
+  } finally {
+    mock.stop();
+  }
+});
+
 test('explains why a folder cannot be registered', async () => {
   const { app, page } = await launchApp(makeTempDir());
   await waitReady(page);

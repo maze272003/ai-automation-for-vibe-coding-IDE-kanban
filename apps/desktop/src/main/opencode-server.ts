@@ -6,7 +6,13 @@ import { spawn, execFileSync, type ChildProcess } from 'node:child_process';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import type { OpencodeChatResult, OpencodeModelInfo, OpencodeModelsResult } from '@aik/contracts';
+import type {
+  OpencodeChatResult,
+  OpencodeLoginStartResult,
+  OpencodeLoginWaitResult,
+  OpencodeModelInfo,
+  OpencodeModelsResult,
+} from '@aik/contracts';
 import { opencodeExePath } from './opencode.ts';
 
 interface Server {
@@ -153,7 +159,10 @@ export async function listOpencodeModels(dataDir: string): Promise<OpencodeModel
 
 interface OpencodeMessage {
   type?: string;
+  outcome?: string;
+  finish?: string;
   content?: { type?: string; text?: string }[];
+  error?: { message?: string };
 }
 
 /** One-shot chat against the chosen model; used by Settings' model test. */
@@ -183,11 +192,69 @@ export async function opencodeChat(dataDir: string, model: { providerID: string;
     }
     const messages = await s.api('GET', `/api/session/${id}/message`);
     const data = (messages.body as { data?: OpencodeMessage[] } | null)?.data ?? [];
+    void s.api('DELETE', `/api/session/${id}`);
+    // Surface provider/auth failures instead of a misleading "no text" (observed with the
+    // gateway's FreeTierError when the user has not signed in yet).
+    const failure = data.find((m) => m.type === 'idle' && m.outcome === 'failed') ?? data.find((m) => m.finish === 'error');
+    if (failure?.error?.message) return { ok: false, error: failure.error.message };
     const assistant = [...data].reverse().find((m) => m.type === 'assistant');
     const text = (assistant?.content ?? []).filter((p) => p.type === 'text').map((p) => p.text ?? '').join('\n').trim();
-    void s.api('DELETE', `/api/session/${id}`);
     if (!text) return { ok: false, error: 'The model returned no text' };
     return { ok: true, text };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+/** True once an OpenCode Console account is connected (credentials live in the isolated data dir). */
+export async function opencodeSignedIn(dataDir: string): Promise<boolean> {
+  try {
+    const s = await getServer(dataDir);
+    if (!s) return false;
+    const r = await s.api('GET', '/api/integration/opencode');
+    const connections = (r.body as { data?: { connections?: unknown[] } } | null)?.data?.connections ?? [];
+    return connections.length > 0;
+  } catch {
+    return false;
+  }
+}
+
+let loginAttempt: { attemptID: string; expires: number } | null = null;
+
+/** Starts the device-style sign-in (opens the browser) and returns the URL plus the code to enter. */
+export async function opencodeLoginStart(dataDir: string): Promise<OpencodeLoginStartResult> {
+  try {
+    const s = await getServer(dataDir);
+    if (!s) return { ok: false, error: 'OpenCode is not installed (see Settings)' };
+    const r = await s.api('POST', '/api/integration/opencode/connect/oauth', { methodID: 'device' });
+    const attempt = (r.body as { data?: { attemptID?: string; url?: string; instructions?: string; time?: { expires?: number } } } | null)?.data;
+    if (r.status !== 200 || !attempt?.attemptID || !attempt.url) {
+      return { ok: false, error: `Sign-in could not be started (${r.status})` };
+    }
+    loginAttempt = { attemptID: attempt.attemptID, expires: attempt.time?.expires ?? Date.now() + 600_000 };
+    return { ok: true, url: attempt.url, code: attempt.instructions ?? attempt.url };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+/** Waits (up to 9 minutes) for the sign-in started by opencodeLoginStart to complete in the browser. */
+export async function opencodeLoginWait(dataDir: string): Promise<OpencodeLoginWaitResult> {
+  try {
+    const s = await getServer(dataDir);
+    if (!s || !loginAttempt) return { ok: false, error: 'No sign-in was started' };
+    const { attemptID } = loginAttempt;
+    while (Date.now() < loginAttempt.expires - 30_000) {
+      const r = await s.api('GET', `/api/integration/opencode/connect/oauth/${attemptID}`).catch(() => ({ status: 0, body: null }));
+      const status = (r.body as { data?: { status?: string } } | null)?.data?.status;
+      if (status === 'complete') {
+        loginAttempt = null;
+        return { ok: true };
+      }
+      await new Promise((r2) => setTimeout(r2, 1500));
+    }
+    loginAttempt = null;
+    return { ok: false, error: 'Sign-in timed out — try again' };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : String(e) };
   }

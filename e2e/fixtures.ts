@@ -28,7 +28,7 @@ export async function waitReady(page: Page): Promise<void> {
 }
 
 /** Starts the scripted mock LLM (a spike tool, spawned — never imported) and returns its /v1 base URL. */
-export async function startMockLlm(turns: { content?: string }[]): Promise<{ url: string; stop: () => void }> {
+export async function startMockLlm(turns: { content?: string; status?: number; errorMessage?: string; delayMs?: number }[]): Promise<{ url: string; stop: () => void }> {
   const scenario = path.join(makeTempDir(), 'scenario.json');
   fs.writeFileSync(scenario, JSON.stringify({ turns }));
   const proc = spawn(process.execPath, [path.join(repoRoot, 'spikes', 'shared', 'mock-llm.mjs'), `--scenario=${scenario}`], {

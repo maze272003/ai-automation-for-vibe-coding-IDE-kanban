@@ -12,6 +12,9 @@ const api: AikWindowApi = {
   installOpencode: () => ipcRenderer.invoke('aik:opencode-install'),
   opencodeModels: () => ipcRenderer.invoke('aik:opencode-models'),
   opencodeChat: (model, prompt) => ipcRenderer.invoke('aik:opencode-chat', { ...model, prompt }),
+  opencodeSignedIn: () => ipcRenderer.invoke('aik:opencode-signed-in') as Promise<boolean>,
+  opencodeLoginStart: () => ipcRenderer.invoke('aik:opencode-login-start'),
+  opencodeLoginWait: () => ipcRenderer.invoke('aik:opencode-login-wait'),
   events: {
     subscribe(listener) {
       const handler = (_e: IpcRendererEvent, value: EventEnvelope) => listener(value);

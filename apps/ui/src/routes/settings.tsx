@@ -19,6 +19,9 @@ function loadSavedModel(): { providerID: string; id: string } | null {
 function ModelPicker({ status }: { status: OpencodeStatus | null }) {
   const [models, setModels] = useState<OpencodeModelInfo[] | null>(null);
   const [modelsError, setModelsError] = useState<string | null>(null);
+  const [signedIn, setSignedIn] = useState<boolean | null>(null);
+  const [login, setLogin] = useState<{ code: string } | null>(null);
+  const [loginError, setLoginError] = useState<string | null>(null);
   const [selected, setSelected] = useState(() => {
     const saved = loadSavedModel();
     return saved ? `${saved.providerID}/${saved.id}` : '';
@@ -46,8 +49,28 @@ function ModelPicker({ status }: { status: OpencodeStatus | null }) {
   };
 
   useEffect(() => {
-    if (status?.installed) void refresh();
+    if (status?.installed) {
+      void refresh();
+      void window.api.opencodeSignedIn().then(setSignedIn, () => setSignedIn(null));
+    }
   }, [status?.installed]);
+
+  const startLogin = async () => {
+    setLoginError(null);
+    const start = await window.api.opencodeLoginStart();
+    if (!start.ok) {
+      setLoginError(start.error);
+      return;
+    }
+    setLogin({ code: start.code });
+    const done = await window.api.opencodeLoginWait();
+    setLogin(null);
+    if (!done.ok) {
+      setLoginError(done.error);
+      return;
+    }
+    setSignedIn(true);
+  };
 
   const send = async () => {
     const [providerID = '', id = ''] = selected.split('/');
@@ -62,8 +85,18 @@ function ModelPicker({ status }: { status: OpencodeStatus | null }) {
   return (
     <section className="mt-6">
       <h2 className="font-semibold">Default model</h2>
-      <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">Served by the app's managed OpenCode — free gateway models need no API key.</p>
+      <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">Served by the app's managed OpenCode — free gateway models need a free OpenCode account, signed in once.</p>
       {!status?.installed && <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-400">Install OpenCode above to list models.</p>}
+      {status?.installed && signedIn === false && (
+        <div className="mt-2 flex flex-col items-start gap-2">
+          <p className="text-sm">Sign in to use the free gateway models.</p>
+          <Button variant="primary" disabled={login !== null} onClick={() => void startLogin()}>
+            {login ? 'Waiting for sign-in…' : 'Sign in to OpenCode (free)'}
+          </Button>
+          {login && <p className="text-sm" data-testid="opencode-login-code">{login.code} — complete it in the browser that just opened.</p>}
+          {loginError && <p role="alert" className="text-sm text-red-600">{loginError}</p>}
+        </div>
+      )}
       {status?.installed && modelsError && (
         <p role="alert" className="mt-2 text-sm text-red-600">{modelsError}</p>
       )}

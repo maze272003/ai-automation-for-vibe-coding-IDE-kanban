@@ -37,6 +37,8 @@ export interface OpencodeModelInfo {
 
 export type OpencodeModelsResult = { ok: true; models: OpencodeModelInfo[] } | { ok: false; error: string };
 export type OpencodeChatResult = { ok: true; text: string } | { ok: false; error: string };
+export type OpencodeLoginStartResult = { ok: true; url: string; code: string } | { ok: false; error: string };
+export type OpencodeLoginWaitResult = { ok: true } | { ok: false; error: string };
 
 /** The only API the renderer can reach (exposed by the preload as `window.api`). */
 export interface AikWindowApi {
@@ -49,6 +51,9 @@ export interface AikWindowApi {
   installOpencode(): Promise<OpencodeInstallResult>;
   opencodeModels(): Promise<OpencodeModelsResult>;
   opencodeChat(model: { providerID: string; id: string }, prompt: string): Promise<OpencodeChatResult>;
+  opencodeSignedIn(): Promise<boolean>;
+  opencodeLoginStart(): Promise<OpencodeLoginStartResult>;
+  opencodeLoginWait(): Promise<OpencodeLoginWaitResult>;
   events: { subscribe(listener: (event: EventEnvelope) => void): () => void };
   system: { subscribe(listener: (state: SystemState) => void): () => void };
 }

@@ -1,10 +1,10 @@
 import type { BridgeResponse, SystemState } from '@aik/contracts';
 import { listBackups, restoreBackup } from '@aik/db/backup';
-import { BrowserWindow, dialog, ipcMain, type IpcMainInvokeEvent } from 'electron';
+import { BrowserWindow, dialog, ipcMain, shell, type IpcMainInvokeEvent } from 'electron';
 import path from 'node:path';
 import { z } from 'zod';
 import { installOpencode, opencodeStatus } from './opencode.ts';
-import { listOpencodeModels, opencodeChat } from './opencode-server.ts';
+import { listOpencodeModels, opencodeChat, opencodeLoginStart, opencodeLoginWait, opencodeSignedIn } from './opencode-server.ts';
 import type { DesktopPaths } from './paths.ts';
 import type { OrchestratorSupervisor } from './supervisor.ts';
 
@@ -96,6 +96,23 @@ export function registerBridge(deps: BridgeDeps): void {
   ipcMain.handle('aik:opencode-models', async (event) => {
     assertTrusted(event, deps);
     return listOpencodeModels(deps.paths.dataDir);
+  });
+
+  ipcMain.handle('aik:opencode-signed-in', async (event) => {
+    assertTrusted(event, deps);
+    return opencodeSignedIn(deps.paths.dataDir);
+  });
+
+  ipcMain.handle('aik:opencode-login-start', async (event) => {
+    assertTrusted(event, deps);
+    const result = await opencodeLoginStart(deps.paths.dataDir);
+    if (result.ok) await shell.openExternal(result.url); // the only sanctioned external navigation
+    return result;
+  });
+
+  ipcMain.handle('aik:opencode-login-wait', async (event) => {
+    assertTrusted(event, deps);
+    return opencodeLoginWait(deps.paths.dataDir);
   });
 
   ipcMain.handle('aik:opencode-chat', async (event, raw: unknown) => {
