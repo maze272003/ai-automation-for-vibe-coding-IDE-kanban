@@ -1,4 +1,5 @@
 import type { ProjectDTO } from '@aik/contracts';
+import { Link } from '@tanstack/react-router';
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { Badge } from '../components/ui/badge.tsx';
 import { Button } from '../components/ui/button.tsx';
@@ -72,7 +73,9 @@ export function DashboardPage() {
       <ul data-testid="project-list" className="mt-4 divide-y divide-zinc-200 dark:divide-zinc-800">
         {projects.map((p) => (
           <li key={p.id} className="flex items-center gap-3 py-2">
-            <span className="font-medium">{`${p.key} · ${p.name}`}</span>
+            <Link to="/projects/$projectId" params={{ projectId: String(p.id) }} className="font-medium hover:underline">
+              {`${p.key} · ${p.name}`}
+            </Link>
             <span className="text-sm text-zinc-500">{p.baseBranch}</span>
             {p.status === 'unavailable' && <Badge tone="warn">unavailable</Badge>}
           </li>
