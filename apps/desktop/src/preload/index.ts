@@ -1,0 +1,31 @@
+import type { AikWindowApi, BridgeResponse, EventEnvelope, HttpMethod, SystemState } from '@aik/contracts';
+import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron';
+
+const api: AikWindowApi = {
+  request: (method: HttpMethod, path: string, body?: unknown, idempotencyKey?: string) =>
+    ipcRenderer.invoke('aik:request', { method, path, body, idempotencyKey }) as Promise<BridgeResponse>,
+  pickDirectory: () => ipcRenderer.invoke('aik:pick-directory') as Promise<string | null>,
+  systemState: () => ipcRenderer.invoke('aik:system-state') as Promise<SystemState>,
+  restoreLatestBackup: () => ipcRenderer.invoke('aik:restore-latest-backup'),
+  restartOrchestrator: () => ipcRenderer.invoke('aik:restart-orchestrator') as Promise<void>,
+  events: {
+    subscribe(listener) {
+      const handler = (_e: IpcRendererEvent, value: EventEnvelope) => listener(value);
+      ipcRenderer.on('aik:event', handler);
+      return () => {
+        ipcRenderer.removeListener('aik:event', handler);
+      };
+    },
+  },
+  system: {
+    subscribe(listener) {
+      const handler = (_e: IpcRendererEvent, value: SystemState) => listener(value);
+      ipcRenderer.on('aik:system', handler);
+      return () => {
+        ipcRenderer.removeListener('aik:system', handler);
+      };
+    },
+  },
+};
+
+contextBridge.exposeInMainWorld('api', api);
