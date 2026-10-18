@@ -345,7 +345,12 @@ const firstLine = (stream) => new Promise((r) => readline.createInterface({ inpu
 
 function gitBashPath() {
   const gitExe = execFileSync('where.exe', ['git'], { encoding: 'utf8' }).split(/\r?\n/)[0].trim();
-  return path.join(path.dirname(path.dirname(gitExe)), 'bin', 'bash.exe');
+  const gitRoot = path.dirname(path.dirname(gitExe));
+  const candidate1 = path.join(gitRoot, 'bin', 'bash.exe');
+  if (fs.existsSync(candidate1)) return candidate1;
+  const candidate2 = path.join(gitRoot, 'usr', 'bin', 'bash.exe');
+  if (fs.existsSync(candidate2)) return candidate2;
+  return candidate1;
 }
 
 export function makeSandbox() {
@@ -720,7 +725,7 @@ After installing, open a new shell and run `go version`. Record the version in t
 
 Run:
 ```bash
-cd spikes/spk-3/helper && go mod init aiide-helper-spike && go get golang.org/x/sys/windows@latest
+go -C spikes/spk-3/helper mod init aiide-helper-spike && go -C spikes/spk-3/helper get golang.org/x/sys/windows@latest
 ```
 Expected: `go.mod` and `go.sum` exist and reference `golang.org/x/sys`.
 
@@ -851,7 +856,7 @@ func run(argv []string, memMB uint64, maxProcs uint32, parentPID uint32) int {
 
 - [ ] **Step 4: Build it**
 
-Run: `cd spikes/spk-3/helper && go build -o aiide-helper.exe .`
+Run: `go -C spikes/spk-3/helper build -o aiide-helper.exe .`
 Expected: `aiide-helper.exe` builds with **no MSVC installed**. If the build fails, the compiler errors name the missing `x/sys/windows` symbol. Record it and adapt using the same API family (for example `windows.WaitForSingleObject` in a loop), noting the change in the report.
 
 - [ ] **Step 5: Write the fixtures and experiment driver**
@@ -1004,6 +1009,10 @@ git commit -m "spike(SPK-3): Job Object helper prototype findings"
 import fs from 'node:fs';
 
 const args = Object.fromEntries(process.argv.slice(2).map((a) => { const [k, v = 'true'] = a.replace(/^--/, '').split('='); return [k, v]; }));
+if (!args['base-url'] || !args.model) {
+  console.error('Usage: node probe.mjs --base-url=<url> --model=<id> [--key-env=<ENV>] [--ctx=32000] [--out=<file>]');
+  process.exit(2);
+}
 const baseUrl = args['base-url'].replace(/\/$/, '');
 const model = args.model;
 const key = args['key-env'] ? process.env[args['key-env']] : undefined;

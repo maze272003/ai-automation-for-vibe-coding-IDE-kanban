@@ -561,7 +561,7 @@ Versions and licences were checked against registries on 2026-10-18 [V] unless m
 | **SQLite** (storage engine) | sqlite.org | Public domain [I] | Yes | No | Yes | Yes | Tiny | — | — |
 | **better-sqlite3 13** (driver) | github.com/WiseLibs/better-sqlite3 | MIT [V] | Yes | No | Yes (N-API prebuild in the package) [V] | Yes | Small | Active | `node:sqlite` (release candidate) [V] |
 | **Drizzle ORM 0.45 / drizzle-kit 0.31** | orm.drizzle.team · github.com/drizzle-team/drizzle-orm | Apache-2.0 / MIT [V] | Yes | No | Yes | Yes | — | 1.0 is in RC [V]; stay on 0.45 | Kysely, raw SQL |
-| **eventsource 5** (SSE client with headers) | github.com/EventSource/eventsource | MIT [V] | Yes | No | Yes | Yes | — | Active | Custom fetch reader |
+| **Node.js native fetch / ReadableStream** (SSE client) | nodejs.org | Built-in | Yes | No | Yes | Yes | Tiny | Built-in | Main-process EventForwarder consumes GET /events |
 | **@napi-rs/keyring 2** (Credential Manager) | github.com/Brooooooklyn/keyring-node | MIT [V] | Yes | No | Yes | Yes | — | Active; keytar is archived [V] | Rust `keyring` crate (via the helper) |
 | **pino** (structured logs; Fastify's logger) | getpino.io · github.com/pinojs/pino | MIT [I] | Yes | No | Yes | Yes | Small | Active [I] | Node `console` + custom writer |
 | **esbuild** (orchestrator bundle) | esbuild.github.io · github.com/evanw/esbuild | MIT [I] | Yes | No | Yes | Yes | — | Active | Rollup |
@@ -1578,7 +1578,8 @@ Dragging a card on the Kanban board maps to one of these events, or is rejected 
 ### 17.1 Transport and security
 
 - **Binding:** HTTP/1.1 on `127.0.0.1:<random>`; it never binds `0.0.0.0`.
-- **Handshake:** the port and a 256-bit launch token pass from the orchestrator to main over a MessagePort. The preload keeps them in its isolated world; the renderer calls `window.api.request()`.
+- **Handshake:** the port and a 256-bit launch token pass from the orchestrator to Electron main process over a MessagePort. The token is held exclusively in the main process (`OrchestratorSupervisor`) and is never exposed to renderer or preload worlds.
+- **IPC proxying:** the renderer invokes the main process via typed IPC bridge (`window.bridge.request({ method, path, body, idempotencyKey })`). The main process validates request format, injects `Authorization: Bearer <token>` and `Origin: app://ui`, executes the local HTTP call against `127.0.0.1:<port>`, and returns `{ status, body }`.
 - **Every request must have:**
   - `Authorization: Bearer <token>`;
   - `Host ∈ {127.0.0.1:<port>, localhost:<port>}`, which blocks DNS rebinding;
@@ -1602,19 +1603,20 @@ export const ApiError = z.object({ error: z.object({
 })});
 
 export const StoryDTO = z.object({
-  id: z.number(), key: z.string(), projectId: z.number(),
+  id: z.number().int(), key: z.string(), projectId: z.number().int(),
   title: z.string(), description: z.string(), priority: z.enum(['P0','P1','P2','P3']),
-  labels: z.array(z.string()), complexity: z.enum(['S','M','L','XL']).nullable(),
-  status: z.enum(STORY_STATUS), statusVersion: z.number(), planningStatus: z.enum(PLANNING_STATUS),
-  hold: z.boolean(), blocked: z.object({ reason: z.enum(BLOCKED_REASON), from: z.enum(STORY_STATUS),
+  rank: z.number().int(), labels: z.array(z.string()), complexity: z.enum(['S','M','L','XL']).nullable(),
+  revision: z.number().int(), status: z.enum(STORY_STATUS), statusVersion: z.number().int(),
+  planningStatus: z.enum(PLANNING_STATUS), activePlanVersion: z.number().int().nullable(),
+  hold: z.boolean(), blocked: z.object({ reason: z.enum(BLOCKED_REASON), from: z.enum(STORY_STATUS).nullable(),
     detail: z.string(), hint: z.string() }).nullable(),
-  attempts: z.object({ used: z.number(), max: z.number() }),
-  acceptanceCriteria: z.array(z.object({ id: z.number(), ordinal: z.number(), text: z.string() })),
+  attempts: z.object({ used: z.number().int(), max: z.number().int() }),
+  acceptanceCriteria: z.array(z.object({ id: z.number().int(), ordinal: z.number().int(), text: z.string() })),
   dependsOn: z.array(z.string()),
   branch: z.string().nullable(), candidateSha: z.string().nullable(), mergedSha: z.string().nullable(),
-  activeRun: z.object({ id: z.number(), role: z.enum(ROLE), model: z.string(), startedAt: z.number() }).nullable(),
-  pullRequest: z.object({ number: z.number(), url: z.string(), state: z.string() }).nullable(),
-  updatedAt: z.number(),
+  activeRun: z.object({ id: z.number().int(), role: z.enum(ROLE), model: z.string(), startedAt: z.number() }).nullable(),
+  pullRequest: z.object({ number: z.number().int(), url: z.string(), state: z.string() }).nullable(),
+  createdAt: z.number(), updatedAt: z.number(),
 });
 
 export const TransitionRequest = z.discriminatedUnion('event', [
@@ -1681,7 +1683,7 @@ All endpoints require the token, Host and Origin checks. "Idem." means an `Idemp
 | `GET /events` (SSE) | Header `Last-Event-ID` | `text/event-stream` of `EventEnvelope`; heartbeat comment every 15 s | `UNAUTHORIZED` | — |
 | `GET /diagnostics/export` | — | ZIP of redacted logs and DB statistics (no DB file, no secrets) | — | — |
 
-**SSE client:** the renderer uses the `eventsource` 5.x package with a custom `fetch` that goes through the preload, so it can send the Authorization header [V].
+**SSE forwarding:** the Electron main process connects to `GET /events` using the launch token and runs an `EventForwarder` that parses the SSE stream into `EventEnvelope` objects and dispatches them across BrowserWindow instances over IPC (`bridge:event`). The renderer subscribes via `window.bridge.subscribeEvents((event) => { ... })`, keeping all network tokens isolated inside the main process without requiring third-party SSE packages in the renderer.
 
 **Missed events:** on reconnect, the client sends `Last-Event-ID` and the server replays from `outbox_events`. If the requested sequence has been pruned (>7 days), the server sends a `system.resync` event and the UI refetches.
 
@@ -2599,7 +2601,7 @@ Spike DoD: a report at `docs/superpowers/spikes/<ID>.md` with evidence (commands
 - **Security:** S12.
 
 #### FND-8: SSE event stream with replay (Cx M)
-- **Description:** `GET /events` with `id = seq`, replay via `Last-Event-ID` from the outbox, heartbeat every 15 s, `system.resync` when the outbox has been pruned; renderer client using `eventsource` with a fetch through the preload.
+- **Description:** `GET /events` with `id = seq`, replay via `Last-Event-ID` from the outbox, heartbeat every 15 s, `system.resync` when the outbox has been pruned; main-process `EventForwarder` stream reader forwards envelopes over IPC to renderer subscribers.
 - **Value:** truthful live updates.
 - **AC:**
   1. Forced disconnect and reconnect deliver missed events in order, de-duplicated by `seq`.

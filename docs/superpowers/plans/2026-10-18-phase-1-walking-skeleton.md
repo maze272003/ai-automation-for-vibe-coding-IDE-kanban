@@ -2195,6 +2195,21 @@ export const workspaces = sqliteTable('workspaces', {
   check('ws_sha_ck', sql.raw(shaOk('head_sha'))),
 ]);
 
+export const providers = sqliteTable('providers', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  presetKey: text('preset_key'),
+  name: text('name').notNull(),
+  kind: text('kind', { enum: ['ollama', 'openai_compatible'] }).notNull(),
+  baseUrl: text('base_url').notNull(),
+  keyRef: text('key_ref'),
+  costClass: text('cost_class', { enum: ['local', 'free', 'free_limited', 'paid_flat', 'paid_metered'] }).notNull(),
+  dataUse: text('data_use', { enum: ['no_training', 'may_train', 'unknown'] }).notNull(),
+  termsUrl: text('terms_url'),
+  termsCheckedAt: ts('terms_checked_at'),
+  enabled: integer('enabled', { mode: 'boolean' }).notNull().default(false),
+  quotaState: text('quota_state', { mode: 'json' }).$type<QuotaState>(),
+});
+
 export const modelProfiles = sqliteTable('model_profiles', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   providerId: integer('provider_id').notNull().references((): AnySQLiteColumn => providers.id),
@@ -2364,21 +2379,7 @@ export const remoteSyncRuns = sqliteTable('remote_sync_runs', {
   endedAt: ts('ended_at'),
 }, (t) => [index('rsr_project_idx').on(t.projectId, t.startedAt)]);
 
-// ───────────── Models ─────────────
-export const providers = sqliteTable('providers', {
-  id: integer('id').primaryKey({ autoIncrement: true }),
-  presetKey: text('preset_key'),
-  name: text('name').notNull(),
-  kind: text('kind', { enum: ['ollama', 'openai_compatible'] }).notNull(),
-  baseUrl: text('base_url').notNull(),
-  keyRef: text('key_ref'),
-  costClass: text('cost_class', { enum: ['local', 'free', 'free_limited', 'paid_flat', 'paid_metered'] }).notNull(),
-  dataUse: text('data_use', { enum: ['no_training', 'may_train', 'unknown'] }).notNull(),
-  termsUrl: text('terms_url'),
-  termsCheckedAt: ts('terms_checked_at'),
-  enabled: integer('enabled', { mode: 'boolean' }).notNull().default(false),
-  quotaState: text('quota_state', { mode: 'json' }).$type<QuotaState>(),
-});
+// ───────────── Routing & Usage ─────────────
 
 export const roleRoutes = sqliteTable('role_routes', {
   id: integer('id').primaryKey({ autoIncrement: true }),
@@ -2765,6 +2766,7 @@ export function openDatabase(opts: OpenDatabaseOptions): OpenedDatabase {
   if (existed) {
     fs.mkdirSync(opts.backupsDir, { recursive: true });
     backupFile = path.join(opts.backupsDir, backupFileName(opts.now?.() ?? new Date()));
+    if (fs.existsSync(backupFile)) fs.rmSync(backupFile, { force: true });
     sqlite.exec(`VACUUM INTO '${backupFile.replaceAll("'", "''")}'`);
     pruneBackups(opts.backupsDir, opts.keepBackups ?? 5);
   }
@@ -4907,9 +4909,13 @@ export class ProjectService {
 
   patch(id: number, input: PatchProjectRequest): ProjectDTO {
     this.get(id);
+    const patchValues: Partial<typeof projects.$inferInsert> = { updatedAt: new Date(this.now()) };
+    if (input.name !== undefined) patchValues.name = input.name;
+    if (input.baseBranch !== undefined) patchValues.baseBranch = input.baseBranch;
+    if (input.settings !== undefined) patchValues.settings = input.settings;
     const row = this.db
       .update(projects)
-      .set({ name: input.name, baseBranch: input.baseBranch, settings: input.settings, updatedAt: new Date(this.now()) })
+      .set(patchValues)
       .where(eq(projects.id, id))
       .returning()
       .get();
@@ -5362,7 +5368,12 @@ export class StoryService {
         seq = r.notifySeq;
         current = r.outcome.story;
         if (input.title !== undefined || input.description !== undefined) {
-          tx.update(userStories).set({ title: input.title, description: input.description }).where(eq(userStories.id, id)).run();
+          const defUpdates: Partial<typeof userStories.$inferInsert> = {};
+          if (input.title !== undefined) defUpdates.title = input.title;
+          if (input.description !== undefined) defUpdates.description = input.description;
+          if (Object.keys(defUpdates).length > 0) {
+            tx.update(userStories).set(defUpdates).where(eq(userStories.id, id)).run();
+          }
         }
         if (input.acceptanceCriteria) {
           tx.update(acceptanceCriteria).set({ supersededAt: now }).where(and(eq(acceptanceCriteria.storyId, id), isNull(acceptanceCriteria.supersededAt))).run();
@@ -5370,8 +5381,11 @@ export class StoryService {
         }
       }
       if (input.dependsOn !== undefined) this.replaceDependencies(tx, row, input.dependsOn);
-      const simple = { priority: input.priority, labels: input.labels, rank: input.rank };
-      const simpleChange = Object.values(simple).some((v) => v !== undefined) || input.dependsOn !== undefined;
+      const simple: Partial<typeof userStories.$inferInsert> = {};
+      if (input.priority !== undefined) simple.priority = input.priority;
+      if (input.labels !== undefined) simple.labels = input.labels;
+      if (input.rank !== undefined) simple.rank = input.rank;
+      const simpleChange = Object.keys(simple).length > 0 || input.dependsOn !== undefined;
       if (simpleChange) {
         tx.update(userStories)
           .set({ ...simple, updatedAt: now, ...(defChange ? {} : { statusVersion: row.statusVersion + 1 }) })
@@ -6513,7 +6527,7 @@ import type { OrchestratorSupervisor } from './supervisor.ts';
 
 const BridgeRequest = z.object({
   method: z.enum(['GET', 'POST', 'PATCH', 'PUT', 'DELETE']),
-  path: z.string().max(2000).regex(/^\/(?!events\b)[A-Za-z0-9/_\-.~%?=&,+]*$/),
+  path: z.string().max(2000).regex(/^\/(?!events\b)[A-Za-z0-9/_\-.~%?=&,+:@()]*$/),
   body: z.unknown().optional(),
   idempotencyKey: z.uuid().optional(),
 });
@@ -8091,8 +8105,8 @@ import { api } from '../lib/api.ts';
 import { useStories, type StoryQuery } from '../lib/stories.ts';
 
 export function BoardPage() {
-  const { projectId } = useParams({ from: '/projects/$projectId' });
-  const id = Number(projectId);
+  const params = useParams({ strict: false }) as { projectId?: string };
+  const id = Number(params.projectId);
   const [project, setProject] = useState<ProjectDTO | null>(null);
   const [query, setQuery] = useState<StoryQuery>({ q: '', label: '', sort: 'rank' });
   const [creating, setCreating] = useState(false);
