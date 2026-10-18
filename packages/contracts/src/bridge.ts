@@ -24,6 +24,20 @@ export interface OpencodeStatus {
 
 export type OpencodeInstallResult = { ok: true; version: string } | { ok: false; error: string };
 
+/** One model offered by the managed OpenCode server (flattened from its model list). */
+export interface OpencodeModelInfo {
+  providerID: string;
+  id: string;
+  name: string;
+  /** Context window in tokens, when the server reports it. */
+  contextLimit: number | null;
+  /** True when the server reports zero input and output cost. */
+  free: boolean;
+}
+
+export type OpencodeModelsResult = { ok: true; models: OpencodeModelInfo[] } | { ok: false; error: string };
+export type OpencodeChatResult = { ok: true; text: string } | { ok: false; error: string };
+
 /** The only API the renderer can reach (exposed by the preload as `window.api`). */
 export interface AikWindowApi {
   request(method: HttpMethod, path: string, body?: unknown, idempotencyKey?: string): Promise<BridgeResponse>;
@@ -33,6 +47,8 @@ export interface AikWindowApi {
   restartOrchestrator(): Promise<void>;
   opencodeStatus(): Promise<OpencodeStatus>;
   installOpencode(): Promise<OpencodeInstallResult>;
+  opencodeModels(): Promise<OpencodeModelsResult>;
+  opencodeChat(model: { providerID: string; id: string }, prompt: string): Promise<OpencodeChatResult>;
   events: { subscribe(listener: (event: EventEnvelope) => void): () => void };
   system: { subscribe(listener: (state: SystemState) => void): () => void };
 }

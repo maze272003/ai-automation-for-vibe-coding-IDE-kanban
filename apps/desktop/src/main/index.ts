@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { registerBridge } from './bridge.ts';
 import { EventForwarder } from './events-forwarder.ts';
+import { stopOpencodeServer } from './opencode-server.ts';
 import { desktopPaths, resolveDataDir } from './paths.ts';
 import { APP_SCHEME, registerAppProtocol } from './protocol.ts';
 import { OrchestratorSupervisor, type ChildLike } from './supervisor.ts';
@@ -73,6 +74,7 @@ function main(): void {
     event.preventDefault();
     quitting = true;
     forwarder.stop();
+    stopOpencodeServer();
     void supervisor.stop().finally(() => app.quit());
   });
 

@@ -1,0 +1,194 @@
+// apps/desktop/src/main/opencode-server.ts — the app's own isolated OpenCode server (spec §18.3).
+// Started lazily, shared for the app's lifetime, shut down by closing stdin (verified: exit 0).
+// Isolation: XDG roots + a redirected HOME under <dataDir>\opencode, a per-start random password,
+// project/claude/filewatcher integrations disabled — the user's personal OpenCode is never used.
+import { spawn, execFileSync, type ChildProcess } from 'node:child_process';
+import crypto from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
+import type { OpencodeChatResult, OpencodeModelInfo, OpencodeModelsResult } from '@aik/contracts';
+import { opencodeExePath } from './opencode.ts';
+
+interface Server {
+  proc: ChildProcess;
+  url: string;
+  auth: string;
+  directory: string;
+  api: (method: string, p: string, body?: unknown) => Promise<{ status: number; body: unknown }>;
+}
+
+let server: Server | null = null;
+let starting: Promise<Server | null> | null = null;
+
+function gitBashPath(): string {
+  const gitExe = (execFileSync('where.exe', ['git'], { encoding: 'utf8' }).split(/\r?\n/)[0] ?? '').trim();
+  const gitRoot = path.dirname(path.dirname(gitExe));
+  for (const candidate of [path.join(gitRoot, 'bin', 'bash.exe'), path.join(gitRoot, 'usr', 'bin', 'bash.exe')]) {
+    if (fs.existsSync(candidate)) return candidate;
+  }
+  return path.join(gitRoot, 'bin', 'bash.exe');
+}
+
+/** Minimal isolated config; the E2E mock provider is injected via AIK_OPENCODE_BASE_URL. */
+function configContent(): Record<string, unknown> {
+  const config: Record<string, unknown> = { snapshots: false };
+  const mockUrl = process.env.AIK_OPENCODE_BASE_URL;
+  if (mockUrl) {
+    config.providers = {
+      mock: {
+        package: '@opencode/ai/providers/openai-compatible',
+        settings: { baseURL: mockUrl, apiKey: 'spike-not-a-secret' },
+        models: { 'mock-model': { capabilities: { tools: true }, limit: { context: 131072, output: 8192 } } },
+      },
+    };
+  }
+  return config;
+}
+
+async function startServer(dataDir: string): Promise<Server | null> {
+  const exe = process.env.AIK_OPENCODE_EXE ? path.resolve(process.env.AIK_OPENCODE_EXE) : opencodeExePath(dataDir);
+  if (!fs.existsSync(exe)) return null;
+
+  const root = path.join(dataDir, 'opencode');
+  const oc = (d: string) => path.join(root, d);
+  for (const d of ['data', 'config', 'state', 'cache', 'db', 'tmp', 'home', 'workspace']) fs.mkdirSync(oc(d), { recursive: true });
+  const home = oc('home');
+  const password = crypto.randomBytes(32).toString('base64url');
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+    TEMP: oc('tmp'), TMP: oc('tmp'),
+    USERPROFILE: home, HOME: home, APPDATA: path.join(home, 'AppData', 'Roaming'), LOCALAPPDATA: path.join(home, 'AppData', 'Local'),
+    XDG_DATA_HOME: oc('data'), XDG_CONFIG_HOME: oc('config'), XDG_STATE_HOME: oc('state'), XDG_CACHE_HOME: oc('cache'),
+    OPENCODE_DB: path.join(oc('db'), 'opencode.db'),
+    OPENCODE_CONFIG_DIR: oc('config'),
+    OPENCODE_CONFIG_CONTENT: JSON.stringify(configContent()),
+    OPENCODE_DISABLE_PROJECT_CONFIG: '1', OPENCODE_DISABLE_CLAUDE_CODE: '1', OPENCODE_DISABLE_FILEWATCHER: '1',
+    OPENCODE_GIT_BASH_PATH: gitBashPath(),
+    OPENCODE_PASSWORD: password,
+    GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'credential.helper', GIT_CONFIG_VALUE_0: '', GIT_TERMINAL_PROMPT: '0',
+  };
+  const proc = spawn(exe, ['serve', '--stdio', '--port', '0', '--print-logs'], { env, stdio: ['pipe', 'pipe', 'pipe'] });
+  proc.stderr?.on('data', () => undefined); // keep the pipe drained; logs stay out of the app log
+  const first = await new Promise<string>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('OpenCode server did not report a URL within 30 s')), 30_000);
+    proc.stdout!.once('data', (chunk: Buffer) => {
+      clearTimeout(timer);
+      resolve(chunk.toString().split(/\r?\n/)[0] ?? '');
+    });
+    proc.once('exit', () => reject(new Error('OpenCode server exited before becoming ready')));
+  });
+  const url = (JSON.parse(first) as { url: string }).url;
+  const auth = `Basic ${Buffer.from(`opencode:${password}`).toString('base64')}`;
+  const directory = oc('workspace');
+  const api = async (method: string, p: string, body?: unknown) => {
+    const res = await fetch(new URL(p, url), {
+      method,
+      headers: { authorization: auth, 'content-type': 'application/json', 'x-opencode-directory': directory },
+      body: body === undefined ? undefined : JSON.stringify(body),
+      signal: AbortSignal.timeout(60_000),
+    });
+    const text = await res.text();
+    let json: unknown;
+    try {
+      json = JSON.parse(text);
+    } catch {
+      json = text;
+    }
+    return { status: res.status, body: json };
+  };
+  for (let i = 0; i < 150; i++) {
+    const r = await api('GET', '/api/session/active').catch(() => ({ status: 0, body: null }));
+    if (r.status === 200) break;
+    await new Promise((r2) => setTimeout(r2, 200));
+  }
+  return { proc, url, auth, directory, api };
+}
+
+function getServer(dataDir: string): Promise<Server | null> {
+  if (server && server.proc.exitCode === null) return Promise.resolve(server);
+  starting ??= startServer(dataDir).then((s) => {
+    server = s;
+    starting = null;
+    return s;
+  });
+  return starting;
+}
+
+export function stopOpencodeServer(): void {
+  if (server) {
+    server.proc.stdin?.end(); // verified: clean shutdown path
+    server = null;
+  }
+}
+
+export async function listOpencodeModels(dataDir: string): Promise<OpencodeModelsResult> {
+  try {
+    const s = await getServer(dataDir);
+    if (!s) return { ok: false, error: 'OpenCode is not installed (see Settings)' };
+    const r = await s.api('GET', '/api/model');
+    const body = r.body as { data?: unknown[] } | null;
+    const models: OpencodeModelInfo[] = [];
+    for (const m of body?.data ?? []) {
+      const model = m as {
+        providerID?: string; modelID?: string; id?: string; name?: string;
+        enabled?: boolean; status?: string; limit?: { context?: number }; cost?: { input?: number; output?: number }[];
+      };
+      if (!model.providerID || model.enabled === false || model.status === 'deprecated') continue;
+      const first = model.cost?.[0];
+      models.push({
+        providerID: model.providerID,
+        id: model.modelID ?? model.id ?? '',
+        name: model.name ?? model.modelID ?? model.id ?? '',
+        contextLimit: model.limit?.context ?? null,
+        free: (first?.input ?? 1) === 0 && (first?.output ?? 1) === 0,
+      });
+    }
+    if (models.length === 0) return { ok: false, error: 'The OpenCode server reported no models' };
+    models.sort((a, b) => a.providerID.localeCompare(b.providerID) || a.id.localeCompare(b.id));
+    return { ok: true, models };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+interface OpencodeMessage {
+  type?: string;
+  content?: { type?: string; text?: string }[];
+}
+
+/** One-shot chat against the chosen model; used by Settings' model test. */
+export async function opencodeChat(dataDir: string, model: { providerID: string; id: string }, prompt: string): Promise<OpencodeChatResult> {
+  try {
+    const s = await getServer(dataDir);
+    if (!s) return { ok: false, error: 'OpenCode is not installed (see Settings)' };
+    const id = `ses_aik${crypto.randomBytes(8).toString('hex')}`;
+    const created = await s.api('POST', '/api/session', {
+      id,
+      title: 'Model test',
+      location: { directory: s.directory },
+      model: { id: model.id, providerID: model.providerID },
+    });
+    if (created.status !== 200) return { ok: false, error: `The model refused the session (${created.status})` };
+    await s.api('POST', `/api/session/${id}/prompt`, { text: prompt });
+    // Wait for the session to fall idle (SPK-1 pattern), then read the last assistant text.
+    const deadline = Date.now() + 180_000;
+    for (;;) {
+      const active = await s.api('GET', '/api/session/active').catch(() => ({ status: 0, body: null }));
+      if (!JSON.stringify(active.body).includes(id)) break;
+      if (Date.now() > deadline) {
+        void s.api('DELETE', `/api/session/${id}`);
+        return { ok: false, error: 'The model did not finish within 3 minutes' };
+      }
+      await new Promise((r) => setTimeout(r, 400));
+    }
+    const messages = await s.api('GET', `/api/session/${id}/message`);
+    const data = (messages.body as { data?: OpencodeMessage[] } | null)?.data ?? [];
+    const assistant = [...data].reverse().find((m) => m.type === 'assistant');
+    const text = (assistant?.content ?? []).filter((p) => p.type === 'text').map((p) => p.text ?? '').join('\n').trim();
+    void s.api('DELETE', `/api/session/${id}`);
+    if (!text) return { ok: false, error: 'The model returned no text' };
+    return { ok: true, text };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) };
+  }
+}

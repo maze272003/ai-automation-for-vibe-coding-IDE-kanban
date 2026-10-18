@@ -1,9 +1,116 @@
 import { useEffect, useState } from 'react';
-import type { OpencodeStatus } from '@aik/contracts';
+import type { OpencodeModelInfo, OpencodeStatus } from '@aik/contracts';
 import { Button } from '../components/ui/button.tsx';
 import { api } from '../lib/api.ts';
 import { applyTheme, loadTheme, type Theme } from '../lib/theme.ts';
 import type { Health } from './root.tsx';
+
+const MODEL_STORAGE_KEY = 'aik:default-model';
+
+function loadSavedModel(): { providerID: string; id: string } | null {
+  try {
+    const raw = localStorage.getItem(MODEL_STORAGE_KEY);
+    return raw ? (JSON.parse(raw) as { providerID: string; id: string }) : null;
+  } catch {
+    return null;
+  }
+}
+
+function ModelPicker({ status }: { status: OpencodeStatus | null }) {
+  const [models, setModels] = useState<OpencodeModelInfo[] | null>(null);
+  const [modelsError, setModelsError] = useState<string | null>(null);
+  const [selected, setSelected] = useState(() => {
+    const saved = loadSavedModel();
+    return saved ? `${saved.providerID}/${saved.id}` : '';
+  });
+  const [prompt, setPrompt] = useState('Reply with one short sentence about yourself.');
+  const [reply, setReply] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const refresh = async () => {
+    setModelsError(null);
+    const result = await window.api.opencodeModels();
+    if (result.ok) {
+      setModels(result.models);
+      setSelected((current) => {
+        if (current) return current;
+        const first = result.models[0];
+        if (!first) return current;
+        localStorage.setItem(MODEL_STORAGE_KEY, JSON.stringify({ providerID: first.providerID, id: first.id }));
+        return `${first.providerID}/${first.id}`;
+      });
+    } else {
+      setModels(null);
+      setModelsError(result.error);
+    }
+  };
+
+  useEffect(() => {
+    if (status?.installed) void refresh();
+  }, [status?.installed]);
+
+  const send = async () => {
+    const [providerID = '', id = ''] = selected.split('/');
+    if (!providerID || !id) return;
+    setBusy(true);
+    setReply(null);
+    const result = await window.api.opencodeChat({ providerID, id }, prompt);
+    setReply(result.ok ? result.text : `✗ ${result.error}`);
+    setBusy(false);
+  };
+
+  return (
+    <section className="mt-6">
+      <h2 className="font-semibold">Default model</h2>
+      <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">Served by the app's managed OpenCode — free gateway models need no API key.</p>
+      {!status?.installed && <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-400">Install OpenCode above to list models.</p>}
+      {status?.installed && modelsError && (
+        <p role="alert" className="mt-2 text-sm text-red-600">{modelsError}</p>
+      )}
+      {status?.installed && models && models.length > 0 && (
+        <div className="mt-2 flex flex-col gap-2">
+          <label className="flex flex-col gap-1 text-sm font-medium">
+            Default model
+            <select
+              aria-label="Default model"
+              value={selected || `${models[0]?.providerID ?? ''}/${models[0]?.id ?? ''}`}
+              onChange={(e) => {
+                setSelected(e.target.value);
+                const [providerID = '', id = ''] = e.target.value.split('/');
+                localStorage.setItem(MODEL_STORAGE_KEY, JSON.stringify({ providerID, id }));
+              }}
+              className="max-w-md rounded-md border border-zinc-300 bg-white px-2 py-1.5 dark:border-zinc-700 dark:bg-zinc-950"
+            >
+              {models.map((m) => (
+                <option key={`${m.providerID}/${m.id}`} value={`${m.providerID}/${m.id}`}>
+                  {m.name} · {m.providerID}/{m.id}{m.free ? ' · free' : ''}
+                </option>
+              ))}
+            </select>
+          </label>
+          <textarea
+            aria-label="Test prompt"
+            value={prompt}
+            onChange={(e) => setPrompt(e.target.value)}
+            className="max-w-md rounded-md border border-zinc-300 bg-white px-2 py-1.5 dark:border-zinc-700 dark:bg-zinc-950"
+            rows={2}
+          />
+          <div className="flex items-center gap-2">
+            <Button variant="primary" disabled={busy || !selected && models.length === 0} onClick={() => void send()}>
+              {busy ? 'Asking…' : 'Send test prompt'}
+            </Button>
+            <Button disabled={busy} onClick={() => void refresh()}>Refresh models</Button>
+          </div>
+          {reply && (
+            <p data-testid="model-test-reply" className="max-w-md whitespace-pre-wrap rounded-md bg-zinc-100 p-2 text-sm dark:bg-zinc-900">
+              {reply}
+            </p>
+          )}
+        </div>
+      )}
+    </section>
+  );
+}
 
 export function SettingsPage() {
   const [theme, setTheme] = useState<Theme>(loadTheme());
@@ -67,6 +174,7 @@ export function SettingsPage() {
           </p>
         )}
       </section>
+      <ModelPicker status={opencode} />
     </div>
   );
 }

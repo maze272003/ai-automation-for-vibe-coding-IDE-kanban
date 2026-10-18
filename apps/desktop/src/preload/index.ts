@@ -10,6 +10,8 @@ const api: AikWindowApi = {
   restartOrchestrator: () => ipcRenderer.invoke('aik:restart-orchestrator') as Promise<void>,
   opencodeStatus: () => ipcRenderer.invoke('aik:opencode-status'),
   installOpencode: () => ipcRenderer.invoke('aik:opencode-install'),
+  opencodeModels: () => ipcRenderer.invoke('aik:opencode-models'),
+  opencodeChat: (model, prompt) => ipcRenderer.invoke('aik:opencode-chat', { ...model, prompt }),
   events: {
     subscribe(listener) {
       const handler = (_e: IpcRendererEvent, value: EventEnvelope) => listener(value);

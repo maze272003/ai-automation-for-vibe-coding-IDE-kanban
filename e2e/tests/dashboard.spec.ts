@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test';
 import fs from 'node:fs';
 import path from 'node:path';
-import { launchApp, makeTempDir, makeTempRepo, waitReady } from '../fixtures.ts';
+import { launchApp, makeTempDir, makeTempRepo, resolveOpencodeExe, startMockLlm, waitReady } from '../fixtures.ts';
 
 /** A fake `opencode --version` used to drive the managed-install status UI without a 220 MB download. */
 const opencodeStub = (version: string): string => {
@@ -80,4 +80,22 @@ test('settings offers the managed install when OpenCode is absent', async () => 
   await expect(page.getByTestId('opencode-status')).toHaveText('not installed');
   await expect(page.getByRole('button', { name: /Install OpenCode/ })).toBeVisible();
   await app.close();
+});
+
+test('picks an OpenCode model and answers a test prompt', async () => {
+  const exe = resolveOpencodeExe();
+  test.skip(!exe, 'no OpenCode binary available (spike copy or managed install)');
+  const mock = await startMockLlm([{ content: 'Hello from mock.' }]);
+  try {
+    const { app, page } = await launchApp(makeTempDir(), { AIK_OPENCODE_EXE: exe!, AIK_OPENCODE_BASE_URL: mock.url });
+    await waitReady(page);
+    await page.getByRole('link', { name: 'Settings' }).click();
+    await expect(page.getByLabel('Default model')).toHaveValue('mock/mock-model', { timeout: 30_000 });
+    await page.getByLabel('Test prompt').fill('Say hello.');
+    await page.getByRole('button', { name: 'Send test prompt' }).click();
+    await expect(page.getByTestId('model-test-reply')).toContainText('Hello from mock.', { timeout: 60_000 });
+    await app.close();
+  } finally {
+    mock.stop();
+  }
 });

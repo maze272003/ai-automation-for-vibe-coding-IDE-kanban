@@ -4,6 +4,7 @@ import { BrowserWindow, dialog, ipcMain, type IpcMainInvokeEvent } from 'electro
 import path from 'node:path';
 import { z } from 'zod';
 import { installOpencode, opencodeStatus } from './opencode.ts';
+import { listOpencodeModels, opencodeChat } from './opencode-server.ts';
 import type { DesktopPaths } from './paths.ts';
 import type { OrchestratorSupervisor } from './supervisor.ts';
 
@@ -90,6 +91,19 @@ export function registerBridge(deps: BridgeDeps): void {
   ipcMain.handle('aik:opencode-install', async (event) => {
     assertTrusted(event, deps);
     return installOpencode(deps.paths.dataDir, deps.opencodeAssetsDir);
+  });
+
+  ipcMain.handle('aik:opencode-models', async (event) => {
+    assertTrusted(event, deps);
+    return listOpencodeModels(deps.paths.dataDir);
+  });
+
+  ipcMain.handle('aik:opencode-chat', async (event, raw: unknown) => {
+    assertTrusted(event, deps);
+    const req = z
+      .object({ providerID: z.string().min(1).max(100), id: z.string().min(1).max(200), prompt: z.string().min(1).max(20_000) })
+      .parse(raw);
+    return opencodeChat(deps.paths.dataDir, { providerID: req.providerID, id: req.id }, req.prompt);
   });
 
   ipcMain.handle('aik:restart-orchestrator', (event) => {
