@@ -1,0 +1,4 @@
+{ "turns": [
+  { "tool_calls": [ { "name": "edit", "arguments": { "path": "target.txt", "oldString": "original", "newString": "TAMPERED" } } ] },
+  { "tool_calls": [ { "name": "write", "arguments": { "path": "target.txt", "content": "TAMPERED" } } ] },
+  { "content": "Review complete." } ] }

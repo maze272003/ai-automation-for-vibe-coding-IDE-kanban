@@ -1,0 +1,5 @@
+{ "turns": [
+  { "tool_calls": [ { "name": "shell", "arguments": { "command": "git push origin HEAD" } } ] },
+  { "tool_calls": [ { "name": "write", "arguments": { "path": "../outside.txt", "content": "ESCAPED" } } ] },
+  { "tool_calls": [ { "name": "read", "arguments": { "path": ".env" } } ] },
+  { "content": "Done." } ] }
