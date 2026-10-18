@@ -3,6 +3,7 @@ import { listBackups, restoreBackup } from '@aik/db/backup';
 import { BrowserWindow, dialog, ipcMain, type IpcMainInvokeEvent } from 'electron';
 import path from 'node:path';
 import { z } from 'zod';
+import { installOpencode, opencodeStatus } from './opencode.ts';
 import type { DesktopPaths } from './paths.ts';
 import type { OrchestratorSupervisor } from './supervisor.ts';
 
@@ -17,6 +18,7 @@ export interface BridgeDeps {
   supervisor: OrchestratorSupervisor;
   token: string;
   paths: DesktopPaths;
+  opencodeAssetsDir: string;
   isTrustedSender: (url: string) => boolean;
 }
 
@@ -78,6 +80,16 @@ export function registerBridge(deps: BridgeDeps): void {
     restoreBackup(latest, deps.paths.db);
     deps.supervisor.restart();
     return { ok: true as const, restoredFrom: path.basename(latest) };
+  });
+
+  ipcMain.handle('aik:opencode-status', (event) => {
+    assertTrusted(event, deps);
+    return opencodeStatus(deps.paths.dataDir);
+  });
+
+  ipcMain.handle('aik:opencode-install', async (event) => {
+    assertTrusted(event, deps);
+    return installOpencode(deps.paths.dataDir, deps.opencodeAssetsDir);
   });
 
   ipcMain.handle('aik:restart-orchestrator', (event) => {

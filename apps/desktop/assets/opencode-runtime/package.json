@@ -1,0 +1,7 @@
+{
+  "name": "aik-opencode-runtime",
+  "private": true,
+  "dependencies": {
+    "@opencode/cli": "2.0.32"
+  }
+}

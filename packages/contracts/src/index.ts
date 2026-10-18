@@ -5,6 +5,7 @@ export * from './common.ts';
 export * from './enums.ts';
 export * from './events.ts';
 export * from './hints.ts';
+export * from './opencode.ts';
 export * from './projects.ts';
 export * from './sse.ts';
 export * from './stories.ts';

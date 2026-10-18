@@ -16,6 +16,7 @@ await build({ ...common, entryPoints: [path.join(root, 'apps/desktop/src/preload
 await build({ ...common, entryPoints: [path.join(root, 'apps/orchestrator/src/main.ts')], outfile: path.join(out, 'orchestrator.cjs'), external: ['better-sqlite3', 'pino'] });
 
 fs.cpSync(path.join(root, 'packages/db/migrations'), path.join(out, 'migrations'), { recursive: true });
+fs.cpSync(path.join(root, 'apps/desktop/assets/opencode-runtime'), path.join(out, 'opencode-runtime'), { recursive: true });
 if (withUi) {
   const ui = path.join(root, 'apps/ui/dist');
   if (!fs.existsSync(path.join(ui, 'index.html'))) throw new Error('apps/ui/dist is missing — run `npm run build -w @aik/ui` first');

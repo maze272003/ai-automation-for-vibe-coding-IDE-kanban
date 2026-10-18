@@ -83,6 +83,7 @@ function main(): void {
       supervisor,
       token,
       paths,
+      opencodeAssetsDir: path.join(__dirname, 'opencode-runtime'),
       isTrustedSender: (url) => url.startsWith('app://ui/') || (devUrl !== null && url.startsWith(devUrl)),
     });
     supervisor.start();

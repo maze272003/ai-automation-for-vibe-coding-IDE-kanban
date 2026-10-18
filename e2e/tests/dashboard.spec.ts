@@ -1,5 +1,14 @@
 import { expect, test } from '@playwright/test';
+import fs from 'node:fs';
+import path from 'node:path';
 import { launchApp, makeTempDir, makeTempRepo, waitReady } from '../fixtures.ts';
+
+/** A fake `opencode --version` used to drive the managed-install status UI without a 220 MB download. */
+const opencodeStub = (version: string): string => {
+  const stub = path.join(makeTempDir(), 'opencode.cmd');
+  fs.writeFileSync(stub, `@echo off\r\necho opencode v${version}\r\n`);
+  return stub;
+};
 
 test('registers a local repository from the dashboard', async () => {
   const { app, page } = await launchApp(makeTempDir());
@@ -43,5 +52,32 @@ test('settings shows the data folder and versions', async () => {
   await waitReady(page);
   await page.getByRole('link', { name: 'Settings' }).click();
   await expect(page.getByTestId('data-dir')).toHaveText(dataDir);
+  await app.close();
+});
+
+test('settings reports the managed OpenCode install', async () => {
+  const { app, page } = await launchApp(makeTempDir(), { AIK_OPENCODE_EXE: opencodeStub('2.0.32') });
+  await waitReady(page);
+  await page.getByRole('link', { name: 'Settings' }).click();
+  await expect(page.getByTestId('opencode-status')).toHaveText('2.0.32');
+  await expect(page.getByRole('button', { name: /Install/ })).toHaveCount(0);
+  await app.close();
+});
+
+test('settings offers repair when OpenCode does not match the pin', async () => {
+  const { app, page } = await launchApp(makeTempDir(), { AIK_OPENCODE_EXE: opencodeStub('1.2.3') });
+  await waitReady(page);
+  await page.getByRole('link', { name: 'Settings' }).click();
+  await expect(page.getByTestId('opencode-status')).toHaveText('1.2.3 (expected 2.0.32)');
+  await expect(page.getByRole('button', { name: 'Repair install' })).toBeVisible();
+  await app.close();
+});
+
+test('settings offers the managed install when OpenCode is absent', async () => {
+  const { app, page } = await launchApp(makeTempDir());
+  await waitReady(page);
+  await page.getByRole('link', { name: 'Settings' }).click();
+  await expect(page.getByTestId('opencode-status')).toHaveText('not installed');
+  await expect(page.getByRole('button', { name: /Install OpenCode/ })).toBeVisible();
   await app.close();
 });

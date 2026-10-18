@@ -8,6 +8,8 @@ const api: AikWindowApi = {
   systemState: () => ipcRenderer.invoke('aik:system-state') as Promise<SystemState>,
   restoreLatestBackup: () => ipcRenderer.invoke('aik:restore-latest-backup'),
   restartOrchestrator: () => ipcRenderer.invoke('aik:restart-orchestrator') as Promise<void>,
+  opencodeStatus: () => ipcRenderer.invoke('aik:opencode-status'),
+  installOpencode: () => ipcRenderer.invoke('aik:opencode-install'),
   events: {
     subscribe(listener) {
       const handler = (_e: IpcRendererEvent, value: EventEnvelope) => listener(value);
