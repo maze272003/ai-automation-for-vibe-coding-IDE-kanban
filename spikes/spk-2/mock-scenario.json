@@ -1,0 +1,7 @@
+{ "turns": [
+  { "tool_calls": [ { "name": "get_weather", "arguments": { "city": "Lisbon" } } ] },
+  { "content": "It is 21 C in Lisbon." },
+  { "content": "4417" },
+  { "content": "```json\n{\"summary\":\"s\",\"subtasks\":[{\"id\":\"1\",\"description\":\"d\"}],\"complexity\":\"S\"}\n```" },
+  { "content": "The printing press changed the world." } ],
+  "fallback": { "content": "0" } }
