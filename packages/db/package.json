@@ -1,0 +1,12 @@
+{
+  "name": "@aik/db",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": { ".": "./src/index.ts", "./backup": "./src/backup.ts" },
+  "dependencies": {
+    "@aik/contracts": "0.0.0",
+    "better-sqlite3": "13.0.3",
+    "drizzle-orm": "0.45.4"
+  }
+}

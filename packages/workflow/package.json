@@ -1,0 +1,8 @@
+{
+  "name": "@aik/workflow",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": { ".": "./src/index.ts" },
+  "dependencies": { "@aik/contracts": "0.0.0" }
+}

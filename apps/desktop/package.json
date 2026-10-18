@@ -1,0 +1,11 @@
+{
+  "name": "@aik/desktop",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@aik/contracts": "0.0.0",
+    "@aik/db": "0.0.0",
+    "zod": "4.6.7"
+  }
+}
