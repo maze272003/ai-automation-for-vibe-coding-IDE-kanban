@@ -1,0 +1,30 @@
+{
+  "killHelper": {
+    "childAlive": false,
+    "grandchildrenAlive": [
+      false,
+      false
+    ]
+  },
+  "killParent": {
+    "msUntilGone": 1,
+    "helperAlive": false,
+    "grandchildrenAlive": [
+      false,
+      false
+    ]
+  },
+  "memoryCap": {
+    "exitCode": 137,
+    "stderrTail": "eout (node:internal/timers:605:17)\r\n    at process.processTimers (node:internal/timers:541:7) {\r\n  code: 'ERR_MEMORY_ALLOCATION_FAILED'\r\n}\r\n\r\nNode.js v24.17.0\r\naiide-helper: job memory limit exceeded\n"
+  },
+  "stdio": {
+    "exitCode": 7,
+    "stdoutExact": true,
+    "stderrExact": true
+  },
+  "maxProcs": {
+    "exitCode": 0,
+    "output": "[\"ok\",\"ok\",\"ok\"]"
+  }
+}
