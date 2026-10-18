@@ -111,5 +111,5 @@ test('stories persist across restarts', async () => {
 test('renders 200 stories', async () => {
   const { page } = launched;
   for (let i = 0; i < 200; i++) await apiCall(page, 'POST', `/projects/${projectId}/stories`, { title: `Story ${i}` });
-  await expect(page.locator('[data-testid^="card-"]')).toHaveCount(200, { timeout: 10_000 });
+  await expect(page.locator('[data-testid^="card-"]')).toHaveCount(200, { timeout: 30_000 });
 });

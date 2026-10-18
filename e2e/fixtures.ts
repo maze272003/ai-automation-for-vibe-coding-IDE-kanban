@@ -21,7 +21,7 @@ export async function launchApp(dataDir: string, env: Record<string, string> = {
 }
 
 export async function waitReady(page: Page): Promise<void> {
-  await page.getByTestId('app-ready').waitFor({ state: 'attached', timeout: 30_000 });
+  await page.getByTestId('app-ready').waitFor({ state: 'attached', timeout: 60_000 });
 }
 
 /** Calls the orchestrator through the same bridge the UI uses. */

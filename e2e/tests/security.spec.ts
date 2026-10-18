@@ -1,9 +1,11 @@
 // e2e/tests/security.spec.ts
 import { expect, test } from '@playwright/test';
 import { spawn } from 'node:child_process';
+import fs from 'node:fs';
 import http from 'node:http';
+import path from 'node:path';
 import electronPath from 'electron';
-import { aik, apiCall, distDir, launchApp, makeTempDir, waitReady } from '../fixtures.ts';
+import { aik, apiCall, distDir, launchApp, makeTempDir, makeTempRepo, waitReady } from '../fixtures.ts';
 
 const rawGet = (port: number, headers: Record<string, string>) =>
   new Promise<number>((resolve, reject) => {
@@ -27,6 +29,21 @@ test('the renderer has no Node access and never sees the API token', async () =>
     };
   }, token);
   expect(probe).toEqual({ require: 'undefined', process: 'undefined', api: 'function', leaked: false });
+  await app.close();
+});
+
+test('neither persisted log file ever contains the API token', async () => {
+  const dataDir = makeTempDir();
+  const { app, page } = await launchApp(dataDir);
+  await waitReady(page);
+  // Generate some orchestrator activity so both log sinks have flushed content.
+  await apiCall(page, 'POST', '/projects', { name: 'Logs', key: 'LOG', repoPath: makeTempRepo() });
+  const token = await aik(app, (h) => h.token);
+  for (const file of ['orchestrator.log', 'orchestrator-stdio.log']) {
+    const p = path.join(dataDir, 'logs', file);
+    expect(fs.existsSync(p), `${file} exists`).toBe(true);
+    expect(fs.readFileSync(p, 'utf8'), `${file} must not contain the token`).not.toContain(token);
+  }
   await app.close();
 });
 
