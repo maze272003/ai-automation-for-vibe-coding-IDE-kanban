@@ -36,14 +36,29 @@ export function writeAppSettings(dataDir: string, settings: AppSettings): AppSet
   return next;
 }
 
-/** Resolves the user's personal CLI from PATH (personal mode only; null when not installed). */
-export function personalOpencodeExe(): string | null {
+interface PersonalExe {
+  exe: string;
+  viaCmd: boolean;
+}
+
+/** Resolves the user's personal CLI (personal mode only; null when not installed). */
+export function personalOpencodeExe(): PersonalExe | null {
+  const candidates: PersonalExe[] = [];
+  const globalNpm = path.join(process.env.APPDATA ?? '', 'npm', 'node_modules', '@opencode', 'cli', 'bin', 'opencode.exe');
+  candidates.push({ exe: globalNpm, viaCmd: false });
   try {
-    const hit = (execFileSync('where.exe', ['opencode'], { encoding: 'utf8' }).split(/\r?\n/)[0] ?? '').trim();
-    return hit && fs.existsSync(hit) ? hit : null;
+    const hits = execFileSync('where.exe', ['opencode'], { encoding: 'utf8' })
+      .split(/\r?\n/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+    for (const hit of hits) {
+      if (/\.exe$/i.test(hit)) candidates.push({ exe: hit, viaCmd: false });
+      else if (/\.(cmd|bat)$/i.test(hit)) candidates.push({ exe: hit, viaCmd: true });
+    }
   } catch {
-    return null;
+    // not on PATH
   }
+  return candidates.find((c) => fs.existsSync(c.exe)) ?? null;
 }
 
 interface Server {
@@ -84,13 +99,18 @@ function configContent(): Record<string, unknown> {
 
 async function startServer(dataDir: string): Promise<Server | null> {
   const mode = readAppSettings(dataDir).opencodeMode;
-  const exe =
-    mode === 'personal'
-      ? personalOpencodeExe()
-      : process.env.AIK_OPENCODE_EXE
-        ? path.resolve(process.env.AIK_OPENCODE_EXE)
-        : opencodeExePath(dataDir);
-  if (!exe) return null;
+  let exe: string | null = null;
+  let viaCmd = false;
+  if (mode === 'personal') {
+    const personal = personalOpencodeExe();
+    if (personal) {
+      exe = personal.exe;
+      viaCmd = personal.viaCmd;
+    }
+  } else {
+    exe = process.env.AIK_OPENCODE_EXE ? path.resolve(process.env.AIK_OPENCODE_EXE) : opencodeExePath(dataDir);
+  }
+  if (!exe || !fs.existsSync(exe)) return null;
 
   const root = path.join(dataDir, 'opencode');
   const oc = (d: string) => path.join(root, d);
@@ -127,7 +147,9 @@ async function startServer(dataDir: string): Promise<Server | null> {
       OPENCODE_GIT_BASH_PATH: gitBashPath(),
     };
   }
-  const proc = spawn(exe, ['serve', '--stdio', '--port', '0', '--print-logs'], { env, stdio: ['pipe', 'pipe', 'pipe'] });
+  const proc = viaCmd
+    ? spawn('cmd.exe', ['/d', '/s', '/c', `"${exe}" serve --stdio --port 0 --print-logs`], { env, stdio: ['pipe', 'pipe', 'pipe'] })
+    : spawn(exe, ['serve', '--stdio', '--port', '0', '--print-logs'], { env, stdio: ['pipe', 'pipe', 'pipe'] });
   proc.stderr?.on('data', () => undefined); // keep the pipe drained; logs stay out of the app log
   const first = await new Promise<string>((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error('OpenCode server did not report a URL within 30 s')), 30_000);
@@ -186,7 +208,11 @@ function getServer(dataDir: string): Promise<Server | null> {
 
 export function stopOpencodeServer(): void {
   if (server) {
-    server.proc.stdin?.end(); // verified: clean shutdown path
+    const proc = server.proc;
+    proc.stdin?.end(); // verified clean shutdown path on 2.0.32; older personal builds may assert/hang…
+    setTimeout(() => {
+      if (proc.exitCode === null) proc.kill(); // …so always keep a hard-kill backstop
+    }, 2_000).unref();
     server = null;
   }
 }
