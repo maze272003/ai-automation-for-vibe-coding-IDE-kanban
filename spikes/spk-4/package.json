@@ -1,0 +1,1 @@
+{ "name": "aik-spk-4", "private": true, "type": "module", "dependencies": { "@napi-rs/keyring": "2.1.1" } }
