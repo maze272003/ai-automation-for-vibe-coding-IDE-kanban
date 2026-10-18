@@ -14,6 +14,18 @@ test('registers a local repository from the dashboard', async () => {
   await app.close();
 });
 
+test('suggests name and key from the chosen folder', async () => {
+  const { app, page } = await launchApp(makeTempDir());
+  await waitReady(page);
+  const repoPath = makeTempRepo();
+  await page.getByLabel('Repository folder').fill(repoPath);
+  await expect(page.getByLabel('Name')).toHaveValue('repo');
+  await expect(page.getByLabel('Key')).toHaveValue('REPO');
+  await page.getByRole('button', { name: 'Add project' }).click();
+  await expect(page.getByTestId('project-list')).toContainText('REPO · repo');
+  await app.close();
+});
+
 test('explains why a folder cannot be registered', async () => {
   const { app, page } = await launchApp(makeTempDir());
   await waitReady(page);

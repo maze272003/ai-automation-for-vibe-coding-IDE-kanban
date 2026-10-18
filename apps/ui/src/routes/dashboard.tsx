@@ -7,12 +7,27 @@ import { TextField } from '../components/ui/field.tsx';
 import { ApiRequestError, api } from '../lib/api.ts';
 import { useSystemState } from '../lib/events.ts';
 
+/** Best-effort project identity from a repository folder path; the form fields stay editable. */
+function suggestIdentity(folder: string): { name: string; key: string } {
+  const parts = folder.split(/[\\/]/).filter(Boolean);
+  const base = parts.length > 0 ? (parts[parts.length - 1] ?? '') : '';
+  const cleaned = base.toUpperCase().replace(/[^A-Z0-9]/g, '').replace(/^[0-9]+/, '').slice(0, 10);
+  return { name: base, key: cleaned.length >= 2 ? cleaned : '' };
+}
+
 function CreateProjectForm({ onCreated }: { onCreated: () => Promise<void> }) {
   const [name, setName] = useState('');
   const [key, setKey] = useState('');
   const [repoPath, setRepoPath] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+
+  const applyRepoPath = (v: string) => {
+    setRepoPath(v);
+    const suggestion = suggestIdentity(v);
+    if (!name && suggestion.name) setName(suggestion.name);
+    if (!key && suggestion.key) setKey(suggestion.key);
+  };
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
@@ -38,11 +53,11 @@ function CreateProjectForm({ onCreated }: { onCreated: () => Promise<void> }) {
       <TextField label="Key" value={key} onChange={(e) => setKey(e.target.value.toUpperCase())} placeholder="INV" required />
       <div className="flex items-end gap-2">
         <div className="flex-1">
-          <TextField label="Repository folder" value={repoPath} onChange={(e) => setRepoPath(e.target.value)} required />
+          <TextField label="Repository folder" value={repoPath} onChange={(e) => applyRepoPath(e.target.value)} required />
         </div>
         <Button onClick={async () => {
           const dir = await window.api.pickDirectory();
-          if (dir) setRepoPath(dir);
+          if (dir) applyRepoPath(dir);
         }}>
           Browse…
         </Button>
