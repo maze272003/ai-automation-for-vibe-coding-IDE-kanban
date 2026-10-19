@@ -204,4 +204,82 @@ describe('ImplementerAgent', () => {
     expect(mockRuntime.interrupt).not.toHaveBeenCalled();
     expect(dbHolder.db.select().from(userStories).where(eq(userStories.id, story.id)).get()?.status).toBe('TESTING');
   });
+
+  test('injects skills for implementer role and isolates .opencode from git commit', async () => {
+    const repoPath = makeTempRepo({ name: 'impl-skills-repo' });
+    const project = seedProject(dbHolder.db, { repoPath, baseBranch: 'main' });
+    const story = seedStory(dbHolder.db, project.id, {
+      title: 'Skills Implement Story',
+      status: 'READY',
+      planningStatus: 'plan_approved',
+    });
+    seedPlan(dbHolder.db, story.id, { status: 'approved' });
+
+    const vaultRoot = makeTempDir('vault-impl-');
+    const { vaultPaths, ensureVaultLayout, VaultDb } = await import('@aik/skill-vault');
+    const paths = vaultPaths(vaultRoot);
+    await ensureVaultLayout(paths);
+    const vdb = VaultDb.open(paths.sqlite);
+    vdb.db.prepare(
+      `INSERT INTO skills (id, source, name, repo_owner, repo_name, skill_path, status, content_sha256, discovered_at, last_seen_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      'gh:mattpocock/skills/tdd',
+      'test',
+      'tdd',
+      'mattpocock',
+      'skills',
+      '.',
+      'approved',
+      'hash',
+      new Date().toISOString(),
+      new Date().toISOString(),
+    );
+    const skillContent = path.join(paths.skillsApproved, 'mattpocock', 'skills', 'tdd');
+    fs.mkdirSync(skillContent, { recursive: true });
+    fs.writeFileSync(path.join(skillContent, 'SKILL.md'), '---\nname: tdd\ndescription: TDD\n---\n# TDD\n');
+    vdb.close();
+
+    let capturedPrompt = '';
+    let capturedWorktree = '';
+    const mockRuntime: OpenCodeRuntime = {
+      runOneShot: vi.fn().mockImplementation(async (opts: RunOneShotInput) => {
+        capturedPrompt = opts.prompt;
+        capturedWorktree = opts.directory;
+        // Agent creates a normal file
+        fs.writeFileSync(path.join(opts.directory, 'feature.ts'), 'export const f = 1;\n');
+        return { ok: true, text: 'Done.' };
+      }),
+    } as unknown as OpenCodeRuntime;
+
+    const { SkillBridgeService } = await import('../src/skills/bridge.ts');
+    const realSkills = new SkillBridgeService({ vaultRoot });
+
+    const agent = new ImplementerAgent({
+      db: dbHolder.db,
+      workflow,
+      bus,
+      runtime: mockRuntime,
+      worktreeManager,
+      skills: realSkills,
+    });
+
+    const result = await agent.implementStory({ storyId: story.id });
+    expect(result.ok).toBe(true);
+    expect(capturedPrompt).toContain('AVAILABLE SKILLS');
+    expect(capturedPrompt).toContain('tdd');
+
+    // Verify .opencode/skills/tdd/SKILL.md was installed in the worktree
+    expect(fs.existsSync(path.join(capturedWorktree, '.opencode', 'skills', 'tdd', 'SKILL.md'))).toBe(true);
+
+    // Verify candidate commit does NOT contain .opencode/
+    const { execFileSync } = await import('node:child_process');
+    const filesInCommit = execFileSync('git', ['ls-tree', '-r', '--name-only', result.candidateSha!], {
+      cwd: capturedWorktree,
+      encoding: 'utf8',
+    });
+    expect(filesInCommit).toContain('feature.ts');
+    expect(filesInCommit).not.toContain('.opencode');
+  });
 });
+

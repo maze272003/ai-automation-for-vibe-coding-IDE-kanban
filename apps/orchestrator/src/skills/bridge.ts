@@ -57,21 +57,32 @@ export class SkillBridgeService {
 
   private async ensureGitExclude(targetDir: string): Promise<void> {
     try {
-      const gitDir = path.join(targetDir, '.git');
-      const gitStat = await fsp.stat(gitDir).catch(() => null);
-      if (!gitStat) return;
+      const { execFile } = await import('node:child_process');
+      const { promisify } = await import('node:util');
+      const execFileAsync = promisify(execFile);
 
-      let excludePath: string;
-      if (gitStat.isDirectory()) {
-        excludePath = path.join(gitDir, 'info', 'exclude');
-      } else {
-        // In a git worktree, .git is a file containing "gitdir: <path>"
-        const content = await fsp.readFile(gitDir, 'utf8');
-        const match = content.match(/^gitdir:\s*(.+)$/m);
-        if (!match) return;
-        const actualGitDir = path.resolve(targetDir, (match[1] ?? '').trim());
-        excludePath = path.join(actualGitDir, 'info', 'exclude');
+      let excludePath: string | null = null;
+      try {
+        const { stdout } = await execFileAsync('git', ['rev-parse', '--git-path', 'info/exclude'], {
+          cwd: targetDir,
+          encoding: 'utf8',
+        });
+        const resolved = stdout.trim();
+        if (resolved) {
+          excludePath = path.isAbsolute(resolved) ? resolved : path.resolve(targetDir, resolved);
+        }
+      } catch {
+        // fallback to manual filesystem inspection
       }
+
+      if (!excludePath) {
+        const gitDir = path.join(targetDir, '.git');
+        const gitStat = await fsp.stat(gitDir).catch(() => null);
+        if (!gitStat) return;
+        excludePath = gitStat.isDirectory() ? path.join(gitDir, 'info', 'exclude') : null;
+      }
+
+      if (!excludePath) return;
 
       await fsp.mkdir(path.dirname(excludePath), { recursive: true });
       const current = await fsp.readFile(excludePath, 'utf8').catch(() => '');
