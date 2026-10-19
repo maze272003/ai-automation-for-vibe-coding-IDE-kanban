@@ -12,6 +12,10 @@ describe('OpenCodeRuntime', () => {
   const receivedRequests: { method: string; url: string; auth?: string; body?: unknown }[] = [];
   let activeSessions: string[] = [];
   let mockMessages: { type: string; content?: { type: string; text: string }[] }[] = [];
+  // Interrupt-test knobs: when autoActivate is set the fake server marks every created session
+  // active; when an interrupt call is honored it clears the active set (otherwise ignored).
+  let autoActivate = false;
+  let interruptHonored = true;
 
   beforeAll(async () => {
     server = http.createServer((req, res) => {
@@ -41,12 +45,20 @@ describe('OpenCodeRuntime', () => {
 
         if (req.method === 'POST' && req.url === '/api/session') {
           const id = (json as { id?: string })?.id ?? 'ses_test123';
+          if (autoActivate) activeSessions.push(id);
           res.writeHead(200, { 'content-type': 'application/json' });
           res.end(JSON.stringify({ id }));
           return;
         }
 
         if (req.method === 'POST' && req.url?.startsWith('/api/session/') && req.url.endsWith('/prompt')) {
+          res.writeHead(200, { 'content-type': 'application/json' });
+          res.end(JSON.stringify({ ok: true }));
+          return;
+        }
+
+        if (req.method === 'POST' && req.url?.startsWith('/api/session/') && req.url.endsWith('/interrupt')) {
+          if (interruptHonored) activeSessions.length = 0;
           res.writeHead(200, { 'content-type': 'application/json' });
           res.end(JSON.stringify({ ok: true }));
           return;
@@ -162,5 +174,106 @@ describe('OpenCodeRuntime', () => {
     const messagesRes = await runtime.getSessionMessages(capturedSessionId!, 'C:/temp/worktree');
     expect(messagesRes.ok).toBe(true);
     expect(messagesRes.messages.length).toBe(2);
+  });
+
+  test('returns interrupted without creating a session when shouldStop is already true', async () => {
+    mockMessages = [];
+    activeSessions = [];
+    autoActivate = false;
+    interruptHonored = true;
+    const firstIndex = receivedRequests.length;
+
+    const runtime = new OpenCodeRuntime({ baseUrl, password: authPassword });
+    const result = await runtime.runOneShot({
+      directory: 'C:/temp/worktree',
+      prompt: 'Hello model',
+      shouldStop: () => true,
+    });
+
+    expect(result).toEqual({ ok: false, interrupted: true, error: 'Run interrupted before it started' });
+    expect(receivedRequests.length).toBe(firstIndex);
+  });
+
+  test('interrupts the session once and returns interrupted when stop is requested mid-run', async () => {
+    mockMessages = [];
+    activeSessions = [];
+    autoActivate = true; // the created session shows up as active until interrupted
+    interruptHonored = true;
+    const firstIndex = receivedRequests.length;
+    const startedAt = Date.now();
+
+    let shouldStopCalls = 0;
+    const runtime = new OpenCodeRuntime({ baseUrl, password: authPassword });
+    const result = await runtime.runOneShot({
+      directory: 'C:/temp/worktree',
+      prompt: 'Do the work',
+      // False for the pre-start check, true from the first poll iteration on.
+      shouldStop: () => ++shouldStopCalls > 1,
+    });
+
+    expect(result).toEqual({ ok: false, interrupted: true, error: 'Run interrupted by a stop request' });
+
+    const runRequests = receivedRequests.slice(firstIndex);
+    const createReq = runRequests.find((r) => r.method === 'POST' && r.url === '/api/session');
+    expect(createReq).toBeDefined();
+    const sessionId = (createReq?.body as { id?: string })?.id;
+    expect(sessionId).toMatch(/^ses_aik/);
+
+    const interrupts = runRequests.filter((r) => r.method === 'POST' && r.url === `/api/session/${sessionId}/interrupt`);
+    expect(interrupts.length).toBe(1);
+
+    // The poll loop aborted instead of reading results or waiting out the timeout.
+    expect(runRequests.some((r) => r.method === 'GET' && r.url?.endsWith('/message'))).toBe(false);
+    expect(Date.now() - startedAt).toBeLessThan(5_000);
+  });
+
+  test('still returns interrupted within the bounded grace when the server ignores the interrupt', async () => {
+    mockMessages = [];
+    activeSessions = [];
+    autoActivate = true;
+    interruptHonored = false; // /interrupt replies 200 but the session stays active
+    const firstIndex = receivedRequests.length;
+    const startedAt = Date.now();
+
+    let shouldStopCalls = 0;
+    const runtime = new OpenCodeRuntime({ baseUrl, password: authPassword });
+    const result = await runtime.runOneShot({
+      directory: 'C:/temp/worktree',
+      prompt: 'Do the work',
+      // Clamps the interrupt grace to this run's own deadline instead of the 10 s cap.
+      timeoutMs: 1_200,
+      shouldStop: () => ++shouldStopCalls > 1,
+    });
+
+    expect(result).toEqual({ ok: false, interrupted: true, error: 'Run interrupted by a stop request' });
+
+    const interrupts = receivedRequests.slice(firstIndex).filter((r) => r.method === 'POST' && r.url?.endsWith('/interrupt'));
+    expect(interrupts.length).toBe(1);
+
+    const elapsed = Date.now() - startedAt;
+    expect(elapsed).toBeGreaterThanOrEqual(1_200);
+    expect(elapsed).toBeLessThan(5_000);
+  });
+
+  test('completes normally without interrupting when shouldStop never turns true', async () => {
+    mockMessages = [
+      { type: 'user', content: [{ type: 'text', text: 'Hello model' }] },
+      { type: 'assistant', content: [{ type: 'text', text: 'Finished the story work.' }] },
+    ];
+    activeSessions = []; // immediate idle
+    autoActivate = false;
+    interruptHonored = true;
+    const firstIndex = receivedRequests.length;
+
+    const runtime = new OpenCodeRuntime({ baseUrl, password: authPassword });
+    const result = await runtime.runOneShot({
+      directory: 'C:/temp/worktree',
+      prompt: 'Hello model',
+      shouldStop: () => false,
+    });
+
+    expect(result).toEqual({ ok: true, text: 'Finished the story work.' });
+    const runRequests = receivedRequests.slice(firstIndex);
+    expect(runRequests.some((r) => r.method === 'POST' && r.url?.endsWith('/interrupt'))).toBe(false);
   });
 });

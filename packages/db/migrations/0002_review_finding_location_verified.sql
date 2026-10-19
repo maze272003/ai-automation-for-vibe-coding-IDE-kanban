@@ -1,0 +1,1 @@
+ALTER TABLE `review_findings` ADD `location_verified` integer DEFAULT true NOT NULL;

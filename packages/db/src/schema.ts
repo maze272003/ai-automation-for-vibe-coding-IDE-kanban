@@ -272,6 +272,8 @@ export const reviewFindings = sqliteTable('review_findings', {
   explanation: text('explanation').notNull(),
   recommendation: text('recommendation').notNull(),
   blocking: integer('blocking', { mode: 'boolean' }).notNull(),
+  /** False when the cited file is neither in the reviewed diff nor the repository (spec §19.4 `unverified_location`). */
+  locationVerified: integer('location_verified', { mode: 'boolean' }).notNull().default(true),
   priorFindingId: integer('prior_finding_id').references((): AnySQLiteColumn => reviewFindings.id),
   resolution: text('resolution', { enum: ['resolved', 'unresolved', 'disputed'] }),
 }, (t) => [uniqueIndex('rf_uq').on(t.reviewId, t.findingKey)]);

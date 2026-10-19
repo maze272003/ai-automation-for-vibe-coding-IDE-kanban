@@ -37,6 +37,14 @@ export function satisfying(type: EventType, status: StoryStatus): { story: Story
     case 'approve_plan':
     case 'auto_accept_plan':
       return { story: s, evidence: e, event: { type, planVersion: 1 } };
+    case 'reject_plan':
+      return { story: s, evidence: e, event: { type, planVersion: 1, feedback: 'Buffer the whole export instead' } };
+    case 'answer_clarifications':
+      return {
+        story: { ...s, planningStatus: 'needs_clarification' },
+        evidence: evidence({ plan: { version: 1, status: 'proposed', storyRevision: 1, openClarifications: 2 } }),
+        event: { type, planVersion: 1, answers: [{ ordinal: 1, answer: 'CSV and JSON' }, { ordinal: 2, answer: 'No' }] },
+      };
     case 'edit_definition':
       return { story: s, evidence: e, event: { type } };
     case 'claim_implement':
@@ -76,6 +84,8 @@ const ACTIVE: StoryStatus[] = ['IN_PROGRESS', 'TESTING', 'READY_FOR_REVIEW', 'RE
 /** Spec §16.3 — which source states each event is allowed from. */
 export const ALLOWED_FROM: Record<EventType, StoryStatus[]> = {
   approve_plan: ['NEW'],
+  reject_plan: ['NEW'],
+  answer_clarifications: ['NEW'],
   auto_accept_plan: ['NEW'],
   edit_definition: ['NEW', 'READY', 'BLOCKED'],
   claim_implement: ['READY', 'REWORK', 'TESTING'],
@@ -99,6 +109,7 @@ export function expectedTo(type: EventType, from: StoryStatus): StoryStatus {
   switch (type) {
     case 'approve_plan': case 'auto_accept_plan': return 'READY';
     case 'edit_definition': return from === 'READY' ? 'NEW' : from;
+    case 'reject_plan': case 'answer_clarifications': return from;
     case 'claim_implement': return 'IN_PROGRESS';
     case 'candidate_committed': return 'TESTING';
     case 'verification_passed': return 'READY_FOR_REVIEW';

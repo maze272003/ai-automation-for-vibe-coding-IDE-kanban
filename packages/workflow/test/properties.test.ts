@@ -40,6 +40,12 @@ const evidenceArb: fc.Arbitrary<Evidence> = fc.record({
 
 const eventArb: fc.Arbitrary<WorkflowEvent> = fc.oneof(
   fc.record({ type: fc.constantFrom('approve_plan' as const, 'auto_accept_plan' as const), planVersion: fc.integer({ min: 1, max: 2 }) }),
+  fc.record({ type: fc.constant('reject_plan' as const), planVersion: fc.integer({ min: 1, max: 2 }), feedback: fc.constantFrom('', 'rethink the approach') }),
+  fc.record({
+    type: fc.constant('answer_clarifications' as const),
+    planVersion: fc.integer({ min: 1, max: 2 }),
+    answers: fc.array(fc.record({ ordinal: fc.integer({ min: 1, max: 2 }), answer: fc.constantFrom('', 'an answer') }), { maxLength: 3 }),
+  }),
   fc.constant({ type: 'edit_definition' as const }),
   fc.record({ type: fc.constant('claim_implement' as const), runId: fc.integer({ min: 1, max: 3 }), leaseHeld: fc.boolean(), worktreeReady: fc.boolean() }),
   fc.record({ type: fc.constant('candidate_committed' as const), runId: fc.integer({ min: 1, max: 3 }), candidateSha: shaArb, candidateTree: fc.constantFrom(TREE_A, TREE_B), diffEmpty: fc.boolean(), treeAlreadyRejected: fc.boolean() }),

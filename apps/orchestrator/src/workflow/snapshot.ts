@@ -3,7 +3,7 @@ import {
   storyDependencies, userStories, verificationChecks, verificationRuns, type AikDbOrTx,
 } from '@aik/db';
 import type { Evidence, StorySnapshot } from '@aik/workflow';
-import { and, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
+import { and, desc, eq, gt, inArray, isNull, sql } from 'drizzle-orm';
 
 export type StoryRow = typeof userStories.$inferSelect;
 
@@ -36,10 +36,12 @@ export function loadSnapshot(db: AikDbOrTx, storyId: number): { row: StoryRow; s
     .where(eq(storyDependencies.storyId, storyId))
     .all();
 
+  // A merge is in progress only while a job actually holds a live lease; an expired lease means
+  // the runner lost the job, so the story's escape hatches (cancel/stop/request_changes) must work.
   const mergeJob = db
     .select({ id: durableJobs.id })
     .from(durableJobs)
-    .where(and(eq(durableJobs.storyId, storyId), eq(durableJobs.kind, 'merge'), eq(durableJobs.status, 'leased')))
+    .where(and(eq(durableJobs.storyId, storyId), eq(durableJobs.kind, 'merge'), eq(durableJobs.status, 'leased'), gt(durableJobs.leaseExpiresAt, new Date())))
     .get();
 
   const cand = row.candidateSha;
@@ -97,14 +99,29 @@ export function loadSnapshot(db: AikDbOrTx, storyId: number): { row: StoryRow; s
 
     const m = db.select().from(merges).where(and(eq(merges.storyId, storyId), eq(merges.approvedSha, cand))).orderBy(desc(merges.id)).limit(1).get();
     if (m) {
-      // The merge job verifies that merged_sha contains the candidate before it records status 'succeeded'.
-      merge = { succeeded: m.status === 'succeeded', mergedSha: m.mergedSha, containsCandidate: m.status === 'succeeded' };
+      // The merger proves containment (tree equality, plus ancestry for merge commits) before it
+      // records status 'succeeded' with baseAfter === mergedSha; the snapshot never re-derives it.
+      const succeeded = m.status === 'succeeded' && m.mergedSha !== null && m.baseAfter === m.mergedSha;
+      merge = { succeeded, mergedSha: m.mergedSha, containsCandidate: succeeded };
       if (m.mergedSha) {
-        postMergeVerificationPassed = !!db
-          .select({ id: verificationRuns.id })
+        // T10/I1: a passed run alone is not evidence — mandatory check rows must exist and all pass.
+        // The newest post-merge run wins whatever its status, so a later failed/error run at the
+        // same SHA can never be masked by an older passed one.
+        const pm = db
+          .select({ id: verificationRuns.id, status: verificationRuns.status })
           .from(verificationRuns)
-          .where(and(eq(verificationRuns.storyId, storyId), eq(verificationRuns.commitSha, m.mergedSha), eq(verificationRuns.trigger, 'postmerge'), eq(verificationRuns.status, 'passed')))
+          .where(and(eq(verificationRuns.storyId, storyId), eq(verificationRuns.commitSha, m.mergedSha), eq(verificationRuns.trigger, 'postmerge')))
+          .orderBy(desc(verificationRuns.id))
+          .limit(1)
           .get();
+        if (pm?.status === 'passed') {
+          const mandatory = db
+            .select({ status: verificationChecks.status })
+            .from(verificationChecks)
+            .where(and(eq(verificationChecks.verificationRunId, pm.id), eq(verificationChecks.mandatory, true)))
+            .all();
+          postMergeVerificationPassed = mandatory.length > 0 && mandatory.every((c) => c.status === 'passed');
+        }
       }
     }
   }

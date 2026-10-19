@@ -66,12 +66,16 @@ export interface RunOneShotInput {
   model?: ModelRef;
   timeoutMs?: number;
   onSessionCreated?: (sessionId: string, model?: ModelRef) => void | Promise<void>;
+  /** Polled between activity checks; a truthy return aborts the run (EXE-13). */
+  shouldStop?: () => boolean;
 }
 
 export interface RunOneShotOutput {
   ok: boolean;
   text?: string;
   error?: string;
+  /** True when the run was aborted because `shouldStop()` returned true (EXE-13). */
+  interrupted?: boolean;
 }
 
 interface OpenCodeMessage {
@@ -104,6 +108,13 @@ export function resolveOpenCodeService(): { url: string; auth: string } | null {
   }
   return null;
 }
+
+/**
+ * Upper bound on how long `runOneShot` keeps polling after it interrupts a session, in case the
+ * server never reports the session idle (spec §18.5, EXE-13). The wait is also clamped to the
+ * run's own timeout so an interrupt never outlives the caller's patience.
+ */
+const INTERRUPT_GRACE_MS = 10_000;
 
 export class OpenCodeRuntime {
   private baseUrl?: string;
@@ -178,6 +189,9 @@ export class OpenCodeRuntime {
   async runOneShot(input: RunOneShotInput): Promise<RunOneShotOutput> {
     const id = `ses_aik${crypto.randomBytes(8).toString('hex')}`;
     try {
+      if (input.shouldStop?.()) {
+        return { ok: false, interrupted: true, error: 'Run interrupted before it started' };
+      }
       const model = await this.resolveModel(input.model, input.directory);
       const created = await this.api('POST', '/api/session', input.directory, {
         id,
@@ -201,10 +215,28 @@ export class OpenCodeRuntime {
       await this.api('POST', `/api/session/${id}/prompt`, input.directory, { text: input.prompt });
 
       const deadline = Date.now() + (input.timeoutMs ?? 600_000);
+      let interruptSent = false;
+      let graceDeadline = 0;
       for (;;) {
+        if (input.shouldStop?.() && !interruptSent) {
+          // Fire the interrupt exactly once; the stop flag alone must end the loop even if the
+          // server ignores the call (EXE-13).
+          interruptSent = true;
+          graceDeadline = Math.min(Date.now() + INTERRUPT_GRACE_MS, deadline);
+          await this.interrupt(id, input.directory);
+        }
         const active = await this.api('GET', '/api/session/active', input.directory).catch(() => ({ status: 0, body: null }));
-        if (!JSON.stringify(active.body).includes(id)) break;
-        if (Date.now() > deadline) {
+        if (!JSON.stringify(active.body).includes(id)) {
+          if (interruptSent) {
+            return { ok: false, interrupted: true, error: 'Run interrupted by a stop request' };
+          }
+          break;
+        }
+        if (interruptSent) {
+          if (Date.now() > graceDeadline) {
+            return { ok: false, interrupted: true, error: 'Run interrupted by a stop request' };
+          }
+        } else if (Date.now() > deadline) {
           return { ok: false, error: 'The model did not finish within timeout' };
         }
         await new Promise((r) => setTimeout(r, 400));
@@ -228,6 +260,16 @@ export class OpenCodeRuntime {
       return { ok: true, text };
     } catch (e) {
       return { ok: false, error: e instanceof Error ? e.message : String(e) };
+    }
+  }
+
+  /** Interrupts a session (spec §18.5: POST /api/session/{id}/interrupt). True on a 2xx reply. */
+  async interrupt(sessionId: string, directory: string): Promise<boolean> {
+    try {
+      const res = await this.api('POST', `/api/session/${sessionId}/interrupt`, directory, {});
+      return res.status >= 200 && res.status < 300;
+    } catch {
+      return false;
     }
   }
 

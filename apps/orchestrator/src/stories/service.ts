@@ -1,27 +1,32 @@
 // apps/orchestrator/src/stories/service.ts
 import {
-  STORY_STATUS, type CreateStoryRequest, type PatchStoryRequest, type StoryDTO, type StoryListQuery, type StoryStatus, type TransitionRequest,
+  STORY_STATUS, type CreateStoryRequest, type PatchStoryRequest, type PlanV1, type StoryDTO, type StoryListQuery, type StoryStatus, type TransitionRequest,
 } from '@aik/contracts';
 import {
-  acceptanceCriteria, agentRuns, modelProfiles, projects, reviewFindings, reviews, storyDependencies, storyEvents, userStories, type AikDb, type AikTx,
+  acceptanceCriteria, agentRuns, clarifications, durableJobs, mergeApprovals, modelProfiles, plans, projects, reviewAcResults, reviewFindings, reviews, storyDependencies, storyEvents, userStories,
+  verificationChecks, verificationRuns, type AikDb, type AikTx,
 } from '@aik/db';
 import type { WorkflowEvent } from '@aik/workflow';
 import { and, asc, desc, eq, inArray, isNull, max, sql, type SQL } from 'drizzle-orm';
+import { execFileSync } from 'node:child_process';
+import crypto from 'node:crypto';
 import { ApiHttpError } from '../api/errors.ts';
 import { OpenCodeRuntime } from '../agents/runtime.ts';
 import type { EventBus } from '../events/bus.ts';
 import { appendOutbox } from '../events/outbox.ts';
+import type { LocalMerger } from '../git/merger.ts';
 import type { JobQueue } from '../jobs/queue.ts';
 import { systemClock, type Clock } from '../time.ts';
-import type { TransitionOutcome, WorkflowService } from '../workflow/service.ts';
+import type { PendingRunInterrupt, TransitionOutcome, WorkflowService } from '../workflow/service.ts';
 import { getStoryRow, type StoryRow } from '../workflow/snapshot.ts';
 import { toStoryDTO } from './dto.ts';
 
 const EDITABLE: readonly StoryStatus[] = ['NEW', 'READY', 'BLOCKED'];
 const PRIORITY_ORDER = sql`CASE ${userStories.priority} WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 WHEN 'P2' THEN 2 ELSE 3 END`;
 const UNAVAILABLE: Record<string, string> = {
-  reject_plan: 'the planner', answer_clarifications: 'the planner', approve_publish: 'GitHub publishing',
-  approve_merge: 'the merge pipeline', override_remote_review: 'GitHub integration',
+  approve_publish: 'GitHub publishing',
+  approve_merge: 'the merge pipeline',
+  override_remote_review: 'GitHub integration',
 };
 
 export function outcomeToError(o: Extract<TransitionOutcome, { ok: false }>): ApiHttpError {
@@ -37,13 +42,15 @@ export class StoryService {
   private readonly workflow: WorkflowService;
   private readonly bus: EventBus;
   private readonly queue?: JobQueue;
+  private readonly merger?: LocalMerger;
   private readonly now: Clock;
 
-  constructor(deps: { db: AikDb; workflow: WorkflowService; bus: EventBus; queue?: JobQueue; now?: Clock }) {
+  constructor(deps: { db: AikDb; workflow: WorkflowService; bus: EventBus; queue?: JobQueue; merger?: LocalMerger; now?: Clock }) {
     this.db = deps.db;
     this.workflow = deps.workflow;
     this.bus = deps.bus;
     this.queue = deps.queue;
+    this.merger = deps.merger;
     this.now = deps.now ?? systemClock;
   }
 
@@ -166,21 +173,102 @@ export class StoryService {
   }
 
   transition(id: number, req: TransitionRequest, idempotencyKey?: string): StoryDTO {
-    if (req.event in UNAVAILABLE) {
+    if (req.event in UNAVAILABLE && !(req.event === 'approve_merge' && this.merger && this.queue)) {
       throw new ApiHttpError(409, 'GUARD_FAILED', `${req.event} is not available yet`, {
         failedGuards: [{ guard: 'feature_unavailable', reason: `${req.event} is handled by ${UNAVAILABLE[req.event]}, which is not installed in this build` }],
       });
     }
+
+    if (req.event === 'approve_merge' && this.merger && this.queue) {
+      const queue = this.queue;
+      const story = getStoryRow(this.db, id);
+      if (!story) throw new ApiHttpError(404, 'NOT_FOUND', `Story ${id} not found`);
+      if (story.status !== 'AWAITING_MERGE') {
+        throw new ApiHttpError(409, 'GUARD_FAILED', `A merge can only be approved while the story is AWAITING_MERGE`, {
+          failedGuards: [{ guard: 'state', reason: `approve_merge is not allowed while the story is ${story.status}` }],
+        });
+      }
+      if (story.candidateSha !== req.sha) {
+        throw new ApiHttpError(409, 'GUARD_FAILED', 'The approval is not for the current candidate', {
+          failedGuards: [{ guard: 'sha', reason: `Candidate ${story.candidateSha ?? 'none'} does not match the approved ${req.sha}` }],
+        });
+      }
+      if (req.expectedVersion !== story.statusVersion) {
+        throw new ApiHttpError(409, 'VERSION_CONFLICT', 'The story changed since it was loaded');
+      }
+
+      const now = new Date(this.now());
+      const inserted = this.db
+        .insert(mergeApprovals)
+        .values({
+          storyId: id,
+          kind: 'merge',
+          commitSha: req.sha,
+          approver: 'local-user',
+          approvedAt: now,
+        })
+        .onConflictDoNothing()
+        .returning({ id: mergeApprovals.id })
+        .get();
+      // A repeated approval of the same candidate conflicts away on (storyId, kind, commitSha); the
+      // job must still reference the one approval row that exists, so re-read it.
+      const approval =
+        inserted ??
+        this.db
+          .select({ id: mergeApprovals.id })
+          .from(mergeApprovals)
+          .where(and(eq(mergeApprovals.storyId, id), eq(mergeApprovals.kind, 'merge'), eq(mergeApprovals.commitSha, req.sha)))
+          .get()!;
+
+      // At most one live merge job per story: a queued job, or a leased job whose lease has not
+      // expired, is already carrying this candidate to the merger. A leased job with a dead lease
+      // is not live (the runner lost it), so a re-approval must still be able to enqueue a retry.
+      const nowMs = this.now();
+      const liveJobs = this.db
+        .select({ id: durableJobs.id, status: durableJobs.status, leaseExpiresAt: durableJobs.leaseExpiresAt })
+        .from(durableJobs)
+        .where(and(eq(durableJobs.storyId, id), eq(durableJobs.kind, 'merge'), inArray(durableJobs.status, ['queued', 'leased'])))
+        .all();
+      const live = liveJobs.some((j) => j.status === 'queued' || (j.leaseExpiresAt !== null && j.leaseExpiresAt.getTime() > nowMs));
+      if (!live) {
+        queue.enqueue({
+          kind: 'merge',
+          slot: 'heavy',
+          storyId: id,
+          sideEffecting: true,
+          payload: { sha: req.sha, approvalId: approval.id },
+          // A failed merge must be retryable: bind the job to the approval request rather than only
+          // to the candidate SHA, otherwise every re-approval collapses onto the failed job.
+          idempotencyKey: `merge_${id}_${req.sha}_${idempotencyKey ?? crypto.randomUUID()}`,
+        });
+      }
+      this.bus.notify(1);
+      return toStoryDTO(this.db, getStoryRow(this.db, id)!);
+    }
     let seq: number | null = null;
+    let interrupts: PendingRunInterrupt[] = [];
     const dto = this.db.transaction((tx) => {
       const event = this.toWorkflowEvent(req);
+      // BA condition C3: the machine only sees counts — the service validates the exact ordinal
+      // set against the current proposed plan so violations can name the offending ordinals.
+      // QA D1: skip validation when this idempotency key already produced a transition (crash-
+      // window replay) — transitionIn must return the duplicate outcome, not a fresh guard error.
+      const replayed = idempotencyKey
+        ? !!tx.select({ id: storyEvents.id }).from(storyEvents).where(eq(storyEvents.idempotencyKey, idempotencyKey)).get()
+        : false;
+      if (req.event === 'answer_clarifications' && !replayed) this.validateClarificationAnswers(tx, id, req);
       const r = this.workflow.transitionIn(tx, { storyId: id, event, expectedVersion: req.expectedVersion, actor: 'human', idempotencyKey });
       if (!r.outcome.ok) throw outcomeToError(r.outcome);
       seq = r.notifySeq;
+      interrupts = r.interrupts;
       if (req.event === 'request_changes' && !r.outcome.duplicate) this.recordHumanReview(tx, id, req);
       return toStoryDTO(tx, r.outcome.story);
     }, { behavior: 'immediate' });
     if (seq !== null) this.bus.notify(seq);
+    // BA condition C1: this human path commits through transitionIn (it never calls
+    // workflow.transition), so the interrupt side effect must be fired here too — after
+    // commit, best-effort, identically to WorkflowService.transition().
+    this.workflow.emitInterrupts(interrupts);
     return dto;
   }
 
@@ -188,6 +276,10 @@ export class StoryService {
     switch (req.event) {
       case 'approve_plan':
         return { type: 'approve_plan', planVersion: req.planVersion };
+      case 'reject_plan':
+        return { type: 'reject_plan', planVersion: req.planVersion, feedback: req.feedback };
+      case 'answer_clarifications':
+        return { type: 'answer_clarifications', planVersion: req.planVersion, answers: req.answers };
       case 'request_changes':
         return { type: 'request_changes', sha: req.sha };
       case 'recover':
@@ -204,6 +296,53 @@ export class StoryService {
       default:
         throw new ApiHttpError(409, 'GUARD_FAILED', `${req.event} is not available yet`);
     }
+  }
+
+  /**
+   * BA condition C3: the machine's `answer_clarifications` guard only compares counts
+   * (`answers.length === openClarifications`); this pre-validation checks the exact ordinal set
+   * against the current proposed plan so a violation names the offending ordinals/answers. A
+   * missing plan, a version mismatch or a non-proposed plan is deliberately left to the
+   * machine's plan guard — this only runs when the request targets the current proposed plan.
+   */
+  private validateClarificationAnswers(tx: AikTx, storyId: number, req: Extract<TransitionRequest, { event: 'answer_clarifications' }>): void {
+    // QA D2: any state other than needs_clarification is the machine's to explain (its
+    // planning_status guard names the actual status) — only ordinal hygiene is checked here.
+    const story = getStoryRow(tx, storyId);
+    if (!story || story.planningStatus !== 'needs_clarification') return;
+    // Same lookup the machine's evidence uses (snapshot.ts): the story's latest plan row.
+    const plan = tx.select().from(plans).where(eq(plans.storyId, storyId)).orderBy(desc(plans.version)).limit(1).get();
+    if (!plan || plan.version !== req.planVersion || plan.status !== 'proposed') return;
+    const openOrdinals = new Set(
+      tx
+        .select({ ordinal: clarifications.ordinal })
+        .from(clarifications)
+        .where(and(eq(clarifications.planId, plan.id), isNull(clarifications.answer)))
+        .all()
+        .map((r) => r.ordinal),
+    );
+    const answered = new Set<number>();
+    const duplicates: number[] = [];
+    const unknown: number[] = [];
+    const empty: number[] = [];
+    for (const a of req.answers) {
+      if (answered.has(a.ordinal)) duplicates.push(a.ordinal);
+      if (!openOrdinals.has(a.ordinal)) unknown.push(a.ordinal);
+      else answered.add(a.ordinal);
+      if (a.answer.trim().length === 0) empty.push(a.ordinal);
+    }
+    const missing = [...openOrdinals].filter((o) => !answered.has(o));
+    if (missing.length === 0 && unknown.length === 0 && duplicates.length === 0 && empty.length === 0) return;
+    const list = (xs: number[]) => [...new Set(xs)].sort((a, b) => a - b).join(', ');
+    const problems = [
+      missing.length ? `missing ordinals ${list(missing)}` : '',
+      unknown.length ? `unknown ordinals ${list(unknown)}` : '',
+      duplicates.length ? `duplicate ordinals ${list(duplicates)}` : '',
+      empty.length ? `empty answers for ordinals ${list(empty)}` : '',
+    ].filter((p) => p.length > 0);
+    throw new ApiHttpError(409, 'GUARD_FAILED', 'The clarification answers do not match the open clarification questions', {
+      failedGuards: [{ guard: 'clarifications', reason: `Every open clarification needs exactly one non-empty answer; found ${problems.join('; ')}` }],
+    });
   }
 
   private recordHumanReview(tx: AikTx, storyId: number, req: Extract<TransitionRequest, { event: 'request_changes' }>): void {
@@ -343,6 +482,147 @@ export class StoryService {
         exitReason: run.exitReason ?? null,
       },
       messages,
+    };
+  }
+
+  getDetails(storyId: number): {
+    plan: PlanV1 | null;
+    verification: {
+      status: string;
+      commitSha: string;
+      checks: { key: string; mandatory: boolean; command: string; status: string; exitCode: number | null; outputTail: string | null }[];
+    } | null;
+    review: {
+      verdict: string;
+      rawVerdict: string;
+      summary: string;
+      normalizationNote: string | null;
+      findings: { id: string; severity: string; category: string; file: string | null; explanation: string; recommendation: string; blocking: boolean; unverifiedLocation: boolean }[];
+      acResults: { criterionId: number; text: string; status: string; evidence: string }[];
+    } | null;
+    diff: string | null;
+  } {
+    const story = getStoryRow(this.db, storyId);
+    if (!story) throw new ApiHttpError(404, 'NOT_FOUND', 'Story not found');
+    const project = this.db.select().from(projects).where(eq(projects.id, story.projectId)).get();
+
+    // 1. Plan
+    const planRow = story.activePlanId
+      ? this.db.select().from(plans).where(eq(plans.id, story.activePlanId)).get()
+      : this.db.select().from(plans).where(eq(plans.storyId, storyId)).orderBy(desc(plans.version)).limit(1).get();
+
+    // 2. Verification
+    let verification: {
+      status: string;
+      commitSha: string;
+      checks: { key: string; mandatory: boolean; command: string; status: string; exitCode: number | null; outputTail: string | null }[];
+    } | null = null;
+    if (story.candidateSha) {
+      const vRun = this.db
+        .select()
+        .from(verificationRuns)
+        .where(and(eq(verificationRuns.storyId, storyId), eq(verificationRuns.commitSha, story.candidateSha)))
+        .orderBy(desc(verificationRuns.id))
+        .limit(1)
+        .get();
+
+      if (vRun) {
+        const checks = this.db
+          .select({
+            key: verificationChecks.checkKey,
+            mandatory: verificationChecks.mandatory,
+            command: verificationChecks.command,
+            status: verificationChecks.status,
+            exitCode: verificationChecks.exitCode,
+            outputTail: verificationChecks.outputTail,
+          })
+          .from(verificationChecks)
+          .where(eq(verificationChecks.verificationRunId, vRun.id))
+          .all();
+
+        verification = {
+          status: vRun.status,
+          commitSha: vRun.commitSha,
+          checks,
+        };
+      }
+    }
+
+    // 3. Review
+    let review: {
+      verdict: string;
+      rawVerdict: string;
+      summary: string;
+      normalizationNote: string | null;
+      findings: { id: string; severity: string; category: string; file: string | null; explanation: string; recommendation: string; blocking: boolean; unverifiedLocation: boolean }[];
+      acResults: { criterionId: number; text: string; status: string; evidence: string }[];
+    } | null = null;
+    if (story.candidateSha) {
+      const rev = this.db
+        .select()
+        .from(reviews)
+        .where(and(eq(reviews.storyId, storyId), eq(reviews.commitSha, story.candidateSha)))
+        .orderBy(desc(reviews.id))
+        .limit(1)
+        .get();
+
+      if (rev) {
+        const findingRows = this.db
+          .select({
+            id: reviewFindings.findingKey,
+            severity: reviewFindings.severity,
+            category: reviewFindings.category,
+            file: reviewFindings.filePath,
+            explanation: reviewFindings.explanation,
+            recommendation: reviewFindings.recommendation,
+            blocking: reviewFindings.blocking,
+            locationVerified: reviewFindings.locationVerified,
+          })
+          .from(reviewFindings)
+          .where(eq(reviewFindings.reviewId, rev.id))
+          .all();
+
+        const acResults = this.db
+          .select({
+            criterionId: reviewAcResults.acceptanceCriterionId,
+            text: acceptanceCriteria.text,
+            status: reviewAcResults.status,
+            evidence: reviewAcResults.evidence,
+          })
+          .from(reviewAcResults)
+          .innerJoin(acceptanceCriteria, eq(acceptanceCriteria.id, reviewAcResults.acceptanceCriterionId))
+          .where(eq(reviewAcResults.reviewId, rev.id))
+          .all();
+
+        review = {
+          verdict: rev.verdict,
+          rawVerdict: rev.rawVerdict,
+          summary: rev.summary,
+          normalizationNote: rev.normalizationNote,
+          findings: findingRows.map(({ locationVerified, ...finding }) => ({ ...finding, unverifiedLocation: !locationVerified })),
+          acResults,
+        };
+      }
+    }
+
+    // 4. Git diff
+    let diff: string | null = null;
+    if (project && story.candidateSha) {
+      try {
+        diff = execFileSync('git', ['diff', `${project.baseBranch}..${story.candidateSha}`], {
+          cwd: project.repoPath,
+          encoding: 'utf8',
+        });
+      } catch {
+        diff = null;
+      }
+    }
+
+    return {
+      plan: planRow?.content ?? null,
+      verification,
+      review,
+      diff,
     };
   }
 }

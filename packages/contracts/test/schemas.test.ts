@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  CreateStoryRequest, PatchProjectRequest, ProjectKey, Sha, StoryListQuery, TransitionRequest,
+  CreateStoryRequest, PatchProjectRequest, ProjectKey, ProjectSettings, Sha, StoryListQuery, TransitionRequest,
   defaultProjectSettings,
 } from '../src/index.ts';
 
@@ -28,6 +28,11 @@ describe('ProjectSettings', () => {
   });
   it('rejects unknown keys in a project patch', () => {
     expect(PatchProjectRequest.safeParse({ name: 'x', bogus: 1 }).success).toBe(false);
+  });
+  it('reserves the secrets check key for the internal scan', () => {
+    const check = { key: 'secrets', command: 'npm test', mandatory: true, timeoutSec: 10 };
+    expect(ProjectSettings.safeParse({ checks: [check] }).success).toBe(false);
+    expect(ProjectSettings.safeParse({ checks: [{ ...check, key: 'test' }] }).success).toBe(true);
   });
 });
 

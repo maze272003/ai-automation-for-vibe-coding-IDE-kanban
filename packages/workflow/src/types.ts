@@ -2,7 +2,8 @@ import type { BlockedReason, FailedGuard, PlanStatus, PlanningStatus, StoryStatu
 
 export type TransitionId =
   | 'T1' | 'T2' | 'T3' | 'T4' | 'T5' | 'T6' | 'T7' | 'T8' | 'T9' | 'T10' | 'T11' | 'T12' | 'T13' | 'T14' | 'T15' | 'T16' | 'T17'
-  | 'EDIT' | 'HOLD' | 'UNHOLD';
+  | 'EDIT' | 'HOLD' | 'UNHOLD'
+  | 'REJECT_PLAN' | 'ANSWER_CLARIFICATIONS';
 
 export interface StorySnapshot {
   status: StoryStatus;
@@ -44,10 +45,12 @@ export interface Evidence {
 
 export type WorkflowEvent =
   | { type: 'approve_plan'; planVersion: number }
+  | { type: 'reject_plan'; planVersion: number; feedback: string }
+  | { type: 'answer_clarifications'; planVersion: number; answers: { ordinal: number; answer: string }[] }
   | { type: 'auto_accept_plan'; planVersion: number }
   | { type: 'edit_definition' }
   | { type: 'claim_implement'; runId: number; leaseHeld: boolean; worktreeReady: boolean }
-  | { type: 'candidate_committed'; runId: number; candidateSha: string; candidateTree: string; diffEmpty: boolean; treeAlreadyRejected: boolean }
+  | { type: 'candidate_committed'; runId: number; candidateSha: string; candidateTree: string; diffEmpty: boolean; treeAlreadyRejected: boolean; protectedPaths?: string[] }
   | { type: 'verification_passed'; sha: string }
   | { type: 'review_approved'; sha: string }
   | { type: 'review_changes_requested'; sha: string }
@@ -65,7 +68,7 @@ export type WorkflowEvent =
 export type EventType = WorkflowEvent['type'];
 
 export const EVENT_TYPES: readonly EventType[] = [
-  'approve_plan', 'auto_accept_plan', 'edit_definition', 'claim_implement', 'candidate_committed', 'verification_passed',
+  'approve_plan', 'reject_plan', 'answer_clarifications', 'auto_accept_plan', 'edit_definition', 'claim_implement', 'candidate_committed', 'verification_passed',
   'review_approved', 'review_changes_requested', 'merge_completed', 'candidate_head_changed', 'request_changes',
   'merge_conflict', 'fail', 'stop_run', 'recover', 'cancel', 'hold', 'unhold',
 ];
@@ -88,6 +91,8 @@ export interface StoryPatch {
 
 export type Effect =
   | { kind: 'approve_plan'; planVersion: number; by: 'human' | 'auto' }
+  | { kind: 'reject_plan'; planVersion: number; feedback: string }
+  | { kind: 'answer_clarifications'; planVersion: number; answers: { ordinal: number; answer: string }[] }
   | { kind: 'supersede_plan' }
   | { kind: 'interrupt_active_run'; runId: number }
   | { kind: 'cancel_jobs' };

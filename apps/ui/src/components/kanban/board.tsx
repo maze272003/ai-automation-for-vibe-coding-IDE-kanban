@@ -95,6 +95,7 @@ export function Board({ stories, onChanged }: { stories: StoryDTO[]; onChanged: 
         <TerminalModal
           story={currentTerminalStory}
           onClose={() => setTerminalStory(null)}
+          onChanged={onChanged}
         />
       )}
     </div>

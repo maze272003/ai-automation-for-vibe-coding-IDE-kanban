@@ -25,6 +25,54 @@ describe('T1 approve_plan', () => {
   });
 });
 
+describe('REJECT_PLAN reject_plan', () => {
+  it('keeps the story NEW in planning and records the rejection effect', () => {
+    const r = evaluate(story(), evidence(), { type: 'reject_plan', planVersion: 1, feedback: 'Stream the export instead' });
+    expect(r).toMatchObject({ ok: true, id: 'REJECT_PLAN', from: 'NEW', to: 'NEW', patch: { status: 'NEW', planningStatus: 'planning' } });
+    if (r.ok) expect(r.effects).toEqual([{ kind: 'reject_plan', planVersion: 1, feedback: 'Stream the export instead' }]);
+  });
+  it('requires plan_proposed, the proposed plan version and non-empty feedback', () => {
+    const r = evaluate(
+      story({ planningStatus: 'planning' }),
+      evidence({ plan: { version: 1, status: 'superseded', storyRevision: 1, openClarifications: 0 } }),
+      { type: 'reject_plan', planVersion: 2, feedback: '   ' },
+    );
+    expect(guards(r)).toEqual(['planning_status', 'plan_version', 'feedback']);
+  });
+  it('a plan that is not the current proposal is folded into the plan_version guard', () => {
+    const r = evaluate(
+      story(),
+      evidence({ plan: { version: 1, status: 'rejected', storyRevision: 1, openClarifications: 0 } }),
+      { type: 'reject_plan', planVersion: 1, feedback: 'Reject it again' },
+    );
+    expect(guards(r)).toEqual(['plan_version']);
+  });
+});
+
+describe('ANSWER_CLARIFICATIONS answer_clarifications', () => {
+  const twoOpen = () => evidence({ plan: { version: 1, status: 'proposed', storyRevision: 1, openClarifications: 2 } });
+  it('keeps the story NEW in planning and records every answer', () => {
+    const answers = [{ ordinal: 1, answer: 'CSV and JSON' }, { ordinal: 2, answer: 'No' }];
+    const r = evaluate(story({ planningStatus: 'needs_clarification' }), twoOpen(), { type: 'answer_clarifications', planVersion: 1, answers });
+    expect(r).toMatchObject({ ok: true, id: 'ANSWER_CLARIFICATIONS', from: 'NEW', to: 'NEW', patch: { status: 'NEW', planningStatus: 'planning' } });
+    if (r.ok) expect(r.effects).toEqual([{ kind: 'answer_clarifications', planVersion: 1, answers }]);
+  });
+  it('requires needs_clarification, the proposed plan version and one answer per open question', () => {
+    const r = evaluate(
+      story({ planningStatus: 'plan_proposed' }),
+      evidence({ plan: { version: 1, status: 'approved', storyRevision: 1, openClarifications: 2 } }),
+      { type: 'answer_clarifications', planVersion: 3, answers: [{ ordinal: 1, answer: 'CSV and JSON' }] },
+    );
+    expect(guards(r)).toEqual(['planning_status', 'plan_version', 'clarifications']);
+  });
+  it('a missing plan denies on plan_version and clarifications', () => {
+    const r = evaluate(story({ planningStatus: 'needs_clarification' }), evidence({ plan: null }), {
+      type: 'answer_clarifications', planVersion: 1, answers: [],
+    });
+    expect(guards(r)).toEqual(['plan_version', 'clarifications']);
+  });
+});
+
 describe('edit_definition', () => {
   it('T2 moves READY back to NEW, bumps revision and supersedes the plan', () => {
     const r = evaluate(story({ status: 'READY', revision: 3 }), evidence(), { type: 'edit_definition' });

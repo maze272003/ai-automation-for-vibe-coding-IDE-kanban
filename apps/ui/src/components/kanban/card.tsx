@@ -1,9 +1,15 @@
 // apps/ui/src/components/kanban/card.tsx
-import type { StoryDTO, StoryStatus } from '@aik/contracts';
+import { ACTIVE_STATUSES, isTerminal, type StoryDTO, type StoryStatus } from '@aik/contracts';
 import { draggable } from '@atlaskit/pragmatic-drag-and-drop/element/adapter';
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { performEvent, type StoryActionEvent } from '../../lib/transitions.ts';
+import { useToast } from '../ui/toast.tsx';
 import { Badge } from '../ui/badge.tsx';
 import { MoveMenu } from './move-menu.tsx';
+
+/** Shared chrome for the compact Stop/Hold controls (focus + disabled match Button's). */
+const actionButtonClass =
+  'flex items-center gap-1 rounded-md border px-2 py-1 text-xs font-medium transition-colors focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-indigo-500 disabled:cursor-not-allowed disabled:opacity-50';
 
 function TerminalIcon({ className = 'h-3.5 w-3.5' }: { className?: string }) {
   return (
@@ -23,6 +29,8 @@ export function Card({
   onOpenTerminal?: (story: StoryDTO) => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
+  const toast = useToast();
+  const [busyAction, setBusyAction] = useState<StoryActionEvent | null>(null);
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
@@ -32,6 +40,24 @@ export function Card({
   const isWorking = Boolean(story.activeRun || story.planningStatus === 'planning');
   const activeModel = story.activeRun?.model;
   const activeRole = story.activeRun?.role ?? (story.planningStatus === 'planning' ? 'planner' : null);
+
+  // stop_run follows the machine's T13 guard (ACTIVE_STATUSES): verification runs with no
+  // activeRun, and a stop must reach a running check tree (EXE-13); NEW never offers Stop.
+  const canStopRun = (ACTIVE_STATUSES as readonly string[]).includes(story.status);
+  const canToggleHold = !isTerminal(story.status);
+
+  const runAction = async (event: StoryActionEvent, success: string) => {
+    setBusyAction(event);
+    try {
+      const result = await performEvent(story, event);
+      if (result.ok) toast(success, 'info');
+      else toast(result.reason, 'error');
+    } catch (e) {
+      toast(String(e), 'error');
+    } finally {
+      setBusyAction(null);
+    }
+  };
 
   return (
     <div
@@ -107,6 +133,67 @@ export function Card({
             {story.lastRun.status}
           </span>
         </button>
+      )}
+
+      {story.status === 'AWAITING_MERGE' && (
+        <button
+          type="button"
+          data-testid={`awaiting-merge-${story.key}`}
+          onClick={(e) => {
+            e.stopPropagation();
+            onOpenTerminal?.(story);
+          }}
+          className="mt-2.5 flex w-full items-center justify-between rounded bg-emerald-600 hover:bg-emerald-500 px-2.5 py-1.5 font-medium text-xs text-white shadow transition-all cursor-pointer group"
+          title={`Review code changes and approve merge for ${story.key}`}
+        >
+          <div className="flex items-center gap-1.5 min-w-0">
+            <svg className="h-3.5 w-3.5 shrink-0 text-emerald-100" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            <span className="truncate font-semibold text-[11px]">Review & Merge</span>
+          </div>
+          <span className="text-[10px] text-emerald-100 group-hover:translate-x-0.5 transition-transform">→</span>
+        </button>
+      )}
+
+      {(canStopRun || canToggleHold) && (
+        <div className="mt-2 flex flex-wrap items-center gap-1.5">
+          {canStopRun && (
+            <button
+              type="button"
+              data-testid={`stop-run-${story.key}`}
+              onClick={(e) => {
+                e.stopPropagation();
+                void runAction('stop_run', `Stop requested for ${story.key}; the active run is being interrupted`);
+              }}
+              disabled={busyAction !== null}
+              title={`Interrupt the active run and block ${story.key} as interrupted`}
+              className={`${actionButtonClass} border-red-300 bg-red-50 text-red-700 hover:bg-red-100 dark:border-red-500/40 dark:bg-red-950/40 dark:text-red-300 dark:hover:bg-red-900/60`}
+            >
+              <span aria-hidden="true">■</span>
+              {busyAction === 'stop_run' ? 'Stopping…' : 'Stop run'}
+            </button>
+          )}
+          {canToggleHold && (
+            <button
+              type="button"
+              data-testid={`hold-toggle-${story.key}`}
+              onClick={(e) => {
+                e.stopPropagation();
+                void runAction(
+                  story.hold ? 'unhold' : 'hold',
+                  story.hold ? `${story.key} taken off hold` : `${story.key} put on hold`,
+                );
+              }}
+              disabled={busyAction !== null}
+              title={story.hold ? `Let scheduled work resume for ${story.key}` : `Pause scheduled work for ${story.key} without changing its status`}
+              className={`${actionButtonClass} border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100 dark:border-amber-500/40 dark:bg-amber-950/40 dark:text-amber-200 dark:hover:bg-amber-900/60`}
+            >
+              <span aria-hidden="true">{story.hold ? '▶' : '⏸'}</span>
+              {story.hold ? 'Unhold' : 'Hold'}
+            </button>
+          )}
+        </div>
       )}
 
       <div className="mt-2 flex items-center justify-between text-xs text-zinc-500 dark:text-zinc-400">

@@ -11,6 +11,7 @@ export function registerStoryRoutes(app: FastifyInstance, deps: { db: AikDb; now
   app.get('/projects/:id/stories', async (req) => deps.stories.list(parse(IdParams, req.params).id, parse(StoryListQuery, req.query)));
   app.get('/stories/:id', async (req) => deps.stories.get(parse(IdParams, req.params).id));
   app.get('/stories/:id/agent-run', async (req) => deps.stories.getAgentRun(parse(IdParams, req.params).id));
+  app.get('/stories/:id/details', async (req) => deps.stories.getDetails(parse(IdParams, req.params).id));
   mutation(app, deps, 'POST', '/projects/:id/stories', async (req) => ({
     status: 201,
     body: deps.stories.create(parse(IdParams, req.params).id, parse(CreateStoryRequest, req.body)),

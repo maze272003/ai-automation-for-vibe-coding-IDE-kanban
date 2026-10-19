@@ -1,7 +1,9 @@
 // apps/orchestrator/test/stories.test.ts
-import { agentRuns, plans, reviews, storyEvents } from '@aik/db';
+import { agentRuns, clarifications, plans, reviewFindings, reviews, storyEvents, verificationChecks, verificationRuns } from '@aik/db';
 import crypto from 'node:crypto';
+import { eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { ApiHttpError } from '../src/api/errors.ts';
 import { buildTestApp } from './helpers/app.ts';
 import { forceStory, seedPlan } from './helpers/db.ts';
 import { makeTempRepo } from './helpers/temp.ts';
@@ -135,6 +137,153 @@ describe('POST /stories/:id/transitions', () => {
   });
 });
 
+describe('plan feedback: reject_plan and answer_clarifications (EXE-7)', () => {
+  /** Puts the story's v1 plan in the requested planning state, optionally with open questions. */
+  const seedProposedPlan = (storyId: number, planningStatus: 'plan_proposed' | 'needs_clarification', questions: string[] = []) => {
+    const plan = seedPlan(ctx.t.db, storyId); // version 1, proposed
+    if (questions.length > 0) {
+      ctx.t.db.insert(clarifications).values(questions.map((q, i) => ({ planId: plan.id, ordinal: i + 1, question: q }))).run();
+    }
+    forceStory(ctx.t.db, storyId, { planningStatus });
+    return plan;
+  };
+
+  it('reject_plan marks the plan rejected with feedback and returns the story to planning', async () => {
+    const s = await createStory({ title: 'X', description: 'd', acceptanceCriteria: ['A'] });
+    seedProposedPlan(s.id, 'plan_proposed');
+    const r = await ctx.inject('POST', `/stories/${s.id}/transitions`, { event: 'reject_plan', planVersion: 1, feedback: 'Batch the inserts instead', expectedVersion: 0 });
+    expect(r.statusCode).toBe(200);
+    expect(r.json()).toMatchObject({ status: 'NEW', planningStatus: 'planning', statusVersion: 1 });
+    expect(ctx.t.db.select().from(plans).get()).toMatchObject({ status: 'rejected', rejectionFeedback: 'Batch the inserts instead' });
+  });
+
+  it('answer_clarifications persists every answer and returns the story to planning', async () => {
+    const s = await createStory({ title: 'X', description: 'd', acceptanceCriteria: ['A'] });
+    seedProposedPlan(s.id, 'needs_clarification', ['Which database?', 'Is auth needed?']);
+    const r = await ctx.inject('POST', `/stories/${s.id}/transitions`, {
+      event: 'answer_clarifications', planVersion: 1,
+      answers: [{ ordinal: 1, answer: 'SQLite' }, { ordinal: 2, answer: 'No auth' }], expectedVersion: 0,
+    });
+    expect(r.statusCode).toBe(200);
+    expect(r.json()).toMatchObject({ status: 'NEW', planningStatus: 'planning', statusVersion: 1 });
+    const rows = ctx.t.db.select().from(clarifications).all().sort((a, b) => a.ordinal - b.ordinal);
+    expect(rows[0]).toMatchObject({ ordinal: 1, answer: 'SQLite', answeredAt: expect.any(Date) });
+    expect(rows[1]).toMatchObject({ ordinal: 2, answer: 'No auth', answeredAt: expect.any(Date) });
+  });
+
+  it('answer_clarifications with a missing ordinal is GUARD_FAILED naming it', async () => {
+    const s = await createStory({ title: 'X', description: 'd', acceptanceCriteria: ['A'] });
+    seedProposedPlan(s.id, 'needs_clarification', ['Q1?', 'Q2?']);
+    const r = await ctx.inject('POST', `/stories/${s.id}/transitions`, { event: 'answer_clarifications', planVersion: 1, answers: [{ ordinal: 1, answer: 'A1' }], expectedVersion: 0 });
+    expect(r.statusCode).toBe(409);
+    expect(r.json().error.code).toBe('GUARD_FAILED');
+    expect(r.json().error.failedGuards).toEqual([{ guard: 'clarifications', reason: expect.stringContaining('missing ordinals 2') }]);
+    expect(ctx.t.db.select().from(clarifications).all().every((c) => c.answer === null)).toBe(true);
+  });
+
+  it('answer_clarifications with an unknown ordinal is GUARD_FAILED naming it', async () => {
+    const s = await createStory({ title: 'X', description: 'd', acceptanceCriteria: ['A'] });
+    seedProposedPlan(s.id, 'needs_clarification', ['Q1?', 'Q2?']);
+    const r = await ctx.inject('POST', `/stories/${s.id}/transitions`, {
+      event: 'answer_clarifications', planVersion: 1,
+      answers: [{ ordinal: 1, answer: 'A1' }, { ordinal: 2, answer: 'A2' }, { ordinal: 3, answer: 'A3' }], expectedVersion: 0,
+    });
+    expect(r.statusCode).toBe(409);
+    expect(r.json().error.failedGuards).toEqual([{ guard: 'clarifications', reason: expect.stringContaining('unknown ordinals 3') }]);
+    expect(ctx.t.db.select().from(clarifications).all().every((c) => c.answer === null)).toBe(true);
+  });
+
+  it('answer_clarifications with a duplicate ordinal is GUARD_FAILED naming it', async () => {
+    const s = await createStory({ title: 'X', description: 'd', acceptanceCriteria: ['A'] });
+    seedProposedPlan(s.id, 'needs_clarification', ['Q1?', 'Q2?']);
+    const r = await ctx.inject('POST', `/stories/${s.id}/transitions`, {
+      event: 'answer_clarifications', planVersion: 1,
+      answers: [{ ordinal: 1, answer: 'A1' }, { ordinal: 1, answer: 'A1 again' }], expectedVersion: 0,
+    });
+    expect(r.statusCode).toBe(409);
+    expect(r.json().error.failedGuards).toEqual([{ guard: 'clarifications', reason: expect.stringContaining('duplicate ordinals 1') }]);
+    expect(ctx.t.db.select().from(clarifications).all().every((c) => c.answer === null)).toBe(true);
+  });
+
+  it('answer_clarifications with a whitespace-only answer is GUARD_FAILED naming the ordinal (service-level; the HTTP schema trims first)', async () => {
+    const s = await createStory({ title: 'X', description: 'd', acceptanceCriteria: ['A'] });
+    seedProposedPlan(s.id, 'needs_clarification', ['Q1?', 'Q2?']);
+    try {
+      ctx.services.stories.transition(s.id, {
+        event: 'answer_clarifications', planVersion: 1,
+        answers: [{ ordinal: 1, answer: 'A1' }, { ordinal: 2, answer: '   ' }], expectedVersion: 0,
+      });
+      expect.unreachable('the service must refuse empty answers');
+    } catch (e) {
+      expect(e).toBeInstanceOf(ApiHttpError);
+      const err = e as ApiHttpError;
+      expect(err.statusCode).toBe(409);
+      expect(err.code).toBe('GUARD_FAILED');
+      expect(err.failedGuards?.[0]?.guard).toBe('clarifications');
+      expect(err.failedGuards?.[0]?.reason).toContain('empty answers for ordinals 2');
+    }
+    expect(ctx.t.db.select().from(clarifications).all().every((c) => c.answer === null)).toBe(true);
+  });
+
+  it('answer_clarifications while already answered (stale tab) is refused by the machine planning_status guard, not the ordinal validator (QA D2)', async () => {
+    const s = await createStory({ title: 'X', description: 'd', acceptanceCriteria: ['A'] });
+    seedProposedPlan(s.id, 'needs_clarification', ['Q1?']);
+    const first = await ctx.inject('POST', `/stories/${s.id}/transitions`, {
+      event: 'answer_clarifications', planVersion: 1, answers: [{ ordinal: 1, answer: 'A1' }], expectedVersion: 0,
+    });
+    expect(first.statusCode).toBe(200);
+    // A stale tab re-submits after the story already left needs_clarification; the machine's
+    // clearer planning_status guard must surface, not the ordinal validator's message.
+    const r = await ctx.inject('POST', `/stories/${s.id}/transitions`, {
+      event: 'answer_clarifications', planVersion: 1, answers: [{ ordinal: 1, answer: 'A1' }], expectedVersion: 1,
+    });
+    expect(r.statusCode).toBe(409);
+    expect(r.json().error.failedGuards.map((g: { guard: string }) => g.guard)).toContain('planning_status');
+  });
+
+  it('a replayed answer_clarifications request with the same idempotency key returns the duplicate outcome instead of a guard error (QA D1)', async () => {
+    const s = await createStory({ title: 'X', description: 'd', acceptanceCriteria: ['A'] });
+    seedProposedPlan(s.id, 'needs_clarification', ['Q1?']);
+    const key = '0d1f8ac0-1111-4222-8333-444455556666';
+    const req = { event: 'answer_clarifications' as const, planVersion: 1, answers: [{ ordinal: 1, answer: 'A1' }], expectedVersion: 0 };
+    const first = ctx.services.stories.transition(s.id, req, key);
+    expect(first.planningStatus).toBe('planning');
+    // Crash-window replay (the API idempotency store was lost): the same key must return the
+    // recorded duplicate transition, never a fresh validation/guard error.
+    const second = ctx.services.stories.transition(s.id, req, key);
+    expect(second.planningStatus).toBe('planning');
+    expect(second.statusVersion).toBe(first.statusVersion);
+    expect(ctx.t.db.select().from(clarifications).where(eq(clarifications.answer, 'A1')).all()).toHaveLength(1);
+  });
+
+  it('reject_plan for a wrong planVersion is refused by the plan guard', async () => {
+    const s = await createStory({ title: 'X', description: 'd', acceptanceCriteria: ['A'] });
+    seedProposedPlan(s.id, 'plan_proposed');
+    const r = await ctx.inject('POST', `/stories/${s.id}/transitions`, { event: 'reject_plan', planVersion: 2, feedback: 'Stale plan', expectedVersion: 0 });
+    expect(r.statusCode).toBe(409);
+    expect(r.json().error.failedGuards.map((g: { guard: string }) => g.guard)).toContain('plan_version');
+    expect(ctx.t.db.select().from(plans).get()?.status).toBe('proposed');
+  });
+
+  it('reject_plan is refused outside NEW', async () => {
+    const s = await createStory({ title: 'X', description: 'd', acceptanceCriteria: ['A'] });
+    const plan = seedPlan(ctx.t.db, s.id, { status: 'approved' });
+    forceStory(ctx.t.db, s.id, { status: 'READY', planningStatus: 'plan_approved', activePlanId: plan.id });
+    const r = await ctx.inject('POST', `/stories/${s.id}/transitions`, { event: 'reject_plan', planVersion: 1, feedback: 'Too late', expectedVersion: 0 });
+    expect(r.statusCode).toBe(409);
+    expect(r.json().error.failedGuards.map((g: { guard: string }) => g.guard)).toContain('state');
+  });
+
+  it('answer_clarifications for a wrong planVersion is refused by the plan guard', async () => {
+    const s = await createStory({ title: 'X', description: 'd', acceptanceCriteria: ['A'] });
+    seedProposedPlan(s.id, 'needs_clarification', ['Q1?']);
+    const r = await ctx.inject('POST', `/stories/${s.id}/transitions`, { event: 'answer_clarifications', planVersion: 2, answers: [{ ordinal: 1, answer: 'A1' }], expectedVersion: 0 });
+    expect(r.statusCode).toBe(409);
+    expect(r.json().error.failedGuards.map((g: { guard: string }) => g.guard)).toContain('plan_version');
+    expect(ctx.t.db.select().from(clarifications).all().every((c) => c.answer === null)).toBe(true);
+  });
+});
+
 describe('GET /stories/:id/agent-run', () => {
   it('returns run details and messages for a story', async () => {
     const s = await createStory({ title: 'Task with run' });
@@ -160,5 +309,44 @@ describe('GET /stories/:id/agent-run', () => {
       status: 'running',
       model: 'OpenCode',
     });
+  });
+});
+
+describe('GET /stories/:id/details', () => {
+  it('exposes plan, verification and review findings, flagging unverified locations', async () => {
+    const s = await createStory({ title: 'Detail me', description: 'd', acceptanceCriteria: ['It works'] });
+    const sha = 'a'.repeat(40);
+    const plan = seedPlan(ctx.t.db, s.id, { status: 'approved' });
+    forceStory(ctx.t.db, s.id, { status: 'READY_FOR_REVIEW', candidateSha: sha, candidateTree: 'b'.repeat(40), activePlanId: plan.id });
+
+    const run = ctx.t.db.insert(verificationRuns).values({
+      storyId: s.id, commitSha: sha, trigger: 'candidate', status: 'failed', startedAt: new Date(), endedAt: new Date(),
+    }).returning().get();
+    ctx.t.db.insert(verificationChecks).values({
+      verificationRunId: run.id, checkKey: 'test', mandatory: true, command: 'npm test', cwd: 'wt', status: 'failed', exitCode: 1, startedAt: new Date(), endedAt: new Date(),
+    }).run();
+
+    const review = ctx.t.db.insert(reviews).values({
+      storyId: s.id, commitSha: sha, actor: 'agent', rawVerdict: 'CHANGES_REQUESTED', verdict: 'CHANGES_REQUESTED',
+      summary: 'Fix it',
+      raw: { schemaVersion: 1, verdict: 'CHANGES_REQUESTED', summary: 'Fix it', acChecklist: [], findings: [], priorFindings: [] },
+      createdAt: new Date(),
+    }).returning().get();
+    ctx.t.db.insert(reviewFindings).values([
+      { reviewId: review.id, findingKey: 'F-1', severity: 'high', category: 'correctness', filePath: 'ghost.ts', evidence: 'e', explanation: 'x', recommendation: 'r', blocking: true, locationVerified: false },
+      { reviewId: review.id, findingKey: 'F-2', severity: 'info', category: 'tests', filePath: 'src/a.ts', evidence: 'e', explanation: 'y', recommendation: 'r2', blocking: false },
+    ]).run();
+
+    const r = await ctx.inject('GET', `/stories/${s.id}/details`);
+    expect(r.statusCode).toBe(200);
+    const body = r.json();
+    expect(body.plan).toMatchObject({ summary: 'Plan' });
+    expect(body.verification).toMatchObject({ status: 'failed', commitSha: sha });
+    expect(body.verification.checks[0]).toMatchObject({ key: 'test', status: 'failed', exitCode: 1 });
+    expect(body.review.findings).toEqual([
+      expect.objectContaining({ id: 'F-1', file: 'ghost.ts', unverifiedLocation: true }),
+      expect.objectContaining({ id: 'F-2', file: 'src/a.ts', unverifiedLocation: false }),
+    ]);
+    expect(body.diff).toBeNull();
   });
 });

@@ -3,7 +3,9 @@ import { openDatabase } from '@aik/db';
 import fs from 'node:fs';
 import type { AddressInfo } from 'node:net';
 import { ImplementerAgent } from './agents/implementer.ts';
+import { RunInterruptRegistry } from './agents/interrupts.ts';
 import { PlannerAgent } from './agents/planner.ts';
+import { ReviewerAgent } from './agents/reviewer.ts';
 import { AgentRunner } from './agents/runner.ts';
 import { OpenCodeRuntime } from './agents/runtime.ts';
 import { registerEventRoutes } from './api/routes/events.ts';
@@ -13,6 +15,7 @@ import { registerStoryRoutes } from './api/routes/stories.ts';
 import { createApiServer } from './api/server.ts';
 import { dataPaths } from './config.ts';
 import { EventBus } from './events/bus.ts';
+import { LocalMerger } from './git/merger.ts';
 import { WorktreeManager } from './git/worktree.ts';
 import { JobQueue } from './jobs/queue.ts';
 import { createLogger } from './logging/logger.ts';
@@ -20,6 +23,7 @@ import { ProjectService } from './projects/service.ts';
 import { createRedactor } from './secrets/redactor.ts';
 import { StoryService } from './stories/service.ts';
 import { systemClock } from './time.ts';
+import { VerificationRunner } from './verify/runner.ts';
 import { WorkflowService } from './workflow/service.ts';
 
 export interface OrchestratorOptions {
@@ -53,7 +57,15 @@ export async function startOrchestrator(opts: OrchestratorOptions): Promise<Runn
   }
   const db = opened.db;
   const bus = new EventBus();
-  const workflow = new WorkflowService({ db, bus, redact: redactor.redact });
+  // EXE-13: the single registry of interruptible in-flight work. The workflow fires
+  // onRunInterrupt after a stop_run/cancel/fail commit; agents and verification register handles.
+  const interrupts = new RunInterruptRegistry();
+  const workflow = new WorkflowService({
+    db,
+    bus,
+    redact: redactor.redact,
+    onRunInterrupt: (storyId) => void interrupts.requestStop(storyId),
+  });
   const queue = new JobQueue(db);
 
   // Startup recovery (spec §6.10): side-effecting jobs whose lease expired are never re-run automatically.
@@ -69,14 +81,16 @@ export async function startOrchestrator(opts: OrchestratorOptions): Promise<Runn
   }
 
   const projects = new ProjectService({ db });
-  await projects.refreshAvailability();
-  const stories = new StoryService({ db, workflow, bus, queue });
-
-  const worktreeManager = new WorktreeManager({ rootDir: paths.worktrees });
+  const worktreeManager = new WorktreeManager({ rootDir: paths.worktrees, db });
   const runtime = new OpenCodeRuntime();
-  const planner = new PlannerAgent({ db, workflow, bus, runtime });
-  const implementer = new ImplementerAgent({ db, workflow, bus, runtime, worktreeManager });
-  const runner = new AgentRunner({ db, queue, workflow, bus, planner, implementer });
+  const verification = new VerificationRunner({ db, workflow, bus, worktreeManager, logsDir: paths.logs, redact: redactor.redact, interrupts });
+  const merger = new LocalMerger({ db, workflow, bus, worktreeManager, verification, redact: redactor.redact });
+  const stories = new StoryService({ db, workflow, bus, queue, merger });
+
+  const planner = new PlannerAgent({ db, workflow, bus, runtime, interrupts });
+  const implementer = new ImplementerAgent({ db, workflow, bus, runtime, worktreeManager, interrupts });
+  const reviewer = new ReviewerAgent({ db, workflow, bus, runtime, worktreeManager, interrupts });
+  const runner = new AgentRunner({ db, queue, workflow, bus, planner, implementer, verification, reviewer, merger });
   runner.start();
 
   let port = 0;

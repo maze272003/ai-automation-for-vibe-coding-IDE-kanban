@@ -66,6 +66,32 @@ export function evaluate(s: StorySnapshot, e: Evidence, ev: WorkflowEvent): Tran
         ])
       );
 
+    case 'reject_plan':
+      return (
+        stateGuard(s, ev, ['NEW']) ??
+        deny([
+          [s.planningStatus === 'plan_proposed', 'planning_status', `Planning status is ${s.planningStatus}, expected plan_proposed`],
+          [e.plan !== null && e.plan.status === 'proposed' && e.plan.version === ev.planVersion, 'plan_version', `Plan version ${ev.planVersion} is not the proposed plan`],
+          [ev.feedback.trim().length > 0, 'feedback', 'Rejection feedback is required'],
+        ]) ??
+        allow(s, 'REJECT_PLAN', 'NEW', { planningStatus: 'planning' }, [
+          { kind: 'reject_plan', planVersion: ev.planVersion, feedback: ev.feedback },
+        ])
+      );
+
+    case 'answer_clarifications':
+      return (
+        stateGuard(s, ev, ['NEW']) ??
+        deny([
+          [s.planningStatus === 'needs_clarification', 'planning_status', `Planning status is ${s.planningStatus}, expected needs_clarification`],
+          [e.plan !== null && e.plan.status === 'proposed' && e.plan.version === ev.planVersion, 'plan_version', `Plan version ${ev.planVersion} is not the proposed plan`],
+          [ev.answers.length === (e.plan?.openClarifications ?? -1), 'clarifications', `The request answers ${ev.answers.length} of ${e.plan?.openClarifications ?? 0} open clarification questions`],
+        ]) ??
+        allow(s, 'ANSWER_CLARIFICATIONS', 'NEW', { planningStatus: 'planning' }, [
+          { kind: 'answer_clarifications', planVersion: ev.planVersion, answers: ev.answers },
+        ])
+      );
+
     case 'edit_definition': {
       const st = stateGuard(s, ev, ['NEW', 'READY', 'BLOCKED']);
       if (st) return st;

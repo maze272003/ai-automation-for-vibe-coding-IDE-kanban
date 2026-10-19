@@ -95,6 +95,28 @@ describe('GET/PATCH /projects', () => {
     expect((await app.inject({ method: 'GET', url: '/projects/999', headers: h() })).statusCode).toBe(404);
   });
 
+  it('proposes repository checks without persisting them', async () => {
+    const repo = makeTempRepo({ name: 'proposal-repo' });
+    fs.writeFileSync(
+      path.join(repo, 'package.json'),
+      JSON.stringify({ scripts: { test: 'vitest run', lint: 'eslint .' } }),
+    );
+    const created = (await create({ name: 'Proposal', key: 'PROP', repoPath: repo })).json();
+
+    const proposal = await app.inject({ method: 'GET', url: `/projects/${created.id}/checks/proposal`, headers: h() });
+
+    expect(proposal.statusCode).toBe(200);
+    expect(proposal.json()).toMatchObject({
+      ecosystems: ['node'],
+      checks: [
+        { key: 'test', command: 'npm test', mandatory: true },
+        { key: 'lint', command: 'npm run lint', mandatory: true },
+      ],
+    });
+    const stored = await app.inject({ method: 'GET', url: `/projects/${created.id}`, headers: h() });
+    expect(stored.json().settings.checks).toEqual([]);
+  });
+
   it('marks a moved repository unavailable and back to active', async () => {
     const repo = makeTempRepo();
     const created = (await create({ name: 'A', key: 'MV', repoPath: repo })).json();

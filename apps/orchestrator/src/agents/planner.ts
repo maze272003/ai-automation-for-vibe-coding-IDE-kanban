@@ -1,10 +1,12 @@
 import { PlanV1 } from '@aik/contracts';
-import { acceptanceCriteria, agentRuns, plans, projects, userStories, type AikDb } from '@aik/db';
+import { acceptanceCriteria, agentRuns, clarifications, plans, projects, userStories, type AikDb } from '@aik/db';
 import { eq } from 'drizzle-orm';
+import crypto from 'node:crypto';
 import type { EventBus } from '../events/bus.ts';
 import { systemClock, type Clock } from '../time.ts';
 import type { WorkflowService } from '../workflow/service.ts';
-import { ensureModelProfile, type ModelRef, type OpenCodeRuntime } from './runtime.ts';
+import type { RunInterruptRegistry } from './interrupts.ts';
+import { ensureModelProfile, type ModelRef, type OpenCodeRuntime, type RunOneShotOutput } from './runtime.ts';
 
 export interface PlannerAgentDeps {
   db: AikDb;
@@ -12,6 +14,8 @@ export interface PlannerAgentDeps {
   bus: EventBus;
   runtime: OpenCodeRuntime;
   now?: Clock;
+  /** When provided, the planning session registers as the story's interruptible run (EXE-13). */
+  interrupts?: RunInterruptRegistry;
 }
 
 export interface PlanStoryInput {
@@ -31,6 +35,7 @@ export class PlannerAgent {
   private readonly workflow: WorkflowService;
   private readonly bus: EventBus;
   private readonly runtime: OpenCodeRuntime;
+  private readonly interrupts?: RunInterruptRegistry;
   private readonly now: Clock;
 
   constructor(deps: PlannerAgentDeps) {
@@ -38,6 +43,7 @@ export class PlannerAgent {
     this.workflow = deps.workflow;
     this.bus = deps.bus;
     this.runtime = deps.runtime;
+    this.interrupts = deps.interrupts;
     this.now = deps.now ?? systemClock;
   }
 
@@ -58,8 +64,9 @@ export class PlannerAgent {
       .all()
       .map((ac) => ac.text);
 
-    // Create an active run record
-    const runIdempotency = `plan_${story.id}_${Date.now()}`;
+    // Create an active run record. The random suffix keeps run_idem_uq safe when two planner
+    // runs for one story start within the same millisecond (re-plan after reject/answers).
+    const runIdempotency = `plan_${story.id}_${Date.now()}_${crypto.randomUUID()}`;
     const run = this.db
       .insert(agentRuns)
       .values({
@@ -83,6 +90,40 @@ export class PlannerAgent {
       .run();
     this.bus.notify(1);
 
+    // Re-plan context (spec §19.2): carry prior rejection feedback and answered clarifications
+    // into the prompt so re-plans build on the human's feedback instead of repeating mistakes.
+    const priorPlans = this.db
+      .select()
+      .from(plans)
+      .where(eq(plans.storyId, story.id))
+      .all()
+      .sort((a, b) => b.version - a.version);
+    const rejectionFeedback = priorPlans.find((p) => p.status === 'rejected')?.rejectionFeedback;
+    const latestPlan = priorPlans[0];
+    const answeredClarifications = latestPlan
+      ? this.db
+          .select()
+          .from(clarifications)
+          .where(eq(clarifications.planId, latestPlan.id))
+          .all()
+          .filter((c) => c.answer !== null)
+          .sort((a, b) => a.ordinal - b.ordinal)
+      : [];
+
+    const feedbackSection = rejectionFeedback
+      ? `PREVIOUS PLAN FEEDBACK (the user rejected an earlier plan for this story):\n${rejectionFeedback}\n`
+      : '';
+    const answersSection =
+      answeredClarifications.length > 0
+        ? `CLARIFICATION ANSWERS (the user answered the previous plan's clarification questions):\n${answeredClarifications
+            .map((c) => `Q: ${c.question}\nA: ${c.answer}`)
+            .join('\n')}\n`
+        : '';
+    const replanContext =
+      feedbackSection || answersSection
+        ? `\n${[feedbackSection, answersSection].filter(Boolean).join('\n')}\nIncorporate the previous plan feedback and clarification answers above into the new plan; do not re-ask questions that have already been answered.\n`
+        : '';
+
     const prompt = `You are an expert AI software architect and planner.
 Produce an implementation plan for the following user story in repository: "${project.name}".
 
@@ -90,13 +131,13 @@ STORY TITLE: ${story.title}
 DESCRIPTION: ${story.description || 'No description provided.'}
 ACCEPTANCE CRITERIA:
 ${acList.length > 0 ? acList.map((ac, i) => `${i + 1}. ${ac}`).join('\n') : '- Implement standard functionality.'}
-
+${replanContext}
 Respond with a JSON object conforming to the PlanV1 schema:
 {
   "schemaVersion": 1,
   "summary": "Brief explanation of the technical approach",
   "assumptions": ["assumption 1"],
-  "clarificationQuestions": [],
+  "clarificationQuestions": ["question that genuinely blocks a correct plan"],
   "acceptanceCriteria": [
     { "ref": "AC-1", "text": "description", "testable": true, "verification": "how to verify" }
   ],
@@ -112,26 +153,54 @@ Respond with a JSON object conforming to the PlanV1 schema:
   "complexity": "S",
   "risks": []
 }
+You MAY include entries in "clarificationQuestions", but only questions that genuinely block a
+correct plan — never invent business rules or assumptions to fill gaps. If the story and the
+context above already provide everything needed, return an empty list.
 Output only the JSON code block.`;
 
-    const result = await this.runtime.runOneShot({
-      title: `Plan ${story.key}`,
-      directory: project.repoPath,
-      prompt,
-      model: input.model,
-      onSessionCreated: (sessionId, model) => {
-        const modelProfileId = ensureModelProfile(this.db, model);
-        this.db
-          .update(agentRuns)
-          .set({
-            opencodeSessionId: sessionId,
-            ...(modelProfileId ? { modelProfileId } : {}),
-          })
-          .where(eq(agentRuns.id, run.id))
-          .run();
-        this.bus.notify(1);
-      },
-    });
+    let result: RunOneShotOutput;
+    try {
+      result = await this.runtime.runOneShot({
+        title: `Plan ${story.key}`,
+        directory: project.repoPath,
+        prompt,
+        model: input.model,
+        shouldStop: () => this.interrupts?.isStopRequested(story.id) ?? false,
+        onSessionCreated: (sessionId, model) => {
+          this.interrupts?.register(story.id, {
+            runId: run.id,
+            stop: async () => {
+              await this.runtime.interrupt(sessionId, project.repoPath);
+            },
+          });
+          const modelProfileId = ensureModelProfile(this.db, model);
+          this.db
+            .update(agentRuns)
+            .set({
+              opencodeSessionId: sessionId,
+              ...(modelProfileId ? { modelProfileId } : {}),
+            })
+            .where(eq(agentRuns.id, run.id))
+            .run();
+          this.bus.notify(1);
+        },
+      });
+    } finally {
+      // The handle must never outlive the run (EXE-13); unregistering also clears the stop flag.
+      this.interrupts?.unregister(story.id);
+    }
+
+    if (result.interrupted) {
+      // The stop request already transitioned the story to BLOCKED(interrupted)/CANCELLED; a fail
+      // transition here would just GUARD_FAILED, and no attempt was consumed (EXE-13).
+      this.db
+        .update(agentRuns)
+        .set({ status: 'interrupted', exitReason: 'Interrupted by a stop request', endedAt: new Date(this.now()) })
+        .where(eq(agentRuns.id, run.id))
+        .run();
+      this.bus.notify(1);
+      return { ok: false, error: `The planning run for ${story.key} was interrupted by a stop request` };
+    }
 
     if (!result.ok || !result.text) {
       this.db
@@ -149,6 +218,7 @@ Output only the JSON code block.`;
     }
 
     const planContent = this.parsePlan(result.text, story.title);
+    const questions = planContent.clarificationQuestions;
 
     // Save plan as proposed
     const version = (this.db.select().from(plans).where(eq(plans.storyId, story.id)).all().length || 0) + 1;
@@ -166,6 +236,20 @@ Output only the JSON code block.`;
       .returning()
       .get();
 
+    // Open questions park the story in needs_clarification; the plan itself stays 'proposed'
+    // (EXE-7 AC2). One row per question, ordinal 1..n, awaiting the human's answers.
+    questions.forEach((question, index) => {
+      this.db
+        .insert(clarifications)
+        .values({
+          planId: savedPlan.id,
+          ordinal: index + 1,
+          question,
+          answer: null,
+        })
+        .run();
+    });
+
     this.db
       .update(agentRuns)
       .set({ status: 'succeeded', endedAt: new Date(this.now()) })
@@ -176,7 +260,7 @@ Output only the JSON code block.`;
       .update(userStories)
       .set({
         activeRunId: null,
-        planningStatus: 'plan_proposed',
+        planningStatus: questions.length > 0 ? 'needs_clarification' : 'plan_proposed',
         activePlanId: savedPlan.id,
         updatedAt: new Date(this.now()),
       })
@@ -184,7 +268,8 @@ Output only the JSON code block.`;
       .run();
     this.bus.notify(1);
 
-    if (input.autoAccept) {
+    // Auto-accept only applies to plans with zero open clarification questions (EXE-7 AC2/AC4).
+    if (questions.length === 0 && input.autoAccept) {
       this.workflow.transition({
         storyId: story.id,
         event: { type: 'auto_accept_plan', planVersion: version },

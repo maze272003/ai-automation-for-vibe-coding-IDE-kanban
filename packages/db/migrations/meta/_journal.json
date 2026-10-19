@@ -15,6 +15,13 @@
       "when": 1792299274566,
       "tag": "0001_immutability_triggers",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1792411990775,
+      "tag": "0002_review_finding_location_verified",
+      "breakpoints": true
     }
   ]
 }

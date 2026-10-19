@@ -1,12 +1,26 @@
 import { z } from 'zod';
 
 export const CheckConfig = z.object({
-  key: z.string().regex(/^[a-z][a-z0-9_-]{0,31}$/),
+  key: z
+    .string()
+    .regex(/^[a-z][a-z0-9_-]{0,31}$/)
+    .refine((key) => key !== 'secrets', { message: '"secrets" is reserved for the internal secret scan' }),
   command: z.string().min(1).max(500),
   mandatory: z.boolean(),
   timeoutSec: z.number().int().min(1).max(7200).default(900),
 });
 export type CheckConfig = z.infer<typeof CheckConfig>;
+
+/** A proposed check produced by repository detection. It is applied only when the human saves it. */
+export const DetectedCheck = CheckConfig.extend({ source: z.string() });
+export type DetectedCheck = z.infer<typeof DetectedCheck>;
+
+export const CheckDetection = z.object({
+  checks: z.array(DetectedCheck),
+  ecosystems: z.array(z.string()),
+  warnings: z.array(z.string()),
+});
+export type CheckDetection = z.infer<typeof CheckDetection>;
 
 export const ProjectSettings = z.object({
   checks: z.array(CheckConfig).default([]),
@@ -14,6 +28,8 @@ export const ProjectSettings = z.object({
   protectedPaths: z
     .array(z.string().min(1).max(200))
     .default(['.github/workflows/**', '.opencode/**', 'opencode.json*', '.husky/**', '.gitmodules', '.gitattributes']),
+  /** Explicit human acceptance that a repository with no detectable checks is verified by the secrets scan only (EXE-9). */
+  secretsOnlyVerification: z.boolean().default(false),
   publish: z.boolean().default(false),
   remoteMerge: z.boolean().default(false),
   requireRemoteChecks: z.boolean().default(true),
