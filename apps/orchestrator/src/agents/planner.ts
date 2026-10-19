@@ -7,6 +7,7 @@ import { systemClock, type Clock } from '../time.ts';
 import type { WorkflowService } from '../workflow/service.ts';
 import type { RunInterruptRegistry } from './interrupts.ts';
 import { ensureModelProfile, type ModelRef, type OpenCodeRuntime, type RunOneShotOutput } from './runtime.ts';
+import type { SkillBridgeService } from '../skills/bridge.ts';
 
 export interface PlannerAgentDeps {
   db: AikDb;
@@ -16,6 +17,7 @@ export interface PlannerAgentDeps {
   now?: Clock;
   /** When provided, the planning session registers as the story's interruptible run (EXE-13). */
   interrupts?: RunInterruptRegistry;
+  skills?: SkillBridgeService;
 }
 
 export interface PlanStoryInput {
@@ -36,6 +38,7 @@ export class PlannerAgent {
   private readonly bus: EventBus;
   private readonly runtime: OpenCodeRuntime;
   private readonly interrupts?: RunInterruptRegistry;
+  private readonly skills?: SkillBridgeService;
   private readonly now: Clock;
 
   constructor(deps: PlannerAgentDeps) {
@@ -44,6 +47,7 @@ export class PlannerAgent {
     this.bus = deps.bus;
     this.runtime = deps.runtime;
     this.interrupts = deps.interrupts;
+    this.skills = deps.skills;
     this.now = deps.now ?? systemClock;
   }
 
@@ -124,6 +128,19 @@ export class PlannerAgent {
         ? `\n${[feedbackSection, answersSection].filter(Boolean).join('\n')}\nIncorporate the previous plan feedback and clarification answers above into the new plan; do not re-ask questions that have already been answered.\n`
         : '';
 
+    let skillPromptHint = '';
+    if (this.skills) {
+      const injection = await this.skills.injectSkills({
+        targetDirectory: project.repoPath,
+        role: 'planner',
+        storyTitle: story.title,
+        storyDescription: story.description ?? undefined,
+        repoPath: project.repoPath,
+        isWorktree: false,
+      });
+      skillPromptHint = injection.promptHint ? `\n${injection.promptHint}\n` : '';
+    }
+
     const prompt = `You are an expert AI software architect and planner.
 Produce an implementation plan for the following user story in repository: "${project.name}".
 
@@ -131,7 +148,7 @@ STORY TITLE: ${story.title}
 DESCRIPTION: ${story.description || 'No description provided.'}
 ACCEPTANCE CRITERIA:
 ${acList.length > 0 ? acList.map((ac, i) => `${i + 1}. ${ac}`).join('\n') : '- Implement standard functionality.'}
-${replanContext}
+${replanContext}${skillPromptHint}
 Respond with a JSON object conforming to the PlanV1 schema:
 {
   "schemaVersion": 1,
@@ -188,6 +205,9 @@ Output only the JSON code block.`;
     } finally {
       // The handle must never outlive the run (EXE-13); unregistering also clears the stop flag.
       this.interrupts?.unregister(story.id);
+      if (this.skills) {
+        await this.skills.cleanupSkills(project.repoPath);
+      }
     }
 
     if (result.interrupted) {

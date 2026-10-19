@@ -343,4 +343,46 @@ describe('PlannerAgent', () => {
     expect(allPlans.find((p) => p.version === 1)?.status).toBe('rejected');
     expect(allPlans.find((p) => p.version === 2)?.status).toBe('proposed');
   });
+
+  test('injects skills for planner role and cleans them up after plan run', async () => {
+    const project = seedProject(dbHolder.db, { repoPath: 'C:/repos/test-proj-skills' });
+    const story = seedStory(dbHolder.db, project.id, { title: 'Skill Injected Story', status: 'NEW' });
+
+    let capturedPrompt = '';
+    const mockRuntime: OpenCodeRuntime = {
+      runOneShot: vi.fn().mockImplementation(async (opts: RunOneShotInput) => {
+        capturedPrompt = opts.prompt;
+        return { ok: true, text: mockPlanText([]) };
+      }),
+    } as unknown as OpenCodeRuntime;
+
+    const mockSkills = {
+      injectSkills: vi.fn().mockResolvedValue({
+        injected: [{ id: 'writing-plans', name: 'writing-plans', installName: 'writing-plans' }],
+        promptHint: 'AVAILABLE SKILLS:\n- writing-plans',
+      }),
+      cleanupSkills: vi.fn().mockResolvedValue(undefined),
+    };
+
+    const planner = new PlannerAgent({
+      db: dbHolder.db,
+      workflow,
+      bus,
+      runtime: mockRuntime,
+      skills: mockSkills as never,
+    });
+
+    const result = await planner.planStory({ storyId: story.id });
+    expect(result.ok).toBe(true);
+    expect(mockSkills.injectSkills).toHaveBeenCalledWith(
+      expect.objectContaining({
+        targetDirectory: project.repoPath,
+        role: 'planner',
+        storyTitle: story.title,
+      }),
+    );
+    expect(capturedPrompt).toContain('AVAILABLE SKILLS:\n- writing-plans');
+    expect(mockSkills.cleanupSkills).toHaveBeenCalledWith(project.repoPath);
+  });
 });
+
