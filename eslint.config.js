@@ -7,7 +7,7 @@ export default defineConfig(
   {
     ignores: [
       '**/node_modules/**', '**/dist/**', 'packages/db/migrations/**', 'spikes/**',
-      'e2e/test-results/**', 'e2e/playwright-report/**',
+      'e2e/test-results/**', 'e2e/playwright-report/**', '**/.worktrees/**',
     ],
   },
   js.configs.recommended,

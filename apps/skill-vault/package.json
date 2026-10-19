@@ -1,0 +1,12 @@
+{
+  "name": "@aik/skill-vault",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": { ".": "./src/index.ts" },
+  "bin": { "skill-vault": "./src/cli.ts" },
+  "dependencies": {
+    "better-sqlite3": "13.0.3",
+    "zod": "4.6.7"
+  }
+}
