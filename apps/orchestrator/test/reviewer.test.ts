@@ -525,4 +525,108 @@ describe('ReviewerAgent', () => {
     expect(normalized.normalizationNote).toContain('unmet or unclear criteria AC-1');
     expect(normalized.normalizationNote).toContain('missing checklist entries for AC-2');
   });
+
+  test('injects skills for reviewer role and does not trigger dirty worktree failure', async () => {
+    const repoPath = makeTempRepo({ name: 'rev-skills-repo' });
+    const project = seedProject(dbHolder.db, { repoPath, baseBranch: 'main' });
+
+    const { worktreePath } = await worktreeManager.ensureStoryWorktree({
+      repoPath,
+      storyKey: 'REV-8',
+      baseBranch: 'main',
+    });
+    fs.writeFileSync(path.join(worktreePath, 'solution.ts'), 'export const solve = () => 42;\n');
+    execFileSync('git', ['add', '.'], { cwd: worktreePath });
+    execFileSync('git', ['-c', 'user.name=aik', '-c', 'user.email=aik@localhost', 'commit', '-m', 'feat: solve'], { cwd: worktreePath });
+    const candidateSha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: worktreePath, encoding: 'utf8' }).trim();
+    const candidateTree = execFileSync('git', ['rev-parse', 'HEAD^{tree}'], { cwd: worktreePath, encoding: 'utf8' }).trim();
+
+    const story = seedStory(dbHolder.db, project.id, {
+      key: 'REV-8',
+      title: 'Review Story with Skills',
+      status: 'READY_FOR_REVIEW',
+      candidateSha,
+      candidateTree,
+    });
+    const ac = seedAcceptanceCriterion(dbHolder.db, story.id, 'Returns 42');
+    seedPlan(dbHolder.db, story.id, { status: 'approved' });
+
+    const vRun = dbHolder.db
+      .insert(verificationRuns)
+      .values({
+        storyId: story.id,
+        commitSha: candidateSha,
+        trigger: 'candidate',
+        status: 'passed',
+        startedAt: new Date(),
+        endedAt: new Date(),
+      })
+      .returning()
+      .get();
+    dbHolder.db
+      .insert(verificationChecks)
+      .values({
+        verificationRunId: vRun.id,
+        checkKey: 'test',
+        mandatory: true,
+        command: 'git status',
+        cwd: worktreePath,
+        status: 'passed',
+        startedAt: new Date(),
+        endedAt: new Date(),
+      })
+      .run();
+
+    const vaultRoot = makeTempDir('vault-rev-');
+    const { vaultPaths, ensureVaultLayout, VaultDb } = await import('@aik/skill-vault');
+    const paths = vaultPaths(vaultRoot);
+    await ensureVaultLayout(paths);
+    const vdb = VaultDb.open(paths.sqlite);
+    vdb.db.prepare(
+      `INSERT INTO skills (id, source, name, repo_owner, repo_name, skill_path, status, content_sha256, discovered_at, last_seen_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      'gh:mattpocock/skills/code-review',
+      'test',
+      'code-review',
+      'mattpocock',
+      'skills',
+      '.',
+      'approved',
+      'hash',
+      new Date().toISOString(),
+      new Date().toISOString(),
+    );
+    const skillContent = path.join(paths.skillsApproved, 'mattpocock', 'skills', 'code-review');
+    fs.mkdirSync(skillContent, { recursive: true });
+    fs.writeFileSync(path.join(skillContent, 'SKILL.md'), '---\nname: code-review\ndescription: Code Review\n---\n# Code Review\n');
+    vdb.close();
+
+    const { SkillBridgeService } = await import('../src/skills/bridge.ts');
+    const realSkills = new SkillBridgeService({ vaultRoot });
+
+    let capturedPrompt = '';
+    const mockRuntime: OpenCodeRuntime = {
+      runOneShot: vi.fn().mockImplementation(async (opts: RunOneShotInput) => {
+        capturedPrompt = opts.prompt;
+        return { ok: true, text: approvedReview(String(ac.id)) };
+      }),
+    } as unknown as OpenCodeRuntime;
+
+    const agent = new ReviewerAgent({
+      db: dbHolder.db,
+      workflow,
+      bus,
+      runtime: mockRuntime,
+      worktreeManager,
+      skills: realSkills,
+    });
+
+    const result = await agent.reviewStory({ storyId: story.id });
+    expect(result.ok).toBe(true);
+    expect(result.verdict).toBe('APPROVED');
+    expect(capturedPrompt).toContain('AVAILABLE SKILLS');
+    expect(capturedPrompt).toContain('code-review');
+  });
 });
+
