@@ -8,6 +8,7 @@ import { useToast } from '../ui/toast.tsx';
 import { Column } from './column.tsx';
 import { ConfirmDialog } from './confirm-dialog.tsx';
 import { RequestChangesDialog } from './request-changes-dialog.tsx';
+import { TerminalModal } from './terminal-modal.tsx';
 
 export function Board({ stories, onChanged }: { stories: StoryDTO[]; onChanged: () => Promise<void> }) {
   const toast = useToast();
@@ -16,6 +17,7 @@ export function Board({ stories, onChanged }: { stories: StoryDTO[]; onChanged: 
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({ DONE: true, CANCELLED: true });
   const [confirm, setConfirm] = useState<{ message: string; resolve: (ok: boolean) => void } | null>(null);
   const [changes, setChanges] = useState<{ resolve: (text: string | null) => void } | null>(null);
+  const [terminalStory, setTerminalStory] = useState<StoryDTO | null>(null);
 
   useEffect(
     () =>
@@ -55,6 +57,10 @@ export function Board({ stories, onChanged }: { stories: StoryDTO[]; onChanged: 
   const byStatus = Object.fromEntries(STORY_STATUS.map((s) => [s, [] as StoryDTO[]])) as Record<StoryStatus, StoryDTO[]>;
   for (const s of stories) byStatus[pending[s.id] ?? s.status].push(s);
 
+  const currentTerminalStory = terminalStory
+    ? stories.find((s) => s.id === terminalStory.id) ?? terminalStory
+    : null;
+
   return (
     <div data-testid="board" className="flex min-h-0 flex-1 gap-3 overflow-x-auto p-4">
       {STORY_STATUS.map((status) => (
@@ -68,6 +74,7 @@ export function Board({ stories, onChanged }: { stories: StoryDTO[]; onChanged: 
           onToggle={() => setCollapsed((c) => ({ ...c, [status]: !c[status] }))}
           onDropStory={onDropStory}
           onMove={(story, to) => void move(story, to)}
+          onOpenTerminal={(story) => setTerminalStory(story)}
         />
       ))}
       <ConfirmDialog
@@ -84,6 +91,12 @@ export function Board({ stories, onChanged }: { stories: StoryDTO[]; onChanged: 
           setChanges(null);
         }}
       />
+      {currentTerminalStory && (
+        <TerminalModal
+          story={currentTerminalStory}
+          onClose={() => setTerminalStory(null)}
+        />
+      )}
     </div>
   );
 }

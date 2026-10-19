@@ -11,3 +11,5 @@ spikes/**/out/
 spikes/**/runtime/
 spikes/**/*.exe
 .env*
+# repo-local skill-vault data roots (if someone passes --root ./skill-vault)
+skill-vault/

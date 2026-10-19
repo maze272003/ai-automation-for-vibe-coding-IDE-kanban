@@ -29,8 +29,28 @@ export const StoryDTO = z.object({
   dependsOn: z.array(z.string()),
   branch: z.string().nullable(),
   candidateSha: z.string().nullable(),
-  mergedSha: z.string().nullable(),
-  activeRun: z.object({ id: z.number().int(), role: z.enum(ROLE), model: z.string(), startedAt: z.number() }).nullable(),
+  activeRun: z
+    .object({
+      id: z.number().int(),
+      role: z.enum(ROLE),
+      model: z.string(),
+      startedAt: z.number(),
+      opencodeSessionId: z.string().nullable().optional(),
+    })
+    .nullable(),
+  lastRun: z
+    .object({
+      id: z.number().int(),
+      role: z.enum(ROLE),
+      status: z.string(),
+      exitReason: z.string().nullable().optional(),
+      model: z.string(),
+      startedAt: z.number(),
+      endedAt: z.number().nullable().optional(),
+      opencodeSessionId: z.string().nullable().optional(),
+    })
+    .nullable()
+    .optional(),
   pullRequest: z.object({ number: z.number().int(), url: z.string(), state: z.string() }).nullable(),
   createdAt: z.number(),
   updatedAt: z.number(),

@@ -6,6 +6,13 @@ test, review and rework them; you approve plans and merges. DONE requires eviden
 - Design spec: `docs/superpowers/specs/2026-10-18-autonomous-ai-ide-design.md`
 - Implementation plans: `docs/superpowers/plans/`
 
+## Skill Vault
+
+`apps/skill-vault` — a local Coding Skill Vault: discovers coding skills from SkillsMP,
+downloads + security-scans them from their GitHub sources, and installs approved skills for
+OpenCode/Claude Code. Docs: `docs/skill-vault/` · CLI: `node apps/skill-vault/src/cli.ts help`.
+Vault data lives in `%LOCALAPPDATA%\AiKanban\skill-vault` (never in git).
+
 ## Requirements
 Windows 10 22H2+ / 11 · Node ≥ 24.17.0 · Git for Windows ≥ 2.38
 

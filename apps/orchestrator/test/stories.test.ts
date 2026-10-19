@@ -1,5 +1,5 @@
 // apps/orchestrator/test/stories.test.ts
-import { plans, reviews, storyEvents } from '@aik/db';
+import { agentRuns, plans, reviews, storyEvents } from '@aik/db';
 import crypto from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { buildTestApp } from './helpers/app.ts';
@@ -132,5 +132,33 @@ describe('POST /stories/:id/transitions', () => {
     const r = await ctx.inject('POST', `/stories/${s.id}/transitions`, { event: 'request_changes', sha: 'a'.repeat(40), findings: [{ text: 'Handle empty input' }], expectedVersion: 0 });
     expect(r.json()).toMatchObject({ status: 'REWORK' });
     expect(ctx.t.db.select().from(reviews).get()).toMatchObject({ actor: 'human', verdict: 'CHANGES_REQUESTED', commitSha: 'a'.repeat(40) });
+  });
+});
+
+describe('GET /stories/:id/agent-run', () => {
+  it('returns run details and messages for a story', async () => {
+    const s = await createStory({ title: 'Task with run' });
+    const emptyRes = await ctx.inject('GET', `/stories/${s.id}/agent-run`);
+    expect(emptyRes.statusCode).toBe(200);
+    expect(emptyRes.json()).toEqual({ run: null, messages: [] });
+
+    ctx.t.db.insert(agentRuns).values({
+      storyId: s.id,
+      role: 'planner',
+      attempt: 1,
+      promptVersion: '1.0',
+      opencodeVersion: '2.0.32',
+      status: 'running',
+      idempotencyKey: 'test_run_1',
+      startedAt: new Date(),
+    }).run();
+
+    const withRunRes = await ctx.inject('GET', `/stories/${s.id}/agent-run`);
+    expect(withRunRes.statusCode).toBe(200);
+    expect(withRunRes.json().run).toMatchObject({
+      role: 'planner',
+      status: 'running',
+      model: 'OpenCode',
+    });
   });
 });

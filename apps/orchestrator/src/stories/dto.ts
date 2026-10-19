@@ -28,10 +28,35 @@ export function toStoryDTO(db: AikDbOrTx, r: StoryRow): StoryDTO {
     .get();
   const run = r.activeRunId
     ? db
-        .select({ id: agentRuns.id, role: agentRuns.role, startedAt: agentRuns.startedAt, model: modelProfiles.modelId })
+        .select({
+          id: agentRuns.id,
+          role: agentRuns.role,
+          startedAt: agentRuns.startedAt,
+          model: modelProfiles.modelId,
+          opencodeSessionId: agentRuns.opencodeSessionId,
+        })
         .from(agentRuns)
         .leftJoin(modelProfiles, eq(modelProfiles.id, agentRuns.modelProfileId))
         .where(eq(agentRuns.id, r.activeRunId))
+        .get()
+    : undefined;
+  const lastRunRow = !run
+    ? db
+        .select({
+          id: agentRuns.id,
+          role: agentRuns.role,
+          status: agentRuns.status,
+          exitReason: agentRuns.exitReason,
+          startedAt: agentRuns.startedAt,
+          endedAt: agentRuns.endedAt,
+          model: modelProfiles.modelId,
+          opencodeSessionId: agentRuns.opencodeSessionId,
+        })
+        .from(agentRuns)
+        .leftJoin(modelProfiles, eq(modelProfiles.id, agentRuns.modelProfileId))
+        .where(eq(agentRuns.storyId, r.id))
+        .orderBy(desc(agentRuns.id))
+        .limit(1)
         .get()
     : undefined;
   const pr = db.select().from(pullRequests).where(eq(pullRequests.storyId, r.id)).orderBy(desc(pullRequests.id)).limit(1).get();
@@ -45,8 +70,28 @@ export function toStoryDTO(db: AikDbOrTx, r: StoryRow): StoryDTO {
     attempts: { used: r.attemptCount, max: r.maxAttempts },
     acceptanceCriteria: acs,
     dependsOn: deps,
-    branch: r.branchName, candidateSha: r.candidateSha, mergedSha: r.mergedSha,
-    activeRun: run ? { id: run.id, role: run.role, model: run.model ?? 'unknown', startedAt: run.startedAt?.getTime() ?? 0 } : null,
+    branch: r.branchName, candidateSha: r.candidateSha,
+    activeRun: run
+      ? {
+          id: run.id,
+          role: run.role,
+          model: run.model || 'OpenCode',
+          startedAt: run.startedAt?.getTime() ?? 0,
+          opencodeSessionId: run.opencodeSessionId ?? null,
+        }
+      : null,
+    lastRun: lastRunRow
+      ? {
+          id: lastRunRow.id,
+          role: lastRunRow.role,
+          status: lastRunRow.status,
+          exitReason: lastRunRow.exitReason ?? null,
+          model: lastRunRow.model || 'OpenCode',
+          startedAt: lastRunRow.startedAt?.getTime() ?? 0,
+          endedAt: lastRunRow.endedAt?.getTime() ?? null,
+          opencodeSessionId: lastRunRow.opencodeSessionId ?? null,
+        }
+      : null,
     pullRequest: pr ? { number: pr.number, url: pr.url, state: pr.state } : null,
     createdAt: r.createdAt.getTime(),
     updatedAt: r.updatedAt.getTime(),

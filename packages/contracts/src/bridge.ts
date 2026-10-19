@@ -62,6 +62,7 @@ export interface AikWindowApi {
   opencodeLoginWait(): Promise<OpencodeLoginWaitResult>;
   getAppSettings(): Promise<AppSettings>;
   setAppSettings(settings: AppSettings): Promise<AppSettings>;
+  openTerminalCli(options?: { sessionId?: string; cwd?: string }): Promise<{ ok: boolean; error?: string }>;
   events: { subscribe(listener: (event: EventEnvelope) => void): () => void };
   system: { subscribe(listener: (state: SystemState) => void): () => void };
 }

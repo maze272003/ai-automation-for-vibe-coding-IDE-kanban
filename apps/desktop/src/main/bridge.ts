@@ -1,6 +1,7 @@
 import type { BridgeResponse, SystemState } from '@aik/contracts';
 import { listBackups, restoreBackup } from '@aik/db/backup';
 import { BrowserWindow, dialog, ipcMain, shell, type IpcMainInvokeEvent } from 'electron';
+import { spawn } from 'node:child_process';
 import path from 'node:path';
 import { z } from 'zod';
 import { installOpencode, opencodeStatus } from './opencode.ts';
@@ -139,5 +140,43 @@ export function registerBridge(deps: BridgeDeps): void {
   ipcMain.handle('aik:restart-orchestrator', (event) => {
     assertTrusted(event, deps);
     deps.supervisor.restart();
+  });
+
+  ipcMain.handle('aik:open-terminal-cli', async (event, raw: unknown) => {
+    assertTrusted(event, deps);
+    const parsed = z
+      .object({
+        sessionId: z.string().optional(),
+        cwd: z.string().optional(),
+      })
+      .optional()
+      .safeParse(raw);
+    const sessionId = parsed.success ? parsed.data?.sessionId : undefined;
+    const cwd = parsed.success && parsed.data?.cwd ? parsed.data.cwd : process.cwd();
+
+    try {
+      if (process.platform === 'win32') {
+        const args = ['/c', 'start', 'cmd.exe', '/k', 'opencode'];
+        if (sessionId) {
+          args.push('--session', sessionId);
+        }
+        spawn('cmd.exe', args, {
+          cwd,
+          detached: true,
+          stdio: 'ignore',
+          shell: true,
+        }).unref();
+      } else {
+        const cmd = sessionId ? `opencode --session ${sessionId}` : 'opencode';
+        spawn('sh', ['-c', cmd], {
+          cwd,
+          detached: true,
+          stdio: 'ignore',
+        }).unref();
+      }
+      return { ok: true };
+    } catch (e) {
+      return { ok: false, error: e instanceof Error ? e.message : String(e) };
+    }
   });
 }

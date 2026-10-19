@@ -13,8 +13,9 @@ export function Column(props: {
   onToggle: () => void;
   onDropStory: (storyId: number, to: StoryStatus) => void;
   onMove: (story: StoryDTO, to: StoryStatus) => void;
+  onOpenTerminal?: (story: StoryDTO) => void;
 }) {
-  const { status, stories, collapsed, collapsible, highlight, onToggle, onDropStory, onMove } = props;
+  const { status, stories, collapsed, collapsible, highlight, onToggle, onDropStory, onMove, onOpenTerminal } = props;
   const ref = useRef<HTMLElement>(null);
   const [over, setOver] = useState(false);
   useEffect(() => {
@@ -52,7 +53,7 @@ export function Column(props: {
         <ol className="flex min-h-12 flex-col gap-2 overflow-y-auto">
           {stories.map((s) => (
             <li key={s.id}>
-              <Card story={s} onMove={onMove} />
+              <Card story={s} onMove={onMove} onOpenTerminal={onOpenTerminal} />
             </li>
           ))}
         </ol>

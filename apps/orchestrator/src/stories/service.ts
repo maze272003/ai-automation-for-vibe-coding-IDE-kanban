@@ -3,13 +3,15 @@ import {
   STORY_STATUS, type CreateStoryRequest, type PatchStoryRequest, type StoryDTO, type StoryListQuery, type StoryStatus, type TransitionRequest,
 } from '@aik/contracts';
 import {
-  acceptanceCriteria, projects, reviewFindings, reviews, storyDependencies, storyEvents, userStories, type AikDb, type AikTx,
+  acceptanceCriteria, agentRuns, modelProfiles, projects, reviewFindings, reviews, storyDependencies, storyEvents, userStories, type AikDb, type AikTx,
 } from '@aik/db';
 import type { WorkflowEvent } from '@aik/workflow';
 import { and, asc, desc, eq, inArray, isNull, max, sql, type SQL } from 'drizzle-orm';
 import { ApiHttpError } from '../api/errors.ts';
+import { OpenCodeRuntime } from '../agents/runtime.ts';
 import type { EventBus } from '../events/bus.ts';
 import { appendOutbox } from '../events/outbox.ts';
+import type { JobQueue } from '../jobs/queue.ts';
 import { systemClock, type Clock } from '../time.ts';
 import type { TransitionOutcome, WorkflowService } from '../workflow/service.ts';
 import { getStoryRow, type StoryRow } from '../workflow/snapshot.ts';
@@ -34,12 +36,14 @@ export class StoryService {
   private readonly db: AikDb;
   private readonly workflow: WorkflowService;
   private readonly bus: EventBus;
+  private readonly queue?: JobQueue;
   private readonly now: Clock;
 
-  constructor(deps: { db: AikDb; workflow: WorkflowService; bus: EventBus; now?: Clock }) {
+  constructor(deps: { db: AikDb; workflow: WorkflowService; bus: EventBus; queue?: JobQueue; now?: Clock }) {
     this.db = deps.db;
     this.workflow = deps.workflow;
     this.bus = deps.bus;
+    this.queue = deps.queue;
     this.now = deps.now ?? systemClock;
   }
 
@@ -89,6 +93,15 @@ export class StoryService {
       this.insertCriteria(tx, row.id, 1, input.acceptanceCriteria, now);
       for (const depId of depIds) tx.insert(storyDependencies).values({ storyId: row.id, dependsOnStoryId: depId }).run();
       tx.insert(storyEvents).values({ storyId: row.id, type: 'created', toStatus: 'NEW', actor: 'human', payload: { key }, createdAt: now }).run();
+      if (this.queue) {
+        this.queue.enqueue({
+          kind: 'plan',
+          slot: 'heavy',
+          storyId: row.id,
+          sideEffecting: false,
+          idempotencyKey: `plan_${row.id}_${row.revision}`,
+        });
+      }
       seq = appendOutbox(tx, { topic: 'story.updated', storyId: row.id, provenance: 'system', data: { key, change: 'created' } }, now);
       return toStoryDTO(tx, row);
     }, { behavior: 'immediate' });
@@ -251,6 +264,86 @@ export class StoryService {
     }
     tx.delete(storyDependencies).where(eq(storyDependencies.storyId, story.id)).run();
     for (const depId of depIds) tx.insert(storyDependencies).values({ storyId: story.id, dependsOnStoryId: depId }).run();
+  }
+
+  async getAgentRun(storyId: number): Promise<{
+    run: {
+      id: number;
+      role: string;
+      status: string;
+      model: string;
+      opencodeSessionId: string | null;
+      startedAt: number;
+      endedAt: number | null;
+      exitReason: string | null;
+    } | null;
+    messages: unknown[];
+  }> {
+    const story = getStoryRow(this.db, storyId);
+    if (!story) throw new ApiHttpError(404, 'NOT_FOUND', 'Story not found');
+    const run = story.activeRunId
+      ? this.db
+          .select({
+            id: agentRuns.id,
+            role: agentRuns.role,
+            status: agentRuns.status,
+            exitReason: agentRuns.exitReason,
+            startedAt: agentRuns.startedAt,
+            endedAt: agentRuns.endedAt,
+            opencodeSessionId: agentRuns.opencodeSessionId,
+            model: modelProfiles.modelId,
+          })
+          .from(agentRuns)
+          .leftJoin(modelProfiles, eq(modelProfiles.id, agentRuns.modelProfileId))
+          .where(eq(agentRuns.id, story.activeRunId))
+          .get()
+      : this.db
+          .select({
+            id: agentRuns.id,
+            role: agentRuns.role,
+            status: agentRuns.status,
+            exitReason: agentRuns.exitReason,
+            startedAt: agentRuns.startedAt,
+            endedAt: agentRuns.endedAt,
+            opencodeSessionId: agentRuns.opencodeSessionId,
+            model: modelProfiles.modelId,
+          })
+          .from(agentRuns)
+          .leftJoin(modelProfiles, eq(modelProfiles.id, agentRuns.modelProfileId))
+          .where(eq(agentRuns.storyId, storyId))
+          .orderBy(desc(agentRuns.id))
+          .limit(1)
+          .get();
+
+    if (!run) return { run: null, messages: [] };
+
+    let messages: unknown[] = [];
+    if (run.opencodeSessionId) {
+      try {
+        const runtime = new OpenCodeRuntime();
+        const project = this.db.select().from(projects).where(eq(projects.id, story.projectId)).get();
+        const res = await runtime.getSessionMessages(run.opencodeSessionId, project?.repoPath);
+        if (res.ok) {
+          messages = res.messages;
+        }
+      } catch {
+        // ignore message fetch errors
+      }
+    }
+
+    return {
+      run: {
+        id: run.id,
+        role: run.role,
+        status: run.status,
+        model: run.model || 'OpenCode',
+        opencodeSessionId: run.opencodeSessionId ?? null,
+        startedAt: run.startedAt?.getTime() ?? 0,
+        endedAt: run.endedAt?.getTime() ?? null,
+        exitReason: run.exitReason ?? null,
+      },
+      messages,
+    };
   }
 }
 

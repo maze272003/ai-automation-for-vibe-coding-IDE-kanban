@@ -17,6 +17,7 @@ const api: AikWindowApi = {
   opencodeLoginWait: () => ipcRenderer.invoke('aik:opencode-login-wait'),
   getAppSettings: () => ipcRenderer.invoke('aik:app-settings'),
   setAppSettings: (settings) => ipcRenderer.invoke('aik:app-settings-set', settings),
+  openTerminalCli: (options) => ipcRenderer.invoke('aik:open-terminal-cli', options),
   events: {
     subscribe(listener) {
       const handler = (_e: IpcRendererEvent, value: EventEnvelope) => listener(value);

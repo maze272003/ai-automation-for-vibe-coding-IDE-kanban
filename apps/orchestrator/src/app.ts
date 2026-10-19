@@ -2,6 +2,10 @@
 import { openDatabase } from '@aik/db';
 import fs from 'node:fs';
 import type { AddressInfo } from 'node:net';
+import { ImplementerAgent } from './agents/implementer.ts';
+import { PlannerAgent } from './agents/planner.ts';
+import { AgentRunner } from './agents/runner.ts';
+import { OpenCodeRuntime } from './agents/runtime.ts';
 import { registerEventRoutes } from './api/routes/events.ts';
 import { registerHealthRoutes } from './api/routes/health.ts';
 import { registerProjectRoutes } from './api/routes/projects.ts';
@@ -9,6 +13,7 @@ import { registerStoryRoutes } from './api/routes/stories.ts';
 import { createApiServer } from './api/server.ts';
 import { dataPaths } from './config.ts';
 import { EventBus } from './events/bus.ts';
+import { WorktreeManager } from './git/worktree.ts';
 import { JobQueue } from './jobs/queue.ts';
 import { createLogger } from './logging/logger.ts';
 import { ProjectService } from './projects/service.ts';
@@ -49,9 +54,10 @@ export async function startOrchestrator(opts: OrchestratorOptions): Promise<Runn
   const db = opened.db;
   const bus = new EventBus();
   const workflow = new WorkflowService({ db, bus, redact: redactor.redact });
+  const queue = new JobQueue(db);
 
   // Startup recovery (spec §6.10): side-effecting jobs whose lease expired are never re-run automatically.
-  const swept = new JobQueue(db).sweepExpired();
+  const swept = queue.sweepExpired();
   for (const job of swept.interrupted) {
     if (job.storyId === null) continue;
     const r = workflow.transition({
@@ -64,7 +70,14 @@ export async function startOrchestrator(opts: OrchestratorOptions): Promise<Runn
 
   const projects = new ProjectService({ db });
   await projects.refreshAvailability();
-  const stories = new StoryService({ db, workflow, bus });
+  const stories = new StoryService({ db, workflow, bus, queue });
+
+  const worktreeManager = new WorktreeManager({ rootDir: paths.worktrees });
+  const runtime = new OpenCodeRuntime();
+  const planner = new PlannerAgent({ db, workflow, bus, runtime });
+  const implementer = new ImplementerAgent({ db, workflow, bus, runtime, worktreeManager });
+  const runner = new AgentRunner({ db, queue, workflow, bus, planner, implementer });
+  runner.start();
 
   let port = 0;
   const app = createApiServer({ token: opts.token, getPort: () => port, logger });
@@ -79,6 +92,7 @@ export async function startOrchestrator(opts: OrchestratorOptions): Promise<Runn
   return {
     port,
     close: async () => {
+      runner.stop();
       await app.close();
       opened.close();
       logger.info('orchestrator stopped');
