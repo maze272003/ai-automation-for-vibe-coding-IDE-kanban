@@ -25,6 +25,7 @@ import { StoryService } from './stories/service.ts';
 import { systemClock } from './time.ts';
 import { VerificationRunner } from './verify/runner.ts';
 import { WorkflowService } from './workflow/service.ts';
+import { SkillBridgeService } from './skills/bridge.ts';
 
 export interface OrchestratorOptions {
   dataDir: string;
@@ -87,9 +88,10 @@ export async function startOrchestrator(opts: OrchestratorOptions): Promise<Runn
   const merger = new LocalMerger({ db, workflow, bus, worktreeManager, verification, redact: redactor.redact });
   const stories = new StoryService({ db, workflow, bus, queue, merger });
 
-  const planner = new PlannerAgent({ db, workflow, bus, runtime, interrupts });
-  const implementer = new ImplementerAgent({ db, workflow, bus, runtime, worktreeManager, interrupts });
-  const reviewer = new ReviewerAgent({ db, workflow, bus, runtime, worktreeManager, interrupts });
+  const skills = new SkillBridgeService({ logger: (msg) => logger.info({ msg }, 'skill-bridge') });
+  const planner = new PlannerAgent({ db, workflow, bus, runtime, interrupts, skills });
+  const implementer = new ImplementerAgent({ db, workflow, bus, runtime, worktreeManager, interrupts, skills });
+  const reviewer = new ReviewerAgent({ db, workflow, bus, runtime, worktreeManager, interrupts, skills });
   const runner = new AgentRunner({ db, queue, workflow, bus, planner, implementer, verification, reviewer, merger });
   runner.start();
 
