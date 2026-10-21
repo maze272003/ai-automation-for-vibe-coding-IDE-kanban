@@ -137,16 +137,15 @@ or where DONE is reached without real, mandatory, HEAD-validated post-merge evid
 
 **Known residuals / follow-ups (not blockers):**
 
-- Spec §13.5.4/§6.10 "offered revert commit after BLOCKED(post_merge_failed)" is not implemented
-  anywhere — the only functional requirement in scope still unmet (BA follow-up #1).
+- [x] Spec §13.5.4/§6.10 "offered revert commit after BLOCKED(post_merge_failed)" implemented across `LocalMerger.revertFailedMerge`, `StoryService.revertMerge`, `POST /stories/:id/revert-merge`, and Kanban card/modal UI.
 - Untested branches: CAS `update-ref` path (base not checked out anywhere) and the squash
   `mergeMethod` variant.
-- No UI unit-test harness exists; the approval dialog is covered only by typecheck + server-side
+- No UI unit-test harness exists; the approval and revert dialogs are covered by typecheck + server-side
   guard tests.
 - Worktree paths are not `<projectId>`-namespaced (spec §13.1 vs plan non-goal); stale `.postmerge`
   directories from earlier builds are not swept.
 - Cross-process races (a second orchestrator instance, external base moves mid-merge) are out of
   scope for this single-user desktop app.
 
-**Next highest-value task:** the post-merge revert offer (human-started revert commit on
-BLOCKED(`post_merge_failed`)), which completes spec §13.5 step 4 and §6.10 row 3.
+**Next highest-value task:** `EXE-7` plan feedback and validation hardening or `EXE-18` setup wizard/diagnostics.
+
