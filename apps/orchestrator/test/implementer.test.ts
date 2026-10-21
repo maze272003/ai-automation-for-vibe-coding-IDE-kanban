@@ -5,7 +5,7 @@ import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, test, vi } from 'vitest';
 import { ImplementerAgent } from '../src/agents/implementer.ts';
 import { RunInterruptRegistry } from '../src/agents/interrupts.ts';
-import type { OpenCodeRuntime, RunOneShotInput } from '../src/agents/runtime.ts';
+import { ROLE_TIMEOUTS, type OpenCodeRuntime, type RunOneShotInput } from '../src/agents/runtime.ts';
 import { EventBus } from '../src/events/bus.ts';
 import { WorktreeManager } from '../src/git/worktree.ts';
 import { WorkflowService } from '../src/workflow/service.ts';
@@ -27,6 +27,31 @@ describe('ImplementerAgent', () => {
 
   afterAll(() => {
     dbHolder.close();
+  });
+
+  test('runs the model with the implementer wall-clock budget from the spec', async () => {
+    // The implementer gets 60 minutes (spec §18.5); a flat 10-minute budget killed long runs.
+    const repoPath = makeTempRepo({ name: 'impl-timeout-repo' });
+    const project = seedProject(dbHolder.db, { repoPath, baseBranch: 'main' });
+    const story = seedStory(dbHolder.db, project.id, {
+      title: 'Budgeted Implementation',
+      status: 'READY',
+      planningStatus: 'plan_approved',
+    });
+    seedPlan(dbHolder.db, story.id, { status: 'approved' });
+
+    const runOneShot = vi.fn().mockImplementation(async (opts: RunOneShotInput) => {
+      fs.writeFileSync(path.join(opts.directory, 'feature.ts'), 'export const x = 1;\n');
+      return { ok: true, text: 'Implemented.' };
+    });
+    const mockRuntime: OpenCodeRuntime = { runOneShot } as unknown as OpenCodeRuntime;
+
+    const agent = new ImplementerAgent({ db: dbHolder.db, workflow, bus, runtime: mockRuntime, worktreeManager });
+    const result = await agent.implementStory({ storyId: story.id });
+
+    expect(result.ok).toBe(true);
+    expect(runOneShot).toHaveBeenCalledWith(expect.objectContaining({ timeoutMs: ROLE_TIMEOUTS.implementer }));
+    expect(ROLE_TIMEOUTS.implementer).toBe(60 * 60_000);
   });
 
   test('claims story in READY, executes OpenCode in worktree, commits, and transitions to TESTING', async () => {

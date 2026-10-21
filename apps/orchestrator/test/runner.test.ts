@@ -1,4 +1,4 @@
-import { durableJobs, mergeApprovals, userStories } from '@aik/db';
+import { agentRuns, durableJobs, mergeApprovals, userStories } from '@aik/db';
 import { and, eq } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, test, vi } from 'vitest';
 import type { ImplementerAgent } from '../src/agents/implementer.ts';
@@ -191,7 +191,7 @@ describe('AgentRunner', () => {
       .where(and(eq(durableJobs.storyId, story.id), eq(durableJobs.kind, 'plan')))
       .all();
     expect(planJobs).toHaveLength(1);
-    expect(planJobs[0]?.idempotencyKey).toBe(`auto_plan_${story.id}_${story.revision}_v2`);
+    expect(planJobs[0]?.idempotencyKey).toBe(`auto_plan_${story.id}_${story.revision}_v2_a0`);
     expect(planJobs[0]?.status).toBe('succeeded');
 
     // Hygiene: stop later ticks from re-planning this story.
@@ -212,10 +212,100 @@ describe('AgentRunner', () => {
       .where(and(eq(durableJobs.storyId, story.id), eq(durableJobs.kind, 'plan')))
       .all();
     expect(planJobs).toHaveLength(1);
-    expect(planJobs[0]?.idempotencyKey).toBe(`auto_plan_${story.id}_${story.revision}_v1`);
+    expect(planJobs[0]?.idempotencyKey).toBe(`auto_plan_${story.id}_${story.revision}_v1_a0`);
 
     // Hygiene: stop later ticks from re-planning this story.
     dbHolder.db.update(userStories).set({ cancelledAt: new Date() }).where(eq(userStories.id, story.id)).run();
+  });
+
+  test('retries a story whose planning failed, with a new job key, and stops after the planning budget', async () => {
+    // A failed plan used to park the story in NEW/planning_failed forever: the only recovery
+    // path (`recover`) needs BLOCKED, so the board silently stopped working on the story.
+    const project = seedProject(dbHolder.db, { repoPath: 'C:/repos/test-proj-plan-retry' });
+    const story = seedStory(dbHolder.db, project.id, {
+      key: 'RPL-7',
+      title: 'Failed plan',
+      status: 'NEW',
+      planningStatus: 'planning_failed',
+    });
+    const failedRun = dbHolder.db
+      .insert(agentRuns)
+      .values({
+        storyId: story.id,
+        role: 'planner',
+        attempt: 1,
+        promptVersion: '1.0',
+        opencodeVersion: '2.0.32',
+        inputSha: 'a'.repeat(40),
+        status: 'failed',
+        exitReason: 'The model returned no text',
+        idempotencyKey: `plan_failed_${story.id}`,
+        startedAt: new Date(),
+        endedAt: new Date(),
+      })
+      .returning()
+      .get();
+    expect(failedRun.id).toBeGreaterThan(0);
+
+    const planStory = vi.fn().mockResolvedValue({ ok: true });
+    const runner = runnerWith({ planner: { planStory } as unknown as PlannerAgent });
+
+    await runner.tick();
+
+    expect(planStory).toHaveBeenCalledWith({ storyId: story.id });
+    const planJobs = dbHolder.db
+      .select()
+      .from(durableJobs)
+      .where(and(eq(durableJobs.storyId, story.id), eq(durableJobs.kind, 'plan')))
+      .all();
+    expect(planJobs).toHaveLength(1);
+    // The retry is a new job: the key carries the failed-attempt counter.
+    expect(planJobs[0]?.idempotencyKey).toBe(`auto_plan_${story.id}_${story.revision}_v1_a1`);
+    expect(planJobs[0]?.status).toBe('succeeded');
+
+    // Hygiene: stop later ticks from re-planning this story.
+    dbHolder.db.update(userStories).set({ cancelledAt: new Date() }).where(eq(userStories.id, story.id)).run();
+  });
+
+  test('stops retrying a story whose planning failed once the planning budget is spent', async () => {
+    const project = seedProject(dbHolder.db, { repoPath: 'C:/repos/test-proj-plan-budget' });
+    const story = seedStory(dbHolder.db, project.id, {
+      key: 'RPL-8',
+      title: 'Permanently broken plan',
+      status: 'NEW',
+      planningStatus: 'planning_failed',
+    });
+    for (let i = 0; i < 3; i += 1) {
+      dbHolder.db
+        .insert(agentRuns)
+        .values({
+          storyId: story.id,
+          role: 'planner',
+          attempt: i + 1,
+          promptVersion: '1.0',
+          opencodeVersion: '2.0.32',
+          inputSha: 'a'.repeat(40),
+          status: 'failed',
+          exitReason: 'The model returned no text',
+          idempotencyKey: `plan_failed_${story.id}_${i}`,
+          startedAt: new Date(),
+          endedAt: new Date(),
+        })
+        .run();
+    }
+
+    const planStory = vi.fn();
+    const runner = runnerWith({ planner: { planStory } as unknown as PlannerAgent });
+
+    await runner.tick();
+
+    expect(planStory).not.toHaveBeenCalled();
+    const planJobs = dbHolder.db
+      .select()
+      .from(durableJobs)
+      .where(and(eq(durableJobs.storyId, story.id), eq(durableJobs.kind, 'plan')))
+      .all();
+    expect(planJobs).toHaveLength(0);
   });
 
   test('does not enqueue a second plan job for a planning story while one is queued or leased', async () => {
@@ -291,20 +381,18 @@ describe('AgentRunner', () => {
       .all()
       .map((row) => row.key)
       .sort();
-    expect(keys).toEqual([`auto_plan_${story.id}_${story.revision}_v2`, `auto_plan_${story.id}_${story.revision}_v3`]);
+    expect(keys).toEqual([`auto_plan_${story.id}_${story.revision}_v2_a0`, `auto_plan_${story.id}_${story.revision}_v3_a0`]);
     expect(planStory).toHaveBeenCalledTimes(2);
 
     // Hygiene: stop later ticks from re-planning this story.
     dbHolder.db.update(userStories).set({ cancelledAt: new Date() }).where(eq(userStories.id, story.id)).run();
   });
 
-  test('planningStatus=planning_failed and needs_clarification stories enqueue no plan jobs', async () => {
+  test('a needs_clarification story enqueues no plan job', async () => {
     const project = seedProject(dbHolder.db, { repoPath: 'C:/repos/test-proj-replan-excluded' });
-    const failed = seedStory(dbHolder.db, project.id, { key: 'RPL-5', title: 'Failed plan', status: 'NEW', planningStatus: 'planning_failed' });
     const waiting = seedStory(dbHolder.db, project.id, { key: 'RPL-6', title: 'Awaiting answers', status: 'NEW', planningStatus: 'needs_clarification' });
-    // Existing plan rows prove the exclusion comes from the planning status, not from having
+    // An existing plan row proves the exclusion comes from the planning status, not from having
     // nothing to re-plan.
-    seedPlan(dbHolder.db, failed.id, { version: 1, status: 'proposed' });
     seedPlan(dbHolder.db, waiting.id, { version: 1, status: 'proposed' });
 
     const planStory = vi.fn();
@@ -312,15 +400,13 @@ describe('AgentRunner', () => {
 
     await runner.tick();
 
-    for (const story of [failed, waiting]) {
-      const planJobs = dbHolder.db
-        .select()
-        .from(durableJobs)
-        .where(and(eq(durableJobs.storyId, story.id), eq(durableJobs.kind, 'plan')))
-        .all();
-      expect(planJobs).toHaveLength(0);
-      expect(planStory).not.toHaveBeenCalledWith({ storyId: story.id });
-    }
+    const planJobs = dbHolder.db
+      .select()
+      .from(durableJobs)
+      .where(and(eq(durableJobs.storyId, waiting.id), eq(durableJobs.kind, 'plan')))
+      .all();
+    expect(planJobs).toHaveLength(0);
+    expect(planStory).not.toHaveBeenCalledWith({ storyId: waiting.id });
   });
 
   test('discovers a TESTING story and runs verification once per candidate', async () => {

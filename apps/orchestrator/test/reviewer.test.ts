@@ -6,7 +6,7 @@ import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, test, vi } from 'vitest';
 import { ReviewerAgent, isVerifiedLocation, normalizeReview, parseReviewOutput } from '../src/agents/reviewer.ts';
 import { RunInterruptRegistry } from '../src/agents/interrupts.ts';
-import type { OpenCodeRuntime, RunOneShotInput } from '../src/agents/runtime.ts';
+import { ROLE_TIMEOUTS, type OpenCodeRuntime, type RunOneShotInput } from '../src/agents/runtime.ts';
 import { EventBus } from '../src/events/bus.ts';
 import { WorktreeManager } from '../src/git/worktree.ts';
 import { WorkflowService } from '../src/workflow/service.ts';
@@ -117,6 +117,81 @@ describe('ReviewerAgent', () => {
 
     const rev = dbHolder.db.select().from(reviews).where(eq(reviews.storyId, story.id)).get();
     expect(rev?.verdict).toBe('APPROVED');
+  });
+
+  test('runs the model with the reviewer wall-clock budget from the spec', async () => {
+    // The reviewer gets 20 minutes (spec §18.5).
+    const repoPath = makeTempRepo({ name: 'rev-timeout-repo' });
+    const project = seedProject(dbHolder.db, { repoPath, baseBranch: 'main' });
+
+    const { worktreePath } = await worktreeManager.ensureStoryWorktree({
+      repoPath,
+      storyKey: 'REV-9',
+      baseBranch: 'main',
+    });
+    fs.writeFileSync(path.join(worktreePath, 'solution.ts'), 'export const solve = () => 42;\n');
+    execFileSync('git', ['add', '.'], { cwd: worktreePath });
+    execFileSync('git', ['-c', 'user.name=aik', '-c', 'user.email=aik@localhost', 'commit', '-m', 'feat: solve'], { cwd: worktreePath });
+    const candidateSha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: worktreePath, encoding: 'utf8' }).trim();
+    const candidateTree = execFileSync('git', ['rev-parse', 'HEAD^{tree}'], { cwd: worktreePath, encoding: 'utf8' }).trim();
+
+    const story = seedStory(dbHolder.db, project.id, {
+      key: 'REV-9',
+      title: 'Budgeted review',
+      status: 'READY_FOR_REVIEW',
+      candidateSha,
+      candidateTree,
+    });
+    const ac = seedAcceptanceCriterion(dbHolder.db, story.id, 'Returns 42');
+    seedPlan(dbHolder.db, story.id, { status: 'approved' });
+
+    // The review only runs on a verified candidate.
+    const { verificationRuns, verificationChecks } = await import('@aik/db');
+    const vRun = dbHolder.db
+      .insert(verificationRuns)
+      .values({
+        storyId: story.id,
+        commitSha: candidateSha,
+        trigger: 'candidate',
+        status: 'passed',
+        startedAt: new Date(),
+        endedAt: new Date(),
+      })
+      .returning()
+      .get();
+    dbHolder.db
+      .insert(verificationChecks)
+      .values({
+        verificationRunId: vRun.id,
+        checkKey: 'test',
+        mandatory: true,
+        command: 'git status',
+        cwd: worktreePath,
+        status: 'passed',
+        startedAt: new Date(),
+        endedAt: new Date(),
+      })
+      .run();
+
+    const runOneShot = vi.fn().mockResolvedValue({
+      ok: true,
+      text: JSON.stringify({
+        schemaVersion: 1,
+        verdict: 'APPROVED',
+        summary: 'Looks great!',
+        acChecklist: [{ acRef: String(ac.id), status: 'met', evidence: 'ok' }],
+        findings: [],
+        priorFindings: [],
+      }),
+    });
+    const mockRuntime: OpenCodeRuntime = { runOneShot } as unknown as OpenCodeRuntime;
+
+    const agent = new ReviewerAgent({ db: dbHolder.db, workflow, bus, runtime: mockRuntime, worktreeManager });
+    const result = await agent.reviewStory({ storyId: story.id });
+
+    expect(result.ok).toBe(true);
+    expect(runOneShot).toHaveBeenCalledWith(expect.objectContaining({ timeoutMs: ROLE_TIMEOUTS.reviewer }));
+    expect(ROLE_TIMEOUTS.reviewer).toBe(20 * 60_000);
   });
 
   test('normalizes APPROVED to CHANGES_REQUESTED when a blocking finding exists', async () => {

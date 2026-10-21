@@ -1,3 +1,4 @@
+import { extractAssistantText, findSessionFailure, sessionHasCompleted, sessionIsActive, type OpenCodeMessageLike } from '@aik/contracts';
 import { modelProfiles, providers, type AikDb } from '@aik/db';
 import { and, eq } from 'drizzle-orm';
 import crypto from 'node:crypto';
@@ -78,13 +79,27 @@ export interface RunOneShotOutput {
   interrupted?: boolean;
 }
 
-interface OpenCodeMessage {
-  type?: string;
-  outcome?: string;
-  finish?: string;
-  content?: { type?: string; text?: string }[];
-  error?: { message?: string };
-}
+/**
+ * Per-role wall-clock budgets (spec §18.5). The planner and the reviewer get 20 minutes, the
+ * implementer 60. A single flat budget cut real runs short: observed planner runs needed
+ * 11–12 minutes and were killed by the old 10-minute default, which threw away the finished
+ * plan and left the board stalled.
+ */
+export const ROLE_TIMEOUTS = {
+  planner: 20 * 60_000,
+  implementer: 60 * 60_000,
+  reviewer: 20 * 60_000,
+} as const;
+
+/** Budget used when a caller does not pass a role budget. */
+export const DEFAULT_TIMEOUT_MS = 20 * 60_000;
+
+/**
+ * Grace window after the prompt is admitted during which a session that is not yet listed as
+ * active is still waited for. It only bounds the wait for a server that never reports anything;
+ * a session that is running is detected through the terminal `idle` message.
+ */
+const START_GRACE_MS = 15_000;
 
 /** Resolves running OpenCode service URL & password if not provided explicitly. */
 export function resolveOpenCodeService(): { url: string; auth: string } | null {
@@ -115,6 +130,23 @@ export function resolveOpenCodeService(): { url: string; auth: string } | null {
  * run's own timeout so an interrupt never outlives the caller's patience.
  */
 const INTERRUPT_GRACE_MS = 10_000;
+
+/** Best-effort human-readable detail from an OpenCode error body. */
+function describeApiError(body: unknown): string {
+  if (typeof body === 'string' && body.length > 0) return body;
+  if (!body || typeof body !== 'object') return 'no details';
+  const error = (body as { error?: unknown }).error;
+  if (typeof error === 'string' && error.length > 0) return error;
+  if (error && typeof error === 'object') {
+    const data = (error as { data?: { message?: string } }).data;
+    if (typeof data?.message === 'string' && data.message.length > 0) return data.message;
+    const name = (error as { name?: string }).name;
+    if (typeof name === 'string' && name.length > 0) return name;
+  }
+  const message = (body as { message?: string }).message;
+  if (typeof message === 'string' && message.length > 0) return message;
+  return JSON.stringify(body).slice(0, 200);
+}
 
 export class OpenCodeRuntime {
   private baseUrl?: string;
@@ -212,11 +244,22 @@ export class OpenCodeRuntime {
         }
       }
 
-      await this.api('POST', `/api/session/${id}/prompt`, input.directory, { text: input.prompt });
+      const prompted = await this.api('POST', `/api/session/${id}/prompt`, input.directory, { text: input.prompt });
+      if (prompted.status < 200 || prompted.status >= 300) {
+        // A rejected prompt used to be swallowed here and surfaced later as "no text", which
+        // hid the real reason (unknown session, conflict, invalid input) from the board.
+        return { ok: false, error: `OpenCode rejected the prompt (${prompted.status}): ${describeApiError(prompted.body)}` };
+      }
 
-      const deadline = Date.now() + (input.timeoutMs ?? 600_000);
+      const timeoutMs = input.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+      const deadline = Date.now() + timeoutMs;
+      // A run that is not listed as active yet must not be mistaken for a finished run: the
+      // server writes a terminal `idle` message when a session ends, so that is the signal we
+      // trust. The grace window only bounds the wait for a session that never reports anything.
+      const startGraceDeadline = Date.now() + START_GRACE_MS;
       let interruptSent = false;
       let graceDeadline = 0;
+      let sawActive = false;
       for (;;) {
         if (input.shouldStop?.() && !interruptSent) {
           // Fire the interrupt exactly once; the stop flag alone must end the loop even if the
@@ -226,35 +269,52 @@ export class OpenCodeRuntime {
           await this.interrupt(id, input.directory);
         }
         const active = await this.api('GET', '/api/session/active', input.directory).catch(() => ({ status: 0, body: null }));
-        if (!JSON.stringify(active.body).includes(id)) {
-          if (interruptSent) {
-            return { ok: false, interrupted: true, error: 'Run interrupted by a stop request' };
-          }
+        if (sessionIsActive(active.body, id)) {
+          sawActive = true;
+        } else if (sawActive || interruptSent) {
+          // The session ran and is no longer active, or a stop was requested: it is done.
           break;
+        } else {
+          // The session is not listed as active (yet). The terminal `idle` message is the
+          // authoritative completion signal, so confirm with the message list before ending the
+          // run — a slow start must not be read as "the model already answered".
+          const pending = await this.api('GET', `/api/session/${id}/message`, input.directory).catch(() => ({ status: 0, body: null }));
+          const pendingMessages = (pending.body as { data?: OpenCodeMessageLike[] } | null)?.data ?? [];
+          if (sessionHasCompleted(pendingMessages) || Date.now() > startGraceDeadline) break;
         }
         if (interruptSent) {
           if (Date.now() > graceDeadline) {
             return { ok: false, interrupted: true, error: 'Run interrupted by a stop request' };
           }
         } else if (Date.now() > deadline) {
-          return { ok: false, error: 'The model did not finish within timeout' };
+          // The run overran its budget. Interrupt the session so the model stops working (and
+          // billing) on a result nobody will read, then report the timeout.
+          await this.interrupt(id, input.directory);
+          return { ok: false, error: `The model did not finish within ${Math.round(timeoutMs / 1000)} seconds` };
         }
         await new Promise((r) => setTimeout(r, 400));
       }
 
-      const messagesRes = await this.api('GET', `/api/session/${id}/message`, input.directory);
-      const data = (messagesRes.body as { data?: OpenCodeMessage[] } | null)?.data ?? [];
-
-      const failure = data.find((m) => m.type === 'idle' && m.outcome === 'failed') ?? data.find((m) => m.finish === 'error');
-      if (failure?.error?.message) {
-        return { ok: false, error: failure.error.message };
+      if (interruptSent) {
+        return { ok: false, interrupted: true, error: 'Run interrupted by a stop request' };
       }
 
-      const assistant = [...data].reverse().find((m) => m.type === 'assistant');
-      const text = (assistant?.content ?? []).filter((p) => p.type === 'text').map((p) => p.text ?? '').join('\n').trim();
+      const messagesRes = await this.api('GET', `/api/session/${id}/message`, input.directory);
+      const data = (messagesRes.body as { data?: OpenCodeMessageLike[] } | null)?.data ?? [];
+
+      const failure = findSessionFailure(data);
+      if (failure) {
+        return { ok: false, error: failure.message };
+      }
+
+      // The server returns the messages newest first, and the newest assistant message is
+      // usually a tool call without any text — the answer sits in an earlier message. Taking the
+      // last assistant message that carries text is what the model's final answer is.
+      const text = extractAssistantText(data);
 
       if (!text) {
-        return { ok: false, error: 'The model returned no text' };
+        const started = data.some((m) => m.type === 'assistant' || m.type === 'user');
+        return { ok: false, error: started ? 'The model returned no text' : 'The OpenCode session did not start' };
       }
 
       return { ok: true, text };

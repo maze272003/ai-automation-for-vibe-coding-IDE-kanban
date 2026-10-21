@@ -6,13 +6,16 @@ import { spawn, execFileSync, type ChildProcess } from 'node:child_process';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import type {
-  AppSettings,
-  OpencodeChatResult,
-  OpencodeLoginStartResult,
-  OpencodeLoginWaitResult,
-  OpencodeModelInfo,
-  OpencodeModelsResult,
+import {
+  extractAssistantText,
+  findSessionFailure,
+  type AppSettings,
+  type OpenCodeMessageLike,
+  type OpencodeChatResult,
+  type OpencodeLoginStartResult,
+  type OpencodeLoginWaitResult,
+  type OpencodeModelInfo,
+  type OpencodeModelsResult,
 } from '@aik/contracts';
 import { opencodeExePath } from './opencode.ts';
 
@@ -282,14 +285,6 @@ export async function listOpencodeModels(dataDir: string): Promise<OpencodeModel
   }
 }
 
-interface OpencodeMessage {
-  type?: string;
-  outcome?: string;
-  finish?: string;
-  content?: { type?: string; text?: string }[];
-  error?: { message?: string };
-}
-
 /** One-shot chat against the chosen model; used by Settings' model test. */
 export async function opencodeChat(dataDir: string, model: { providerID: string; id: string }, prompt: string): Promise<OpencodeChatResult> {
   try {
@@ -316,14 +311,15 @@ export async function opencodeChat(dataDir: string, model: { providerID: string;
       await new Promise((r) => setTimeout(r, 400));
     }
     const messages = await s.api('GET', `/api/session/${id}/message`);
-    const data = (messages.body as { data?: OpencodeMessage[] } | null)?.data ?? [];
+    const data = (messages.body as { data?: OpenCodeMessageLike[] } | null)?.data ?? [];
     void s.api('DELETE', `/api/session/${id}`);
     // Surface provider/auth failures instead of a misleading "no text" (observed with the
     // gateway's FreeTierError when the user has not signed in yet).
-    const failure = data.find((m) => m.type === 'idle' && m.outcome === 'failed') ?? data.find((m) => m.finish === 'error');
-    if (failure?.error?.message) return { ok: false, error: failure.error.message };
-    const assistant = [...data].reverse().find((m) => m.type === 'assistant');
-    const text = (assistant?.content ?? []).filter((p) => p.type === 'text').map((p) => p.text ?? '').join('\n').trim();
+    const failure = findSessionFailure(data);
+    if (failure) return { ok: false, error: failure.message };
+    // The server returns the messages newest first and the newest assistant message is usually a
+    // tool call without any text; the answer is the last assistant message that carries text.
+    const text = extractAssistantText(data);
     if (!text) return { ok: false, error: 'The model returned no text' };
     return { ok: true, text };
   } catch (e) {

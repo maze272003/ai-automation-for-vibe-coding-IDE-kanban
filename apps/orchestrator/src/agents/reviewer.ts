@@ -13,7 +13,7 @@ import type { WorktreeManager } from '../git/worktree.ts';
 import { systemClock, type Clock } from '../time.ts';
 import type { WorkflowService } from '../workflow/service.ts';
 import type { RunInterruptRegistry } from './interrupts.ts';
-import { ensureModelProfile, type ModelRef, type OpenCodeRuntime, type RunOneShotOutput } from './runtime.ts';
+import { ensureModelProfile, ROLE_TIMEOUTS, type ModelRef, type OpenCodeRuntime, type RunOneShotOutput } from './runtime.ts';
 import type { SkillBridgeService } from '../skills/bridge.ts';
 
 export interface ReviewerAgentDeps {
@@ -250,6 +250,7 @@ export class ReviewerAgent {
             directory: worktreePath,
             prompt,
             model: input.model,
+            timeoutMs: ROLE_TIMEOUTS.reviewer,
             shouldStop: () => this.interrupts?.isStopRequested(story.id) ?? false,
             onSessionCreated: (sessionId, model) => {
               this.interrupts?.register(story.id, {

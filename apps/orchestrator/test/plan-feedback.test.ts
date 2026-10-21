@@ -194,7 +194,7 @@ describe('plan feedback loop (EXE-7 AC2/AC4) — cross-cutting, service layer', 
     expect(jobs).toHaveLength(1);
     expect(jobs[0]).toMatchObject({ kind: 'plan', status: 'succeeded' });
     // Frozen assumption: the re-plan key carries the next plan version, so re-plans never collide.
-    expect(jobs[0]!.idempotencyKey).toBe(`auto_plan_${story.id}_${story.revision}_v2`);
+    expect(jobs[0]!.idempotencyKey).toBe(`auto_plan_${story.id}_${story.revision}_v2_a0`);
 
     // The re-plan prompt contains the full Q&A; the first prompt could not have known the answers.
     expect(prompts).toHaveLength(2);
@@ -279,7 +279,7 @@ describe('plan feedback loop (EXE-7 AC2/AC4) — cross-cutting, service layer', 
     // Both re-plan jobs ran to completion under distinct, version-keyed idempotency keys.
     const jobs = planJobs(story.id);
     expect(jobs.map((j) => j.status)).toEqual(['succeeded', 'succeeded']);
-    expect(jobs.map((j) => j.idempotencyKey)).toEqual([`auto_plan_${story.id}_${story.revision}_v2`, `auto_plan_${story.id}_${story.revision}_v3`]);
+    expect(jobs.map((j) => j.idempotencyKey)).toEqual([`auto_plan_${story.id}_${story.revision}_v2_a0`, `auto_plan_${story.id}_${story.revision}_v3_a0`]);
 
     // History: v1 and v2 rejected with their feedback, v3 proposed, story parked on v3.
     const rows = planRows(story.id);

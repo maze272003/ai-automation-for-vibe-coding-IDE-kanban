@@ -1,7 +1,17 @@
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { afterAll, beforeAll, describe, expect, test } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'vitest';
 import { OpenCodeRuntime } from '../src/agents/runtime.ts';
+
+type MockMessage = { type: string; outcome?: string; finish?: string; content?: { type: string; text: string }[]; time?: { created: number } };
+
+/** The transcript exactly as the pinned server returns it: newest first, no idle yet. */
+function succeededRun(answer: string): MockMessage[] {
+  return [
+    { type: 'assistant', finish: 'stop', content: [{ type: 'text', text: answer }], time: { created: 2 } },
+    { type: 'user', content: [{ type: 'text', text: 'prompt' }], time: { created: 1 } },
+  ];
+}
 
 describe('OpenCodeRuntime', () => {
   let server: http.Server;
@@ -11,11 +21,26 @@ describe('OpenCodeRuntime', () => {
 
   const receivedRequests: { method: string; url: string; auth?: string; body?: unknown }[] = [];
   let activeSessions: string[] = [];
-  let mockMessages: { type: string; content?: { type: string; text: string }[] }[] = [];
+  let mockMessages: MockMessage[] = [];
   // Interrupt-test knobs: when autoActivate is set the fake server marks every created session
   // active; when an interrupt call is honored it clears the active set (otherwise ignored).
   let autoActivate = false;
   let interruptHonored = true;
+  // The status the fake server answers a prompt with (a rejected prompt must be reported).
+  let promptStatus = 200;
+  // Session lifecycle of the fake server: the session shows up as active only after
+  // `sessionStartDelayPolls` polls (the server registers it a moment after the prompt was
+  // admitted) and stays active for `sessionActivePolls` polls (-1 = it never goes idle).
+  let sessionStartDelayPolls = 0;
+  let sessionActivePolls = 0;
+  let activePolls = 0;
+
+  const sessionVisible = (): boolean => {
+    if (activePolls <= sessionStartDelayPolls) return false;
+    if (sessionActivePolls < 0) return true;
+    return activePolls <= sessionStartDelayPolls + sessionActivePolls;
+  };
+  const sessionDone = (): boolean => sessionActivePolls >= 0 && activePolls > sessionStartDelayPolls + sessionActivePolls;
 
   beforeAll(async () => {
     server = http.createServer((req, res) => {
@@ -52,8 +77,8 @@ describe('OpenCodeRuntime', () => {
         }
 
         if (req.method === 'POST' && req.url?.startsWith('/api/session/') && req.url.endsWith('/prompt')) {
-          res.writeHead(200, { 'content-type': 'application/json' });
-          res.end(JSON.stringify({ ok: true }));
+          res.writeHead(promptStatus, { 'content-type': 'application/json' });
+          res.end(JSON.stringify(promptStatus === 200 ? { ok: true } : { error: { name: 'SessionNotFoundError', data: { message: 'no such session' } } }));
           return;
         }
 
@@ -65,14 +90,19 @@ describe('OpenCodeRuntime', () => {
         }
 
         if (req.method === 'GET' && req.url === '/api/session/active') {
+          activePolls += 1;
+          const visible = sessionVisible() ? activeSessions : [];
           res.writeHead(200, { 'content-type': 'application/json' });
-          res.end(JSON.stringify({ data: activeSessions }));
+          res.end(JSON.stringify({ data: visible }));
           return;
         }
 
         if (req.method === 'GET' && req.url?.startsWith('/api/session/') && req.url.endsWith('/message')) {
+          // The server writes the terminal `idle` message when the run ends; until then only the
+          // transcript so far exists.
+          const data = sessionDone() ? [{ type: 'idle', outcome: 'succeeded' }, ...mockMessages] : mockMessages;
           res.writeHead(200, { 'content-type': 'application/json' });
-          res.end(JSON.stringify({ data: mockMessages }));
+          res.end(JSON.stringify({ data }));
           return;
         }
 
@@ -98,11 +128,19 @@ describe('OpenCodeRuntime', () => {
     await new Promise<void>((resolve) => server.close(() => resolve()));
   });
 
+  beforeEach(() => {
+    activeSessions = [];
+    mockMessages = [];
+    autoActivate = false;
+    interruptHonored = true;
+    promptStatus = 200;
+    sessionStartDelayPolls = 0;
+    sessionActivePolls = 0;
+    activePolls = 0;
+  });
+
   test('creates a session, sends prompt, waits for idle, and retrieves assistant text', async () => {
-    mockMessages = [
-      { type: 'user', content: [{ type: 'text', text: 'Hello model' }] },
-      { type: 'assistant', content: [{ type: 'text', text: 'Hello! I am ready to implement this story.' }] },
-    ];
+    mockMessages = succeededRun('Hello! I am ready to implement this story.');
     activeSessions = []; // immediate idle
 
     const runtime = new OpenCodeRuntime({ baseUrl, password: authPassword });
@@ -126,6 +164,84 @@ describe('OpenCodeRuntime', () => {
     expect((promptReq?.body as { text: string })?.text).toBe('Hello model');
   });
 
+  test('reads the answer from a newest-first message list whose newest assistant message is a tool call', async () => {
+    // The shape the pinned server returns: newest first, the newest assistant message is a tool
+    // call without any text, and the answer sits in an earlier message. Reading the newest
+    // assistant message alone reported "The model returned no text" for runs that had actually
+    // produced a full answer, which stalled the board on every story.
+    mockMessages = [
+      { type: 'assistant', finish: 'stop', content: [{ type: 'text', text: 'The final answer.' }], time: { created: 4 } },
+      { type: 'assistant', finish: 'tool-calls', content: [{ type: 'tool', text: '' }], time: { created: 3 } },
+      { type: 'assistant', finish: 'tool-calls', content: [{ type: 'tool', text: '' }], time: { created: 2 } },
+      { type: 'user', content: [{ type: 'text', text: 'do the work' }], time: { created: 1 } },
+    ];
+    activeSessions = [];
+
+    const runtime = new OpenCodeRuntime({ baseUrl, password: authPassword });
+    const result = await runtime.runOneShot({ directory: 'C:/temp/worktree', prompt: 'do the work' });
+
+    expect(result.ok).toBe(true);
+    expect(result.text).toBe('The final answer.');
+  });
+
+  test('waits for a session that is not active yet instead of ending the run', async () => {
+    // The server registers a session a moment after the prompt was admitted: the first polls
+    // do not list it as active. The run must not be mistaken for a finished one.
+    mockMessages = succeededRun('Answer after a slow start.');
+    activeSessions = [];
+    sessionStartDelayPolls = 2;
+    sessionActivePolls = 3;
+    autoActivate = true;
+    const firstIndex = receivedRequests.length;
+
+    const runtime = new OpenCodeRuntime({ baseUrl, password: authPassword });
+    const result = await runtime.runOneShot({ directory: 'C:/temp/worktree', prompt: 'do the work' });
+
+    expect(result.ok).toBe(true);
+    expect(result.text).toBe('Answer after a slow start.');
+    // The run waited for the session instead of ending on the first poll.
+    const polls = receivedRequests.slice(firstIndex).filter((r) => r.method === 'GET' && r.url === '/api/session/active').length;
+    expect(polls).toBeGreaterThanOrEqual(5);
+  });
+
+  test('interrupts the session and reports the timeout when the run overruns its budget', async () => {
+    // Without the interrupt the model keeps working (and billing) on a result nobody reads.
+    mockMessages = [];
+    activeSessions = [];
+    sessionStartDelayPolls = 0;
+    sessionActivePolls = -1; // the session never goes idle
+    autoActivate = true;
+    const firstIndex = receivedRequests.length;
+
+    const runtime = new OpenCodeRuntime({ baseUrl, password: authPassword });
+    const result = await runtime.runOneShot({ directory: 'C:/temp/worktree', prompt: 'do the work', timeoutMs: 1_000 });
+
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain('did not finish within 1 seconds');
+    const runRequests = receivedRequests.slice(firstIndex);
+    expect(runRequests.filter((r) => r.method === 'POST' && r.url?.endsWith('/interrupt')).length).toBe(1);
+  });
+
+  test('reports the server error when OpenCode rejects the prompt', async () => {
+    mockMessages = [];
+    activeSessions = [];
+    sessionStartDelayPolls = 0;
+    sessionActivePolls = 0;
+    autoActivate = false;
+    promptStatus = 404;
+    const firstIndex = receivedRequests.length;
+
+    const runtime = new OpenCodeRuntime({ baseUrl, password: authPassword });
+    const result = await runtime.runOneShot({ directory: 'C:/temp/worktree', prompt: 'do the work' });
+
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain('rejected the prompt (404)');
+    expect(result.error).toContain('no such session');
+    // A rejected prompt must not be reported as a model failure with no text.
+    expect(receivedRequests.slice(firstIndex).some((r) => r.method === 'GET' && r.url?.endsWith('/message'))).toBe(false);
+    promptStatus = 200;
+  });
+
   test('reports errors if OpenCode returns error outcome', async () => {
     mockMessages = [
       {
@@ -147,10 +263,7 @@ describe('OpenCodeRuntime', () => {
   });
 
   test('calls onSessionCreated callback and fetches session messages', async () => {
-    mockMessages = [
-      { type: 'user', content: [{ type: 'text', text: 'Hello' }] },
-      { type: 'assistant', content: [{ type: 'text', text: 'Done' }] },
-    ];
+    mockMessages = succeededRun('Done');
     activeSessions = [];
 
     let capturedSessionId: string | null = null;
@@ -173,7 +286,7 @@ describe('OpenCodeRuntime', () => {
 
     const messagesRes = await runtime.getSessionMessages(capturedSessionId!, 'C:/temp/worktree');
     expect(messagesRes.ok).toBe(true);
-    expect(messagesRes.messages.length).toBe(2);
+    expect(messagesRes.messages.length).toBe(3);
   });
 
   test('returns interrupted without creating a session when shouldStop is already true', async () => {
@@ -199,6 +312,7 @@ describe('OpenCodeRuntime', () => {
     activeSessions = [];
     autoActivate = true; // the created session shows up as active until interrupted
     interruptHonored = true;
+    sessionActivePolls = -1; // it never goes idle on its own
     const firstIndex = receivedRequests.length;
     const startedAt = Date.now();
 
@@ -232,6 +346,7 @@ describe('OpenCodeRuntime', () => {
     activeSessions = [];
     autoActivate = true;
     interruptHonored = false; // /interrupt replies 200 but the session stays active
+    sessionActivePolls = -1; // it stays active
     const firstIndex = receivedRequests.length;
     const startedAt = Date.now();
 
@@ -256,10 +371,7 @@ describe('OpenCodeRuntime', () => {
   });
 
   test('completes normally without interrupting when shouldStop never turns true', async () => {
-    mockMessages = [
-      { type: 'user', content: [{ type: 'text', text: 'Hello model' }] },
-      { type: 'assistant', content: [{ type: 'text', text: 'Finished the story work.' }] },
-    ];
+    mockMessages = succeededRun('Finished the story work.');
     activeSessions = []; // immediate idle
     autoActivate = false;
     interruptHonored = true;

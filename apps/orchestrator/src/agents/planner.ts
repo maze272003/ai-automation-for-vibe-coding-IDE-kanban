@@ -6,7 +6,7 @@ import type { EventBus } from '../events/bus.ts';
 import { systemClock, type Clock } from '../time.ts';
 import type { WorkflowService } from '../workflow/service.ts';
 import type { RunInterruptRegistry } from './interrupts.ts';
-import { ensureModelProfile, type ModelRef, type OpenCodeRuntime, type RunOneShotOutput } from './runtime.ts';
+import { ensureModelProfile, ROLE_TIMEOUTS, type ModelRef, type OpenCodeRuntime, type RunOneShotOutput } from './runtime.ts';
 import type { SkillBridgeService } from '../skills/bridge.ts';
 
 export interface PlannerAgentDeps {
@@ -182,6 +182,7 @@ Output only the JSON code block.`;
         directory: project.repoPath,
         prompt,
         model: input.model,
+        timeoutMs: ROLE_TIMEOUTS.planner,
         shouldStop: () => this.interrupts?.isStopRequested(story.id) ?? false,
         onSessionCreated: (sessionId, model) => {
           this.interrupts?.register(story.id, {

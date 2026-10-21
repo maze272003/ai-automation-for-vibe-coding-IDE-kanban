@@ -1,6 +1,6 @@
 // apps/orchestrator/src/agents/runner.ts
 import type { BlockedReason } from '@aik/contracts';
-import { durableJobs, mergeApprovals, plans, reviews, userStories, verificationRuns, type AikDb } from '@aik/db';
+import { durableJobs, mergeApprovals, plans, reviews, userStories, verificationRuns, agentRuns, type AikDb } from '@aik/db';
 import { and, desc, eq, inArray, isNull } from 'drizzle-orm';
 import type { EventBus } from '../events/bus.ts';
 import type { JobQueue, LeasedJob } from '../jobs/queue.ts';
@@ -11,6 +11,14 @@ import type { LocalMerger } from '../git/merger.ts';
 import type { ImplementerAgent } from './implementer.ts';
 import type { PlannerAgent } from './planner.ts';
 import type { ReviewerAgent } from './reviewer.ts';
+
+/**
+ * How many times a story may fail planning before the runner stops retrying it. A failed plan
+ * used to leave the story parked in NEW/planning_failed forever (the only recovery path needs
+ * BLOCKED), which silently stalled the board; the retry is bounded so a permanently broken
+ * story still ends up waiting for a human.
+ */
+const MAX_PLANNING_ATTEMPTS = 3;
 
 export interface AgentRunnerDeps {
   db: AikDb;
@@ -124,28 +132,39 @@ export class AgentRunner {
     // 'needs_clarification' stay out: a failed plan needs a human decision and open
     // clarifications wait for human answers.
     const stories = this.db
-      .select({ id: userStories.id, revision: userStories.revision })
+      .select({ id: userStories.id, revision: userStories.revision, planningStatus: userStories.planningStatus })
       .from(userStories)
-      .where(and(eq(userStories.status, 'NEW'), inArray(userStories.planningStatus, ['none', 'planning']), isNull(userStories.cancelledAt), isNull(userStories.activeRunId)))
+      .where(and(eq(userStories.status, 'NEW'), inArray(userStories.planningStatus, ['none', 'planning', 'planning_failed']), isNull(userStories.cancelledAt), isNull(userStories.activeRunId)))
       .all();
 
     for (const story of stories) {
-      if (!this.hasActiveJob(story.id, 'plan')) {
-        // The durable_jobs idempotency key is unique forever (rows are never deleted), so the
-        // key must carry the next plan version: a re-plan of the same story+revision under the
-        // old `<story>_<revision>` key would collide and silently enqueue nothing. The version
-        // is computed exactly like planner.planStory (existing plans + 1) so the key matches
-        // the version the planner will save.
-        const planCount = this.db.select({ id: plans.id }).from(plans).where(eq(plans.storyId, story.id)).all().length;
-        this.queue.enqueue({
-          kind: 'plan',
-          slot: 'heavy',
-          storyId: story.id,
-          sideEffecting: false,
-          idempotencyKey: `auto_plan_${story.id}_${story.revision}_v${planCount + 1}`,
-        });
-      }
+      if (this.hasActiveJob(story.id, 'plan')) continue;
+      // The durable_jobs idempotency key is unique forever (rows are never deleted), so the
+      // key must carry the next plan version: a re-plan of the same story+revision under the
+      // old `<story>_<revision>` key would collide and silently enqueue nothing. The version
+      // is computed exactly like planner.planStory (existing plans + 1) so the key matches
+      // the version the planner will save. The failed-plan counter is part of the key too, so
+      // a retry after a failed plan is a new job instead of a no-op on the failed one.
+      const planCount = this.db.select({ id: plans.id }).from(plans).where(eq(plans.storyId, story.id)).all().length;
+      const failedPlans = story.planningStatus === 'planning_failed' ? this.failedPlanCount(story.id) : 0;
+      if (failedPlans >= MAX_PLANNING_ATTEMPTS) continue;
+      this.queue.enqueue({
+        kind: 'plan',
+        slot: 'heavy',
+        storyId: story.id,
+        sideEffecting: false,
+        idempotencyKey: `auto_plan_${story.id}_${story.revision}_v${planCount + 1}_a${failedPlans}`,
+      });
     }
+  }
+
+  /** How many planner runs for this story ended in failure (the planning retry budget). */
+  private failedPlanCount(storyId: number): number {
+    return this.db
+      .select({ id: agentRuns.id })
+      .from(agentRuns)
+      .where(and(eq(agentRuns.storyId, storyId), eq(agentRuns.role, 'planner'), eq(agentRuns.status, 'failed')))
+      .all().length;
   }
 
   private discoverImplementation(): void {

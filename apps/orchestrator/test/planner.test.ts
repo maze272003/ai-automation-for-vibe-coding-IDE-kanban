@@ -3,7 +3,7 @@ import { eq } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, test, vi } from 'vitest';
 import { PlannerAgent } from '../src/agents/planner.ts';
 import { RunInterruptRegistry } from '../src/agents/interrupts.ts';
-import type { OpenCodeRuntime, RunOneShotInput } from '../src/agents/runtime.ts';
+import { ROLE_TIMEOUTS, type OpenCodeRuntime, type RunOneShotInput } from '../src/agents/runtime.ts';
 import { EventBus } from '../src/events/bus.ts';
 import { WorkflowService } from '../src/workflow/service.ts';
 import { createTestDb, forceStory, seedAcceptanceCriterion, seedPlan, seedProject, seedStory } from './helpers/db.ts';
@@ -42,6 +42,23 @@ describe('PlannerAgent', () => {
 
   afterAll(() => {
     dbHolder.close();
+  });
+
+  test('runs the model with the planner wall-clock budget from the spec', async () => {
+    // A flat 10-minute budget cut real planning runs short: observed planner runs needed
+    // 11–12 minutes and were killed, which threw away the finished plan.
+    const project = seedProject(dbHolder.db, { repoPath: 'C:/repos/test-proj-timeout' });
+    const story = seedStory(dbHolder.db, project.id, { title: 'Budgeted Plan', status: 'NEW' });
+
+    const runOneShot = vi.fn().mockResolvedValue({ ok: true, text: mockPlanText([]) });
+    const mockRuntime: OpenCodeRuntime = { runOneShot } as unknown as OpenCodeRuntime;
+
+    const planner = new PlannerAgent({ db: dbHolder.db, workflow, bus, runtime: mockRuntime });
+    const result = await planner.planStory({ storyId: story.id });
+
+    expect(result.ok).toBe(true);
+    expect(runOneShot).toHaveBeenCalledWith(expect.objectContaining({ timeoutMs: ROLE_TIMEOUTS.planner }));
+    expect(ROLE_TIMEOUTS.planner).toBe(20 * 60_000);
   });
 
   test('generates plan, saves to plans table, and transitions story to READY on auto-accept', async () => {
