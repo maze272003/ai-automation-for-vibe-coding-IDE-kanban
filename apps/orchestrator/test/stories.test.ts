@@ -2,8 +2,9 @@
 import { agentRuns, clarifications, plans, reviewFindings, reviews, storyEvents, verificationChecks, verificationRuns } from '@aik/db';
 import crypto from 'node:crypto';
 import { eq } from 'drizzle-orm';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ApiHttpError } from '../src/api/errors.ts';
+import type { LocalMerger } from '../src/git/merger.ts';
 import { buildTestApp } from './helpers/app.ts';
 import { forceStory, seedPlan } from './helpers/db.ts';
 import { makeTempRepo } from './helpers/temp.ts';
@@ -350,3 +351,80 @@ describe('GET /stories/:id/details', () => {
     expect(body.diff).toBeNull();
   });
 });
+
+describe('POST /stories/:id/revert-merge', () => {
+  it('reports GUARD_FAILED when merger is not installed in build', async () => {
+    const s = await createStory({ title: 'Not blocked' });
+    const r = await ctx.inject('POST', `/stories/${s.id}/revert-merge`, { expectedVersion: s.statusVersion });
+    expect(r.statusCode).toBe(409);
+    expect(r.json().error.code).toBe('GUARD_FAILED');
+    expect(r.json().error.message).toMatch(/Merge pipeline is not installed/i);
+  });
+
+  it('refuses to revert when story is not BLOCKED(post_merge_failed)', async () => {
+    const mockMerger = {
+      revertFailedMerge: vi.fn().mockResolvedValue({ ok: true, revertSha: 'c'.repeat(40) }),
+    } as unknown as LocalMerger;
+    const appWithMerger = await buildTestApp({ merger: mockMerger });
+    try {
+      const pId = (await appWithMerger.inject('POST', '/projects', { name: 'Project', key: 'PR', repoPath: makeTempRepo() })).json().id;
+      const s = (await appWithMerger.inject('POST', `/projects/${pId}/stories`, { title: 'Story', description: 'Desc', acceptanceCriteria: ['AC1'] })).json();
+      const r = await appWithMerger.inject('POST', `/stories/${s.id}/revert-merge`, { expectedVersion: s.statusVersion });
+      expect(r.statusCode).toBe(409);
+      expect(r.json().error.code).toBe('GUARD_FAILED');
+      expect(r.json().error.message).toMatch(/post-merge verification/i);
+    } finally {
+      await appWithMerger.app.close();
+      appWithMerger.t.close();
+    }
+  });
+
+  it('rejects a stale expectedVersion with VERSION_CONFLICT', async () => {
+    const mockMerger = {
+      revertFailedMerge: vi.fn().mockResolvedValue({ ok: true, revertSha: 'c'.repeat(40) }),
+    } as unknown as LocalMerger;
+    const appWithMerger = await buildTestApp({ merger: mockMerger });
+    try {
+      const pId = (await appWithMerger.inject('POST', '/projects', { name: 'Project', key: 'PR', repoPath: makeTempRepo() })).json().id;
+      const s = (await appWithMerger.inject('POST', `/projects/${pId}/stories`, { title: 'Story', description: 'Desc', acceptanceCriteria: ['AC1'] })).json();
+      forceStory(appWithMerger.t.db, s.id, { status: 'BLOCKED', blockedReason: 'post_merge_failed', blockedDetail: 'checks failed' });
+      const r = await appWithMerger.inject('POST', `/stories/${s.id}/revert-merge`, { expectedVersion: 999 });
+      expect(r.statusCode).toBe(409);
+      expect(r.json().error.code).toBe('VERSION_CONFLICT');
+    } finally {
+      await appWithMerger.app.close();
+      appWithMerger.t.close();
+    }
+  });
+
+  it('successfully executes revertFailedMerge and returns revertSha and updated story', async () => {
+    const revertSha = 'c'.repeat(40);
+    const mockMerger = {
+      revertFailedMerge: vi.fn().mockImplementation(async ({ storyId }) => {
+        forceStory(appWithMerger.t.db, storyId, {
+          blockedDetail: `Post-merge checks failed. Reverted via ${revertSha}.`,
+          statusVersion: 1,
+        });
+        return { ok: true, revertSha };
+      }),
+    } as unknown as LocalMerger;
+    const appWithMerger = await buildTestApp({ merger: mockMerger });
+    try {
+      const pId = (await appWithMerger.inject('POST', '/projects', { name: 'Project', key: 'PR', repoPath: makeTempRepo() })).json().id;
+      const s = (await appWithMerger.inject('POST', `/projects/${pId}/stories`, { title: 'Story', description: 'Desc', acceptanceCriteria: ['AC1'] })).json();
+      forceStory(appWithMerger.t.db, s.id, { status: 'BLOCKED', blockedReason: 'post_merge_failed', blockedDetail: 'checks failed' });
+      const r = await appWithMerger.inject('POST', `/stories/${s.id}/revert-merge`, { expectedVersion: 0 });
+      expect(r.statusCode).toBe(200);
+      expect(r.json()).toMatchObject({
+        ok: true,
+        revertSha,
+        story: expect.objectContaining({ id: s.id, status: 'BLOCKED', blocked: expect.objectContaining({ reason: 'post_merge_failed' }) }),
+      });
+      expect(mockMerger.revertFailedMerge).toHaveBeenCalledWith({ storyId: s.id });
+    } finally {
+      await appWithMerger.app.close();
+      appWithMerger.t.close();
+    }
+  });
+});
+

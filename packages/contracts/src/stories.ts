@@ -130,3 +130,8 @@ export const TransitionRequest = z
   ])
   .and(z.object({ expectedVersion: z.number().int().min(0) }));
 export type TransitionRequest = z.infer<typeof TransitionRequest>;
+
+export const RevertMergeRequest = z.object({
+  expectedVersion: z.number().int().min(0),
+});
+export type RevertMergeRequest = z.infer<typeof RevertMergeRequest>;

@@ -1,5 +1,5 @@
 // apps/orchestrator/src/api/routes/stories.ts
-import { CreateStoryRequest, PatchStoryRequest, StoryListQuery, TransitionRequest } from '@aik/contracts';
+import { CreateStoryRequest, PatchStoryRequest, RevertMergeRequest, StoryListQuery, TransitionRequest } from '@aik/contracts';
 import type { AikDb } from '@aik/db';
 import type { FastifyInstance } from 'fastify';
 import type { StoryService } from '../../stories/service.ts';
@@ -23,5 +23,9 @@ export function registerStoryRoutes(app: FastifyInstance, deps: { db: AikDb; now
   mutation(app, deps, 'POST', '/stories/:id/transitions', async (req) => ({
     status: 200,
     body: deps.stories.transition(parse(IdParams, req.params).id, parse(TransitionRequest, req.body), req.headers['idempotency-key'] as string),
+  }));
+  mutation(app, deps, 'POST', '/stories/:id/revert-merge', async (req) => ({
+    status: 200,
+    body: await deps.stories.revertMerge(parse(IdParams, req.params).id, parse(RevertMergeRequest, req.body).expectedVersion),
   }));
 }

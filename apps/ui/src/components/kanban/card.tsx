@@ -156,6 +156,27 @@ export function Card({
         </button>
       )}
 
+      {story.status === 'BLOCKED' && story.blocked?.reason === 'post_merge_failed' && (
+        <button
+          type="button"
+          data-testid={`revert-merge-${story.key}`}
+          onClick={(e) => {
+            e.stopPropagation();
+            onOpenTerminal?.(story);
+          }}
+          className="mt-2.5 flex w-full items-center justify-between rounded bg-red-600 hover:bg-red-500 px-2.5 py-1.5 font-medium text-xs text-white shadow transition-all cursor-pointer group"
+          title={`Post-merge verification failed for ${story.key}. Inspect failures and revert merge.`}
+        >
+          <div className="flex items-center gap-1.5 min-w-0">
+            <svg className="h-3.5 w-3.5 shrink-0 text-red-100" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6" />
+            </svg>
+            <span className="truncate font-semibold text-[11px]">Revert Merge</span>
+          </div>
+          <span className="text-[10px] text-red-100 group-hover:translate-x-0.5 transition-transform">→</span>
+        </button>
+      )}
+
       {(canStopRun || canToggleHold) && (
         <div className="mt-2 flex flex-wrap items-center gap-1.5">
           {canStopRun && (

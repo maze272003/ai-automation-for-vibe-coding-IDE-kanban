@@ -1,6 +1,6 @@
 import { ProjectSettings } from '@aik/contracts';
 import { mergeApprovals, merges, projects, userStories, verificationChecks, type AikDb } from '@aik/db';
-import { and, eq, inArray } from 'drizzle-orm';
+import { and, desc, eq, inArray } from 'drizzle-orm';
 import { execFileSync } from 'node:child_process';
 import type { EventBus } from '../events/bus.ts';
 import { systemClock, type Clock } from '../time.ts';
@@ -38,6 +38,12 @@ export interface MergeResult {
   reverificationRequired?: boolean;
   /** Non-fatal outcome notice, e.g. a dirty story worktree that was intentionally kept (spec §13.6). */
   warning?: string;
+  error?: string;
+}
+
+export interface RevertResult {
+  ok: boolean;
+  revertSha?: string;
   error?: string;
 }
 
@@ -384,6 +390,127 @@ export class LocalMerger {
     }
     this.bus.notify(1);
     return { ok: true, reverificationRequired: true };
+  }
+
+  /**
+   * Reverts a merge commit whose post-merge checks failed (spec §13.5 step 4, §6.10 row 3, §21 S8).
+   * Started by the human when the story is BLOCKED(post_merge_failed).
+   */
+  async revertFailedMerge(input: { storyId: number }): Promise<RevertResult> {
+    const story = this.db.select().from(userStories).where(eq(userStories.id, input.storyId)).get();
+    if (!story) return { ok: false, error: 'Story not found' };
+    if (story.status !== 'BLOCKED' || story.blockedReason !== 'post_merge_failed') {
+      return {
+        ok: false,
+        error: `Story is not in BLOCKED(post_merge_failed) status (current: ${story.status}${story.blockedReason ? `/${story.blockedReason}` : ''})`,
+      };
+    }
+
+    const project = this.db.select().from(projects).where(eq(projects.id, story.projectId)).get();
+    if (!project) return { ok: false, error: 'Project not found' };
+
+    const mergeRow = this.db
+      .select()
+      .from(merges)
+      .where(and(eq(merges.storyId, story.id), eq(merges.status, 'succeeded')))
+      .orderBy(desc(merges.id))
+      .limit(1)
+      .get();
+    if (!mergeRow || !mergeRow.mergedSha || !mergeRow.baseBefore) {
+      return { ok: false, error: 'Could not find the merge record to revert' };
+    }
+
+    const mergedSha = mergeRow.mergedSha;
+    const baseBefore = mergeRow.baseBefore;
+    const baseRef = `refs/heads/${project.baseBranch}`;
+
+    let baseHead: string;
+    try {
+      baseHead = git(project.repoPath, 'rev-parse', baseRef);
+    } catch (err) {
+      return { ok: false, error: `Cannot resolve base branch ${project.baseBranch}: ${String(err)}` };
+    }
+
+    if (!isAncestor(project.repoPath, mergedSha, baseHead)) {
+      return { ok: false, error: `The base branch does not contain the merged commit ${mergedSha}` };
+    }
+
+    // Refuse a dirty checked-out base before creating any commit (spec §13.5).
+    const baseWorktree = this.findWorktreeForBranch(project.repoPath, baseRef);
+    if (baseWorktree) {
+      let dirty: string;
+      try {
+        dirty = git(baseWorktree, 'status', '--porcelain');
+      } catch {
+        dirty = 'unknown';
+      }
+      if (dirty) {
+        return {
+          ok: false,
+          error: `Commit or stash your changes in ${baseWorktree}, then retry`,
+        };
+      }
+      const head = git(baseWorktree, 'rev-parse', 'HEAD');
+      if (head !== baseHead) {
+        return { ok: false, error: `The base branch moved while preparing the revert (${baseHead} → ${head}); retry` };
+      }
+    }
+
+    // Tree-less 3-way revert using git merge-tree
+    const probe = runGit(project.repoPath, [
+      'merge-tree',
+      '--write-tree',
+      `--merge-base=${mergedSha}`,
+      baseHead,
+      baseBefore,
+    ]);
+    if (probe.code !== 0) {
+      return { ok: false, error: this.gitFailure(`merge-tree revert exited with code ${probe.code}`, probe.output) };
+    }
+
+    const revertTree = (probe.output.split(/\r?\n/)[0] ?? '').trim();
+    if (!/^[0-9a-f]{40}([0-9a-f]{24})?$/.test(revertTree)) {
+      return { ok: false, error: `Git revert failed: merge-tree returned ${this.redact(brief(revertTree))}` };
+    }
+
+    let revertSha: string;
+    try {
+      const message = `Revert "Merge ${story.key}: ${story.title}"\n\nThis reverts commit ${mergedSha} due to post-merge check failures.`;
+      revertSha = git(
+        project.repoPath,
+        '-c', 'user.name=AI Kanban Agent',
+        '-c', 'user.email=agent@localhost',
+        'commit-tree', revertTree, '-p', baseHead, '-m', message,
+      );
+    } catch (err) {
+      return { ok: false, error: this.gitFailure('revert commit-tree', err) };
+    }
+
+    // Advance the base ref safely (update-ref CAS, or fast-forward clean checkout)
+    try {
+      if (baseWorktree) {
+        git(baseWorktree, 'merge', '--ff-only', revertSha);
+        if (git(baseWorktree, 'rev-parse', 'HEAD') !== revertSha) throw new Error('The base checkout did not fast-forward');
+      } else {
+        git(project.repoPath, 'update-ref', baseRef, revertSha, baseHead);
+      }
+    } catch (err) {
+      return { ok: false, error: `Could not advance ${project.baseBranch}: ${this.redact(String(err))}` };
+    }
+
+    // Update story detail to note revert commit and bump statusVersion
+    this.db
+      .update(userStories)
+      .set({
+        blockedDetail: `Post-merge checks failed. Reverted on ${project.baseBranch} via ${revertSha}.`,
+        statusVersion: story.statusVersion + 1,
+        updatedAt: new Date(this.now()),
+      })
+      .where(eq(userStories.id, story.id))
+      .run();
+
+    this.bus.notify(1);
+    return { ok: true, revertSha };
   }
 
   /**

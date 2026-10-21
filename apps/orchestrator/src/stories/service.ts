@@ -272,6 +272,36 @@ export class StoryService {
     return dto;
   }
 
+  async revertMerge(id: number, expectedVersion: number): Promise<{ ok: boolean; revertSha: string; story: StoryDTO }> {
+    if (!this.merger) {
+      throw new ApiHttpError(409, 'GUARD_FAILED', 'Merge pipeline is not installed in this build');
+    }
+    const story = getStoryRow(this.db, id);
+    if (!story) throw new ApiHttpError(404, 'NOT_FOUND', `Story ${id} not found`);
+    if (story.status !== 'BLOCKED' || story.blockedReason !== 'post_merge_failed') {
+      throw new ApiHttpError(
+        409,
+        'GUARD_FAILED',
+        `Reverting a merge is only allowed when post-merge verification failed (current: ${story.status}${story.blockedReason ? `/${story.blockedReason}` : ''})`,
+      );
+    }
+    if (expectedVersion !== story.statusVersion) {
+      throw new ApiHttpError(409, 'VERSION_CONFLICT', 'The story changed since it was loaded');
+    }
+
+    const result = await this.merger.revertFailedMerge({ storyId: id });
+    if (!result.ok || !result.revertSha) {
+      throw new ApiHttpError(409, 'GUARD_FAILED', result.error ?? 'Failed to revert merge');
+    }
+
+    const updated = getStoryRow(this.db, id)!;
+    return {
+      ok: true,
+      revertSha: result.revertSha,
+      story: toStoryDTO(this.db, updated),
+    };
+  }
+
   private toWorkflowEvent(req: TransitionRequest): WorkflowEvent {
     switch (req.event) {
       case 'approve_plan':

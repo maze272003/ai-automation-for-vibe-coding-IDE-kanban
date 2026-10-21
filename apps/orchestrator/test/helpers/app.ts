@@ -10,16 +10,18 @@ import { StoryService } from '../../src/stories/service.ts';
 import { WorkflowService } from '../../src/workflow/service.ts';
 import { createTestDb } from './db.ts';
 
+import type { LocalMerger } from '../../src/git/merger.ts';
+
 const TOKEN = 'k'.repeat(43);
 const PORT = 41236;
 
-export async function buildTestApp() {
+export async function buildTestApp(options?: { merger?: LocalMerger }) {
   const t = createTestDb();
   const now = () => 1_700_000_000_000;
   const bus = new EventBus();
   const workflow = new WorkflowService({ db: t.db, bus, now, redact: createRedactor().redact });
   const projects = new ProjectService({ db: t.db, now });
-  const stories = new StoryService({ db: t.db, workflow, bus, now });
+  const stories = new StoryService({ db: t.db, workflow, bus, now, merger: options?.merger });
   const app = createApiServer({ token: TOKEN, getPort: () => PORT });
   registerProjectRoutes(app, { db: t.db, now, projects });
   registerStoryRoutes(app, { db: t.db, now, stories });

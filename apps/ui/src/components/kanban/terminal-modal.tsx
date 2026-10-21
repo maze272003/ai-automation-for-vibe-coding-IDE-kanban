@@ -99,12 +99,13 @@ export function TerminalModal({
   const [details, setDetails] = useState<StoryDetailsResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [activeMode, setActiveMode] = useState<'terminal' | 'plan' | 'verification' | 'review' | 'diff'>(
-    story.status === 'AWAITING_MERGE' ? 'diff' : story.status === 'TESTING' ? 'verification' : 'terminal',
+    story.status === 'AWAITING_MERGE' ? 'diff' : story.status === 'TESTING' || (story.status === 'BLOCKED' && story.blocked?.reason === 'post_merge_failed') ? 'verification' : 'terminal',
   );
   const [activeTerminalTab, setActiveTerminalTab] = useState<'all' | 'reasoning' | 'tools' | 'output'>('all');
   const [autoScroll, setAutoScroll] = useState(true);
   const [copied, setCopied] = useState(false);
   const [merging, setMerging] = useState(false);
+  const [reverting, setReverting] = useState(false);
   const [stopping, setStopping] = useState(false);
   const [rejectOpen, setRejectOpen] = useState(false);
   const [rejecting, setRejecting] = useState(false);
@@ -229,6 +230,31 @@ export function TerminalModal({
       }
     } finally {
       setMerging(false);
+    }
+  };
+
+  const handleRevertMerge = async () => {
+    setReverting(true);
+    try {
+      const res = await api.post(`/stories/${story.id}/revert-merge`, {
+        expectedVersion: story.statusVersion,
+      });
+      const data = res as { ok: boolean; revertSha: string };
+      toast(`Merge reverted in commit ${data.revertSha.slice(0, 7)}! Base branch restored.`, 'info');
+      await onChanged?.();
+    } catch (err) {
+      if (err instanceof ApiRequestError) {
+        if (err.code === 'VERSION_CONFLICT') {
+          await onChanged?.();
+          toast('The story changed; the board was refreshed', 'error');
+        } else {
+          toast(err.reason, 'error');
+        }
+      } else {
+        toast(String(err), 'error');
+      }
+    } finally {
+      setReverting(false);
     }
   };
 
@@ -402,6 +428,20 @@ export function TerminalModal({
               </button>
             )}
 
+            {story.status === 'BLOCKED' && story.blocked?.reason === 'post_merge_failed' && (
+              <button
+                type="button"
+                data-testid={`modal-revert-merge-${story.key}`}
+                onClick={handleRevertMerge}
+                disabled={reverting}
+                title="Create a revert commit on the base branch to undo this failed merge"
+                className="flex items-center gap-1.5 rounded bg-red-600 hover:bg-red-500 px-3 py-1.5 text-xs font-semibold text-white shadow-lg shadow-red-900/20 transition-all cursor-pointer disabled:opacity-50"
+              >
+                <span>↺</span>
+                <span>{reverting ? 'Reverting…' : 'Revert Merge'}</span>
+              </button>
+            )}
+
             {sessionId && (
               <>
                 <button
@@ -434,6 +474,24 @@ export function TerminalModal({
             </button>
           </div>
         </div>
+
+        {story.status === 'BLOCKED' && story.blocked?.reason === 'post_merge_failed' && (
+          <div className="bg-red-950/60 border-b border-red-800/80 px-4 py-2 flex items-center justify-between text-xs text-red-200">
+            <div className="flex items-center gap-2 min-w-0">
+              <span className="font-semibold text-red-300 shrink-0">⚠ Post-Merge Checks Failed:</span>
+              <span className="truncate">{story.blocked.detail || 'Checks failed on the merged commit.'}</span>
+            </div>
+            <button
+              type="button"
+              data-testid={`banner-revert-merge-${story.key}`}
+              onClick={handleRevertMerge}
+              disabled={reverting}
+              className="ml-3 shrink-0 px-2.5 py-1 rounded bg-red-700 hover:bg-red-600 text-white font-medium text-[11px] shadow transition-colors disabled:opacity-50 cursor-pointer"
+            >
+              {reverting ? 'Reverting…' : 'Revert Merge Commit'}
+            </button>
+          </div>
+        )}
 
         {/* Top-Level Mode Navigation */}
         <div className="flex items-center border-b border-zinc-800 bg-zinc-900/50 px-4">

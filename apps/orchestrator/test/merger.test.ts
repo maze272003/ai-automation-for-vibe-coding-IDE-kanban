@@ -409,4 +409,108 @@ describe('LocalMerger', () => {
     expect(fs.existsSync(path.join(candidate.worktreePath, 'scratch-notes.txt'))).toBe(true);
     expect(fs.readFileSync(path.join(repoPath, 'ten.txt'), 'utf8').trim()).toBe('ten');
   });
+
+  describe('revertFailedMerge', () => {
+    test('reverts a failed merge commit on the base branch and restores the base tree', async () => {
+      const repoPath = makeTempRepo({ name: 'merge-revert-repo' });
+      const baseBeforeSha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repoPath, encoding: 'utf8' }).trim();
+      const baseBeforeTree = execFileSync('git', ['log', '-1', '--format=%T', baseBeforeSha], { cwd: repoPath, encoding: 'utf8' }).trim();
+
+      const project = seedProject(dbHolder.db, {
+        repoPath,
+        baseBranch: 'main',
+        settings: {
+          ...defaultProjectSettings(),
+          checks: [{ key: 'fail-check', command: 'node -e "process.exit(1)"', mandatory: true, timeoutSec: 10 }],
+        },
+      });
+      const candidate = await makeCandidate(repoPath, 'MRG-11', 'bad-feature.txt', 'bad feature content\n');
+      const story = seedStory(dbHolder.db, project.id, {
+        key: 'MRG-11',
+        title: 'Bad Feature Story',
+        status: 'AWAITING_MERGE',
+        candidateSha: candidate.candidateSha,
+        candidateTree: candidate.candidateTree,
+      });
+      seedPlan(dbHolder.db, story.id, { status: 'approved' });
+      approve(story.id, candidate.candidateSha);
+
+      const merger = buildMerger();
+      const mergeResult = await merger.approveAndMergeStory({ storyId: story.id });
+      expect(mergeResult.ok).toBe(false);
+
+      const blockedStory = dbHolder.db.select().from(userStories).where(eq(userStories.id, story.id)).get();
+      expect(blockedStory?.status).toBe('BLOCKED');
+      expect(blockedStory?.blockedReason).toBe('post_merge_failed');
+
+      // Now revert the failed merge
+      const revertResult = await merger.revertFailedMerge({ storyId: story.id });
+      expect(revertResult.ok).toBe(true);
+      expect(revertResult.revertSha).toBeDefined();
+
+      // Check base branch in repo
+      const currentHead = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repoPath, encoding: 'utf8' }).trim();
+      expect(currentHead).toBe(revertResult.revertSha);
+
+      // Check revert tree matches the base tree before merge
+      const currentTree = execFileSync('git', ['log', '-1', '--format=%T', currentHead], { cwd: repoPath, encoding: 'utf8' }).trim();
+      expect(currentTree).toBe(baseBeforeTree);
+
+      // Verify commit message
+      const logMsg = execFileSync('git', ['log', '-1', '--format=%B', currentHead], { cwd: repoPath, encoding: 'utf8' });
+      expect(logMsg).toContain('Revert "Merge MRG-11: Bad Feature Story"');
+
+      // Verify story detail was updated
+      const storyAfterRevert = dbHolder.db.select().from(userStories).where(eq(userStories.id, story.id)).get();
+      expect(storyAfterRevert?.blockedDetail).toContain(revertResult.revertSha);
+    });
+
+    test('refuses to revert when story is not BLOCKED(post_merge_failed)', async () => {
+      const repoPath = makeTempRepo({ name: 'merge-revert-guard-repo' });
+      const project = seedProject(dbHolder.db, { repoPath, baseBranch: 'main' });
+      const story = seedStory(dbHolder.db, project.id, {
+        key: 'MRG-12',
+        title: 'Not Blocked Story',
+        status: 'AWAITING_MERGE',
+      });
+
+      const merger = buildMerger();
+      const result = await merger.revertFailedMerge({ storyId: story.id });
+      expect(result.ok).toBe(false);
+      expect(result.error).toMatch(/post_merge_failed/i);
+    });
+
+    test('refuses to revert when base checkout is dirty', async () => {
+      const repoPath = makeTempRepo({ name: 'merge-revert-dirty-repo' });
+      const project = seedProject(dbHolder.db, {
+        repoPath,
+        baseBranch: 'main',
+        settings: {
+          ...defaultProjectSettings(),
+          checks: [{ key: 'fail-check', command: 'node -e "process.exit(1)"', mandatory: true, timeoutSec: 10 }],
+        },
+      });
+      const candidate = await makeCandidate(repoPath, 'MRG-13', 'fail.txt', 'fail\n');
+      const story = seedStory(dbHolder.db, project.id, {
+        key: 'MRG-13',
+        title: 'Dirty base revert',
+        status: 'AWAITING_MERGE',
+        candidateSha: candidate.candidateSha,
+        candidateTree: candidate.candidateTree,
+      });
+      seedPlan(dbHolder.db, story.id, { status: 'approved' });
+      approve(story.id, candidate.candidateSha);
+
+      const merger = buildMerger();
+      await merger.approveAndMergeStory({ storyId: story.id });
+
+      // Dirty the main worktree
+      fs.writeFileSync(path.join(repoPath, 'dirty-file.txt'), 'dirty content\n');
+
+      const result = await merger.revertFailedMerge({ storyId: story.id });
+      expect(result.ok).toBe(false);
+      expect(result.error).toMatch(/Commit or stash your changes/i);
+    });
+  });
 });
+
