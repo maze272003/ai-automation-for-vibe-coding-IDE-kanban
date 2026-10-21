@@ -5,6 +5,7 @@ import type { ImplementerAgent } from '../src/agents/implementer.ts';
 import type { PlannerAgent } from '../src/agents/planner.ts';
 import type { ReviewerAgent } from '../src/agents/reviewer.ts';
 import { AgentRunner } from '../src/agents/runner.ts';
+import { heavyLane } from '../src/jobs/lane.ts';
 import type { ApproveAndMergeStoryInput, LocalMerger } from '../src/git/merger.ts';
 import type { VerificationRunner } from '../src/verify/runner.ts';
 import { EventBus } from '../src/events/bus.ts';
@@ -114,6 +115,100 @@ describe('AgentRunner', () => {
     const jobs = dbHolder.db.select().from(durableJobs).where(eq(durableJobs.storyId, story.id)).all();
     const implJob = jobs.find((j) => j.kind === 'implement');
     expect(implJob?.status).toBe('succeeded');
+  });
+
+  test('runs jobs of different repositories in parallel, and keeps one repository serialized', async () => {
+    // Two projects on different repositories must not block each other (spec ADV-1), while two
+    // stories of the same repository share a lane and stay serialized.
+    const projectA = seedProject(dbHolder.db, { repoPath: 'C:/repos/parallel-a' });
+    const projectB = seedProject(dbHolder.db, { repoPath: 'C:/repos/parallel-b' });
+    const storyA = seedStory(dbHolder.db, projectA.id, { key: 'PAR-1', title: 'Repo A', status: 'READY', planningStatus: 'plan_approved' });
+    const storyB = seedStory(dbHolder.db, projectB.id, { key: 'PAR-2', title: 'Repo B', status: 'READY', planningStatus: 'plan_approved' });
+    const storyA2 = seedStory(dbHolder.db, projectA.id, { key: 'PAR-3', title: 'Repo A again', status: 'READY', planningStatus: 'plan_approved' });
+
+    let releaseA: () => void = () => undefined;
+    const aDone = new Promise<void>((resolve) => {
+      releaseA = resolve;
+    });
+    const started: number[] = [];
+    const implementStory = vi.fn(async (input: { storyId: number }) => {
+      started.push(input.storyId);
+      if (input.storyId === storyA.id) await aDone; // repo A keeps working
+      return { ok: true, candidateSha: 'a'.repeat(40) };
+    });
+
+    const runner = runnerWith({ implementer: { implementStory } as unknown as ImplementerAgent });
+
+    await runner.tick();
+    await new Promise((r) => setTimeout(r, 50));
+
+    // Repo B runs while repo A is still busy.
+    expect(started).toContain(storyB.id);
+    // The second story of repo A waits: same lane, one job at a time.
+    expect(started).not.toContain(storyA2.id);
+
+    releaseA();
+    await runner.drain();
+
+    // The next job of the freed lane starts on the following tick (in production the job
+    // completion notifies the bus, which triggers that tick).
+    await runner.tick();
+    await runner.drain();
+    expect(started).toContain(storyA2.id);
+  });
+
+  test('never runs more lanes at once than the concurrency cap', async () => {
+    // Three repositories, but only two lanes may work at the same time: the third waits.
+    const projects = ['C:/repos/cap-a', 'C:/repos/cap-b', 'C:/repos/cap-c'].map((repoPath) => seedProject(dbHolder.db, { repoPath }));
+    projects.forEach((project, i) => {
+      seedStory(dbHolder.db, project.id, { key: `CAP-${i + 1}`, title: `Cap ${i}`, status: 'READY', planningStatus: 'plan_approved' });
+    });
+
+    const started: number[] = [];
+    let releaseAll: () => void = () => undefined;
+    const allDone = new Promise<void>((resolve) => {
+      releaseAll = resolve;
+    });
+    const implementStory = vi.fn(async (input: { storyId: number }) => {
+      started.push(input.storyId);
+      await allDone;
+      return { ok: true, candidateSha: 'b'.repeat(40) };
+    });
+
+    const runner = new AgentRunner({
+      db: dbHolder.db,
+      queue,
+      workflow,
+      bus,
+      planner: { planStory: vi.fn().mockResolvedValue({ ok: true }) } as unknown as PlannerAgent,
+      implementer: { implementStory } as unknown as ImplementerAgent,
+      verification: { verifyStory: vi.fn().mockResolvedValue({ status: 'passed' }) } as unknown as VerificationRunner,
+      reviewer: { reviewStory: vi.fn().mockResolvedValue({ ok: true }) } as unknown as ReviewerAgent,
+      maxConcurrentLanes: 2,
+    });
+
+    await runner.tick();
+    await new Promise((r) => setTimeout(r, 50));
+    expect(started).toHaveLength(2);
+
+    releaseAll();
+    await runner.drain();
+  });
+
+  test('moves jobs queued in the old global heavy slot into the lane of their repository', async () => {
+    // A job left over from before the lanes existed must not run in the shared slot while its
+    // repository also has a lane job — the repository would then have two heavy jobs at once.
+    const project = seedProject(dbHolder.db, { repoPath: 'C:/repos/legacy-lane' });
+    const story = seedStory(dbHolder.db, project.id, { key: 'LEG-1', title: 'Legacy job', status: 'READY', planningStatus: 'plan_approved' });
+    queue.enqueue({ kind: 'implement', slot: 'heavy', storyId: story.id, sideEffecting: true, idempotencyKey: `legacy_${story.id}` });
+
+    const runner = runnerWith({});
+    runner.start();
+    await runner.drain();
+
+    const job = dbHolder.db.select().from(durableJobs).where(eq(durableJobs.storyId, story.id)).get();
+    expect(job?.slot).toBe(heavyLane(project.repoPath));
+    runner.stop();
   });
 
   test('auto-enqueues plan job for newly discovered un-planned story in NEW', async () => {
@@ -367,12 +462,14 @@ describe('AgentRunner', () => {
     const runner = runnerWith({ planner: { planStory } as unknown as PlannerAgent });
 
     await runner.tick(); // re-plan v2 (the mock planner does not persist a plan row itself)
+    await runner.drain();
 
     // The planner saved v2 and the human rejected it again: another plans row + back to planning.
     seedPlan(dbHolder.db, story.id, { version: 2, status: 'rejected', rejectionFeedback: 'second' });
     forceStory(dbHolder.db, story.id, { planningStatus: 'planning' });
 
     await runner.tick(); // re-plan v3 — a different key, so it really enqueues
+    await runner.drain();
 
     const keys = dbHolder.db
       .select({ key: durableJobs.idempotencyKey })
@@ -662,6 +759,7 @@ describe('AgentRunner', () => {
       await vi.advanceTimersByTimeAsync(12_000);
       releaseMerger();
       await tickPromise;
+      await runner.drain();
 
       expect(approveAndMergeStory).toHaveBeenCalledTimes(1);
       const renewals = heartbeatSpy.mock.calls.filter(([id]) => id === jobId).length;
@@ -742,6 +840,7 @@ describe('AgentRunner', () => {
       await vi.advanceTimersByTimeAsync(15_000);
       releasePlanner();
       await tickPromise;
+      await runner.drain();
 
       expect(planStory).toHaveBeenCalledWith({ storyId: story.id });
       // Heartbeats advanced both the beat timestamp and the lease expiry past the original

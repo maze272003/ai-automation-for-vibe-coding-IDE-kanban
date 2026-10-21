@@ -1,10 +1,10 @@
-import { durableJobs, type AikDb, type JOB_KINDS, type JOB_SLOTS } from '@aik/db';
+import { durableJobs, type AikDb, type JOB_KINDS, type JobSlot } from '@aik/db';
 import { and, asc, eq, gt, inArray, lte } from 'drizzle-orm';
 import crypto from 'node:crypto';
 import { systemClock, type Clock } from '../time.ts';
 
 export type JobKind = (typeof JOB_KINDS)[number];
-export type JobSlot = (typeof JOB_SLOTS)[number];
+export type { JobSlot };
 
 export interface EnqueueInput {
   kind: JobKind;
@@ -30,7 +30,7 @@ export interface LeasedJob {
   leaseExpiresAt: number;
 }
 
-/** Durable at-least-once queue on SQLite with leases (spec §15, FND-7). One job per slot at a time. */
+/** Durable at-least-once queue on SQLite with leases (spec §15, FND-7). One job per lane at a time. */
 export class JobQueue {
   private readonly db: AikDb;
   private readonly now: Clock;

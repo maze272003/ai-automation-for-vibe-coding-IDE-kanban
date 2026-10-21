@@ -15,6 +15,7 @@ import { OpenCodeRuntime } from '../agents/runtime.ts';
 import type { EventBus } from '../events/bus.ts';
 import { appendOutbox } from '../events/outbox.ts';
 import type { LocalMerger } from '../git/merger.ts';
+import { heavyLane } from '../jobs/lane.ts';
 import type { JobQueue } from '../jobs/queue.ts';
 import { systemClock, type Clock } from '../time.ts';
 import type { PendingRunInterrupt, TransitionOutcome, WorkflowService } from '../workflow/service.ts';
@@ -103,7 +104,9 @@ export class StoryService {
       if (this.queue) {
         this.queue.enqueue({
           kind: 'plan',
-          slot: 'heavy',
+          // The plan runs in the lane of the repository: one job per repository, different
+          // repositories in parallel (spec ADV-1).
+          slot: heavyLane(project.repoPath),
           storyId: row.id,
           sideEffecting: false,
           idempotencyKey: `plan_${row.id}_${row.revision}`,
@@ -183,6 +186,8 @@ export class StoryService {
       const queue = this.queue;
       const story = getStoryRow(this.db, id);
       if (!story) throw new ApiHttpError(404, 'NOT_FOUND', `Story ${id} not found`);
+      const project = this.db.select().from(projects).where(eq(projects.id, story.projectId)).get();
+      if (!project) throw new ApiHttpError(404, 'NOT_FOUND', `Project for story ${id} not found`);
       if (story.status !== 'AWAITING_MERGE') {
         throw new ApiHttpError(409, 'GUARD_FAILED', `A merge can only be approved while the story is AWAITING_MERGE`, {
           failedGuards: [{ guard: 'state', reason: `approve_merge is not allowed while the story is ${story.status}` }],
@@ -233,7 +238,9 @@ export class StoryService {
       if (!live) {
         queue.enqueue({
           kind: 'merge',
-          slot: 'heavy',
+          // The merge runs in the lane of the repository: one merge at a time per repository,
+          // while other repositories keep working in parallel (spec ADV-1).
+          slot: heavyLane(project.repoPath),
           storyId: id,
           sideEffecting: true,
           payload: { sha: req.sha, approvalId: approval.id },

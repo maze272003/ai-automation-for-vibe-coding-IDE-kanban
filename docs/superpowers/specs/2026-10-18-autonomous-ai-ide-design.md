@@ -723,7 +723,7 @@ For Ollama, the app offers to create a derived model `<name>-aiide-<N>k` with `P
 | Check runs (tsc, vitest, pytest) | 0.5–2 GB |
 | **Headroom left** | **~6 GB** |
 
-A local 9B model at 32k context needs 8–9 GB, so **running local models alongside checks will swap**. That is why there is exactly one heavy slot.
+A local 9B model at 32k context needs 8–9 GB, so **running local models alongside checks will swap**. That is why there is exactly one heavy slot **per repository**: independent repositories run in parallel, while one repository never runs two heavy jobs at once.
 
 **CPU-only throughput estimates** [I, ±50%]. The anchor measurement is an i7-8550U running llama.cpp on a 7B Q4 model, at 13–16 tokens/s prompt processing and 5.6–6.4 tokens/s generation.
 
@@ -749,7 +749,7 @@ If the RAM is single-channel, generation speed roughly halves [U]; check Task Ma
 
 | Dimension | Expectation | Basis |
 |---|---|---|
-| Concurrent agents | 1 heavy slot (agent or checks) plus 1 light slot (polls/fetch) | [R] |
+| Concurrent agents | 1 heavy lane per repository (agent or checks) plus 1 light slot (polls/fetch); at most 3 lanes at a time (`AIK_MAX_CONCURRENT_LANES`) | [R] |
 | Test execution | Depends on the repo; Job Object memory cap defaults to 4 GB and 64 processes, adjustable per project | [A] tune in Phase 2 |
 | DB growth | ≈0.5 MB per story (events, check tails, reviews, usage) [I]. 1,000 stories ≈ 0.5 GB. Full logs on disk with 30-day retention | [I] |
 | Worktree disk | 0.2–1 GB per JS worktree (`node_modules`), 0.1–0.5 GB per Python `.venv`. Warns above 20 GB total | [I] |
@@ -1569,7 +1569,7 @@ Dragging a card on the Kanban board maps to one of these events, or is rejected 
 - **I7** Remote merge ⇒ a `merge_approvals(kind=merge)` row exists for that SHA, and the GitHub call carries `sha`.
 - **I8** A duplicate event or job never executes twice (idempotency keys).
 - **I9** A completion from a stale worker (wrong lease or `active_run_id`) never changes state.
-- **I10** At most one implement run is active per story, and at most one heavy job runs globally (P0).
+- **I10** At most one implement run is active per story, and at most one heavy job runs per repository lane (P0). Independent repositories may work in parallel, bounded by `AIK_MAX_CONCURRENT_LANES` (default 3).
 
 ---
 
@@ -2452,7 +2452,7 @@ These follow the standard DoD in §30.1.
 - **Security:** the terminal runs with the user's full rights by design and is clearly labelled.
 
 **ADV-1…ADV-8** (P3):
-- **ADV-1:** parallel stories (more than one heavy slot) with conflict detection via `conflictsWith` and file-overlap analysis.
+- **ADV-1:** parallel stories (more than one heavy slot) with conflict detection via `conflictsWith` and file-overlap analysis. **Partially delivered:** parallel *repositories* (one heavy lane per repository, capped by `AIK_MAX_CONCURRENT_LANES`); parallel *stories of the same repository* still needs the `conflictsWith` / file-overlap detection.
 - **ADV-2:** a separate Windows-user sandbox through the helper's `CreateProcessWithLogonW`.
 - **ADV-3:** code signing (Azure Artifact Signing, or SignPath if the project goes OSS).
 - **ADV-4:** auto-update (needs ADV-3).
@@ -2596,7 +2596,7 @@ Spike DoD: a report at `docs/superpowers/spikes/<ID>.md` with evidence (commands
   2. Two claimers never get the same job.
   3. After an expired lease, idempotent jobs re-queue and side-effecting jobs mark their story for BLOCKED(`interrupted`).
   4. A stale lease token can't complete a job.
-  5. The heavy slot never runs two jobs at once.
+  5. A heavy lane never runs two jobs at once.
 - **Tests:** integration, including a kill-and-restart test.
 - **Security:** S12.
 

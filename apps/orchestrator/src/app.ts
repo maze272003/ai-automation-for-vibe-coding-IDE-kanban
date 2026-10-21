@@ -92,7 +92,21 @@ export async function startOrchestrator(opts: OrchestratorOptions): Promise<Runn
   const planner = new PlannerAgent({ db, workflow, bus, runtime, interrupts, skills });
   const implementer = new ImplementerAgent({ db, workflow, bus, runtime, worktreeManager, interrupts, skills });
   const reviewer = new ReviewerAgent({ db, workflow, bus, runtime, worktreeManager, interrupts, skills });
-  const runner = new AgentRunner({ db, queue, workflow, bus, planner, implementer, verification, reviewer, merger });
+  // How many repositories may be worked on at the same time (spec ADV-1). The cap keeps one
+  // machine from running more model sessions and test suites at once than it can carry.
+  const maxConcurrentLanes = Number.parseInt(process.env.AIK_MAX_CONCURRENT_LANES ?? '', 10);
+  const runner = new AgentRunner({
+    db,
+    queue,
+    workflow,
+    bus,
+    planner,
+    implementer,
+    verification,
+    reviewer,
+    merger,
+    ...(Number.isInteger(maxConcurrentLanes) && maxConcurrentLanes > 0 ? { maxConcurrentLanes } : {}),
+  });
   runner.start();
 
   let port = 0;

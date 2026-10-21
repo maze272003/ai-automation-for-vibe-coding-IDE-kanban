@@ -189,6 +189,7 @@ describe('plan feedback loop (EXE-7 AC2/AC4) — cross-cutting, service layer', 
     // One tick: discovery enqueues the re-plan job and the handler runs the planner a second time.
     await sleep(5); // planner run ids derive from Date.now(); keep the two runs in distinct milliseconds
     await runner.tick();
+    await runner.drain();
 
     const jobs = planJobs(story.id);
     expect(jobs).toHaveLength(1);
@@ -261,6 +262,7 @@ describe('plan feedback loop (EXE-7 AC2/AC4) — cross-cutting, service layer', 
 
     await sleep(5); // keep planner runs in distinct milliseconds (Date.now()-based run ids)
     await runner.tick();
+    await runner.drain();
 
     expect(prompts).toHaveLength(2);
     expect(prompts[0]).not.toContain(FEEDBACK);
@@ -272,6 +274,7 @@ describe('plan feedback loop (EXE-7 AC2/AC4) — cross-cutting, service layer', 
 
     await sleep(5);
     await runner.tick();
+    await runner.drain();
 
     expect(prompts).toHaveLength(3);
     expect(prompts[2]).toContain(FEEDBACK_2);
@@ -328,6 +331,7 @@ describe('plan feedback loop (EXE-7 AC2/AC4) — cross-cutting, service layer', 
 
     await sleep(5); // keep planner runs in distinct milliseconds (Date.now()-based run ids)
     await runner.tick();
+    await runner.drain();
 
     const v2 = planRows(story.id).find((p) => p.version === 2);
     expect(v2).toMatchObject({ status: 'proposed' });

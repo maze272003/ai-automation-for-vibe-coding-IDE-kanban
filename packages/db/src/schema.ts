@@ -13,6 +13,12 @@ const shaOk = (col: string) => `(${col} IS NULL OR length(${col}) IN (40, 64))`;
 
 export const JOB_KINDS = ['plan', 'implement', 'verify', 'review', 'publish', 'merge', 'postmerge', 'pr_poll', 'fetch', 'clone', 'cleanup', 'retention'] as const;
 export const JOB_SLOTS = ['heavy', 'light'] as const;
+/**
+ * A job lane — the unit of concurrency. `heavy` and `light` are the base lanes; a heavy lane
+ * may be narrowed per repository (`heavy:repo:<hash>`) so independent repositories run in
+ * parallel while one repository stays serialized.
+ */
+export type JobSlot = string;
 export const JOB_STATUSES = ['queued', 'leased', 'succeeded', 'failed', 'dead', 'cancelled'] as const;
 
 // ───────────── Projects & GitHub ─────────────
@@ -403,7 +409,7 @@ export const outboxEvents = sqliteTable('outbox_events', {
 export const durableJobs = sqliteTable('durable_jobs', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   kind: text('kind', { enum: JOB_KINDS }).notNull(),
-  slot: text('slot', { enum: JOB_SLOTS }).notNull(),
+  slot: text('slot').notNull(),
   storyId: integer('story_id').references(() => userStories.id),
   payload: text('payload', { mode: 'json' }).$type<Record<string, unknown>>().notNull(),
   sideEffecting: integer('side_effecting', { mode: 'boolean' }).notNull(),

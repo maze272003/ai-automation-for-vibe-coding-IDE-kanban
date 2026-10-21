@@ -30,8 +30,24 @@ describe('JobQueue', () => {
     expect(b).toEqual({ id: a.id, created: false });
   });
 
-  it('never leases two heavy jobs at once, but light jobs are independent', () => {
-    job('h1');
+  it('leases one job per lane, so different repositories run in parallel', () => {
+    // The heavy lane is narrowed per repository (spec ADV-1): one job at a time per lane, while
+    // different lanes are independent of each other.
+    job('h1', { slot: 'heavy:repo:aaa' });
+    job('h2', { slot: 'heavy:repo:bbb' });
+    job('h3', { slot: 'heavy:repo:aaa' });
+
+    const first = q.claim('heavy:repo:aaa');
+    expect(first?.leaseToken).toBe('tok-1');
+    // The same lane stays serialized…
+    expect(q.claim('heavy:repo:aaa')).toBeNull();
+    // …while another repository is free to work in parallel.
+    const other = q.claim('heavy:repo:bbb');
+    expect(other?.leaseToken).toBe('tok-2');
+    expect(q.claim('heavy:repo:bbb')).toBeNull();
+  });
+
+  it('never leases two heavy jobs at once, but light jobs are independent', () => {    job('h1');
     job('h2');
     q.enqueue({ kind: 'pr_poll', slot: 'light', sideEffecting: false, idempotencyKey: 'l1' });
     const first = q.claim('heavy');

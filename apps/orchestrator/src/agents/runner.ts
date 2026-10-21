@@ -1,8 +1,9 @@
 // apps/orchestrator/src/agents/runner.ts
 import type { BlockedReason } from '@aik/contracts';
-import { durableJobs, mergeApprovals, plans, reviews, userStories, verificationRuns, agentRuns, type AikDb } from '@aik/db';
+import { durableJobs, mergeApprovals, plans, projects, reviews, userStories, verificationRuns, agentRuns, type AikDb } from '@aik/db';
 import { and, desc, eq, inArray, isNull } from 'drizzle-orm';
 import type { EventBus } from '../events/bus.ts';
+import { heavyLane } from '../jobs/lane.ts';
 import type { JobQueue, LeasedJob } from '../jobs/queue.ts';
 import { systemClock, type Clock } from '../time.ts';
 import type { VerificationRunner } from '../verify/runner.ts';
@@ -20,6 +21,13 @@ import type { ReviewerAgent } from './reviewer.ts';
  */
 const MAX_PLANNING_ATTEMPTS = 3;
 
+/**
+ * How many lanes may run a heavy job at the same time. Each lane is one repository, so this is
+ * how many repositories can be worked on in parallel (spec ADV-1). The cap keeps a single
+ * machine from running more model sessions and test suites at once than it can carry.
+ */
+const DEFAULT_MAX_CONCURRENT_LANES = 3;
+
 export interface AgentRunnerDeps {
   db: AikDb;
   queue: JobQueue;
@@ -34,6 +42,8 @@ export interface AgentRunnerDeps {
   pollIntervalMs?: number;
   /** How often a running job handler renews its lease (spec §15, FND-7, I9). */
   heartbeatMs?: number;
+  /** How many lanes may run a heavy job at the same time (spec ADV-1: parallel projects). */
+  maxConcurrentLanes?: number;
 }
 
 export class AgentRunner {
@@ -49,11 +59,14 @@ export class AgentRunner {
   private readonly now: Clock;
   private readonly pollIntervalMs: number;
   private readonly heartbeatMs: number;
+  private readonly maxConcurrentLanes: number;
 
   private running = false;
   private isTicking = false;
   private unsubscribeBus?: () => void;
   private timer?: NodeJS.Timeout;
+  /** The heavy jobs currently running, keyed by their lane (one job per lane). */
+  private readonly inFlight = new Map<string, Promise<void>>();
 
   constructor(deps: AgentRunnerDeps) {
     this.db = deps.db;
@@ -68,11 +81,13 @@ export class AgentRunner {
     this.now = deps.now ?? systemClock;
     this.pollIntervalMs = deps.pollIntervalMs ?? 1000;
     this.heartbeatMs = deps.heartbeatMs ?? 20_000;
+    this.maxConcurrentLanes = deps.maxConcurrentLanes ?? DEFAULT_MAX_CONCURRENT_LANES;
   }
 
   start(): void {
     if (this.running) return;
     this.running = true;
+    this.migrateLegacyLanes();
     this.unsubscribeBus = this.bus.subscribe(() => {
       void this.triggerTick();
     });
@@ -80,6 +95,27 @@ export class AgentRunner {
       void this.triggerTick();
     }, this.pollIntervalMs);
     void this.triggerTick();
+  }
+
+  /**
+   * Moves jobs that were queued in the old global `heavy` slot into the lane of their
+   * repository, so a repository never ends up with one legacy job and one lane job running at
+   * the same time. One-time, idempotent: jobs that already sit in a lane are left alone.
+   */
+  private migrateLegacyLanes(): void {
+    const jobs = this.db
+      .select({ id: durableJobs.id, storyId: durableJobs.storyId })
+      .from(durableJobs)
+      .where(and(eq(durableJobs.slot, 'heavy'), inArray(durableJobs.status, ['queued', 'leased'])))
+      .all();
+    for (const job of jobs) {
+      if (job.storyId === null) continue;
+      this.db
+        .update(durableJobs)
+        .set({ slot: this.laneForStory(job.storyId), updatedAt: new Date(this.now()) })
+        .where(eq(durableJobs.id, job.id))
+        .run();
+    }
   }
 
   stop(): void {
@@ -104,19 +140,63 @@ export class AgentRunner {
     }
   }
 
+  /**
+   * Discovers work and starts one job per free lane.
+   *
+   * The jobs run in the background: a tick must not wait for a 10-minute implementation run,
+   * or no other project could start while it runs. Each lane keeps at most one job at a time,
+   * and different lanes (one per repository) run in parallel (spec ADV-1).
+   */
   async tick(): Promise<void> {
     this.discoverAndEnqueueJobs();
+    this.startJobs();
+  }
 
-    let job = this.queue.claim('heavy');
-    while (job) {
-      const claimed = job;
-      try {
-        await this.runWithHeartbeat(claimed, () => this.handleJob(claimed));
-      } catch (err) {
-        this.queue.fail(claimed.id, claimed.leaseToken, err instanceof Error ? err.message : String(err), { retry: false });
-      }
-      job = this.queue.claim('heavy');
+  /** Awaits the jobs this runner started. Used by the tests and by a graceful shutdown. */
+  async drain(): Promise<void> {
+    while (this.inFlight.size > 0) {
+      await Promise.allSettled([...this.inFlight.values()]);
     }
+  }
+
+  /** Starts one job per lane that has queued work and no running job. */
+  private startJobs(): void {
+    for (const lane of this.lanesWithWork()) {
+      if (this.inFlight.size >= this.maxConcurrentLanes) break;
+      if (this.inFlight.has(lane)) continue;
+      const job = this.queue.claim(lane);
+      if (!job) continue;
+      const claimed = job;
+      const promise = this.runWithHeartbeat(claimed, () => this.handleJob(claimed))
+        .catch((err) => {
+          try {
+            this.queue.fail(claimed.id, claimed.leaseToken, err instanceof Error ? err.message : String(err), { retry: false });
+          } catch {
+            // The database may already be closed (shutdown); the lease expires and the startup
+            // sweep reports the job as interrupted.
+          }
+        })
+        .finally(() => {
+          this.inFlight.delete(lane);
+          // The lane is free again: let the next job in it start right away.
+          this.bus.notify(1);
+        })
+        .catch(() => undefined);
+      this.inFlight.set(lane, promise);
+    }
+  }
+
+  /** The lanes that have queued work: one per repository, plus the shared base lanes. */
+  private lanesWithWork(): string[] {
+    // Oldest work first, so a lane never starves behind a newer one when the concurrency cap
+    // is reached.
+    const rows = this.db
+      .select({ slot: durableJobs.slot, runAfter: durableJobs.runAfter, id: durableJobs.id })
+      .from(durableJobs)
+      .where(eq(durableJobs.status, 'queued'))
+      .all()
+      .sort((a, b) => a.runAfter.getTime() - b.runAfter.getTime() || a.id - b.id);
+    return [...new Set(rows.map((r) => r.slot))];
   }
 
   private discoverAndEnqueueJobs(): void {
@@ -128,12 +208,14 @@ export class AgentRunner {
 
   private discoverPlanning(): void {
     // 'none' = first plan; 'planning' = re-plan after reject_plan / answer_clarifications
-    // returned the story to planning (spec §16.2). 'planning_failed' and
-    // 'needs_clarification' stay out: a failed plan needs a human decision and open
-    // clarifications wait for human answers.
+    // returned the story to planning (spec §16.2). 'planning_failed' is retried while the
+    // planning budget lasts: a failed plan used to park the story forever, because the only
+    // recovery path (`recover`) needs BLOCKED while a failed plan leaves the story in NEW.
+    // 'needs_clarification' stays out: open clarifications wait for human answers.
     const stories = this.db
-      .select({ id: userStories.id, revision: userStories.revision, planningStatus: userStories.planningStatus })
+      .select({ id: userStories.id, revision: userStories.revision, planningStatus: userStories.planningStatus, repoPath: projects.repoPath })
       .from(userStories)
+      .innerJoin(projects, eq(projects.id, userStories.projectId))
       .where(and(eq(userStories.status, 'NEW'), inArray(userStories.planningStatus, ['none', 'planning', 'planning_failed']), isNull(userStories.cancelledAt), isNull(userStories.activeRunId)))
       .all();
 
@@ -150,7 +232,7 @@ export class AgentRunner {
       if (failedPlans >= MAX_PLANNING_ATTEMPTS) continue;
       this.queue.enqueue({
         kind: 'plan',
-        slot: 'heavy',
+        slot: heavyLane(story.repoPath),
         storyId: story.id,
         sideEffecting: false,
         idempotencyKey: `auto_plan_${story.id}_${story.revision}_v${planCount + 1}_a${failedPlans}`,
@@ -169,8 +251,9 @@ export class AgentRunner {
 
   private discoverImplementation(): void {
     const stories = this.db
-      .select({ id: userStories.id, status: userStories.status, statusVersion: userStories.statusVersion, attempts: userStories.attemptCount, maxAttempts: userStories.maxAttempts })
+      .select({ id: userStories.id, status: userStories.status, statusVersion: userStories.statusVersion, attempts: userStories.attemptCount, maxAttempts: userStories.maxAttempts, repoPath: projects.repoPath })
       .from(userStories)
+      .innerJoin(projects, eq(projects.id, userStories.projectId))
       .where(and(inArray(userStories.status, ['READY', 'REWORK']), isNull(userStories.cancelledAt), isNull(userStories.activeRunId)))
       .all();
 
@@ -182,7 +265,7 @@ export class AgentRunner {
       }
       this.queue.enqueue({
         kind: 'implement',
-        slot: 'heavy',
+        slot: heavyLane(story.repoPath),
         storyId: story.id,
         sideEffecting: true,
         idempotencyKey: `implement_${story.id}_${story.statusVersion}`,
@@ -198,8 +281,10 @@ export class AgentRunner {
         attemptCount: userStories.attemptCount,
         maxAttempts: userStories.maxAttempts,
         activeRunId: userStories.activeRunId,
+        repoPath: projects.repoPath,
       })
       .from(userStories)
+      .innerJoin(projects, eq(projects.id, userStories.projectId))
       .where(and(eq(userStories.status, 'TESTING'), isNull(userStories.cancelledAt), isNull(userStories.activeRunId)))
       .all();
 
@@ -218,7 +303,7 @@ export class AgentRunner {
       if (!verification) {
         this.queue.enqueue({
           kind: 'verify',
-          slot: 'heavy',
+          slot: heavyLane(story.repoPath),
           storyId: story.id,
           sideEffecting: false,
           idempotencyKey: `verify_${story.id}_${story.candidateSha}`,
@@ -229,7 +314,7 @@ export class AgentRunner {
       if (verification.status === 'running') {
         this.queue.enqueue({
           kind: 'verify',
-          slot: 'heavy',
+          slot: heavyLane(story.repoPath),
           storyId: story.id,
           sideEffecting: false,
           idempotencyKey: `verify_${story.id}_${story.candidateSha}_${verification.id}`,
@@ -244,7 +329,7 @@ export class AgentRunner {
         }
         this.queue.enqueue({
           kind: 'implement',
-          slot: 'heavy',
+          slot: heavyLane(story.repoPath),
           storyId: story.id,
           sideEffecting: true,
           idempotencyKey: `rework_verify_${story.id}_${story.candidateSha}_${story.attemptCount}`,
@@ -255,8 +340,9 @@ export class AgentRunner {
 
   private discoverReview(): void {
     const stories = this.db
-      .select({ id: userStories.id, candidateSha: userStories.candidateSha })
+      .select({ id: userStories.id, candidateSha: userStories.candidateSha, repoPath: projects.repoPath })
       .from(userStories)
+      .innerJoin(projects, eq(projects.id, userStories.projectId))
       .where(and(eq(userStories.status, 'READY_FOR_REVIEW'), isNull(userStories.cancelledAt), isNull(userStories.activeRunId)))
       .all();
 
@@ -271,7 +357,7 @@ export class AgentRunner {
       if (existing) continue;
       this.queue.enqueue({
         kind: 'review',
-        slot: 'heavy',
+        slot: heavyLane(story.repoPath),
         storyId: story.id,
         sideEffecting: false,
         idempotencyKey: `review_${story.id}_${story.candidateSha}`,
@@ -412,12 +498,23 @@ export class AgentRunner {
     if (updated?.status === 'READY' && !this.hasActiveJob(updated.id, 'implement')) {
       this.queue.enqueue({
         kind: 'implement',
-        slot: 'heavy',
+        slot: this.laneForStory(updated.id),
         storyId: updated.id,
         sideEffecting: true,
         idempotencyKey: `implement_${updated.id}_${updated.statusVersion}`,
       });
     }
+  }
+
+  /** The heavy lane of a story: the lane of the repository its project points at. */
+  private laneForStory(storyId: number): string {
+    const row = this.db
+      .select({ repoPath: projects.repoPath })
+      .from(userStories)
+      .innerJoin(projects, eq(projects.id, userStories.projectId))
+      .where(eq(userStories.id, storyId))
+      .get();
+    return heavyLane(row?.repoPath ?? '');
   }
 
   private async handleImplementJob(job: LeasedJob): Promise<void> {

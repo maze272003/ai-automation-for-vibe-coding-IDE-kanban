@@ -73,7 +73,8 @@ describe('approve_merge request validation', () => {
 
     stories.transition(story.id, request, 'merge-approval-fail');
     const first = t.db.select().from(durableJobs).where(eq(durableJobs.storyId, story.id)).get()!;
-    const leased = queue.claim('heavy')!;
+    // The merge job lives in the lane of the repository (one merge at a time per repository).
+    const leased = queue.claim(first.slot)!;
     expect(queue.fail(leased.id, leased.leaseToken, 'dirty checkout')).toBe('failed');
 
     stories.transition(story.id, request, 'merge-approval-retry');
@@ -112,7 +113,8 @@ describe('approve_merge request validation', () => {
     expect(t.db.select().from(durableJobs).where(eq(durableJobs.storyId, story.id)).all()).toHaveLength(1);
 
     // Nor while the runner holds the lease on the merge job.
-    const leased = queue.claim('heavy')!;
+    const job = t.db.select().from(durableJobs).where(eq(durableJobs.storyId, story.id)).get()!;
+    const leased = queue.claim(job.slot)!;
     expect(leased.kind).toBe('merge');
     const again = stories.transition(story.id, request, 'merge-approval-third');
     expect(again.status).toBe('AWAITING_MERGE');
@@ -127,7 +129,8 @@ describe('approve_merge request validation', () => {
     const request = { event: 'approve_merge' as const, sha, expectedVersion: 4 };
 
     stories.transition(story.id, request, 'merge-approval-lease-1');
-    const leased = queue.claim('heavy')!;
+    const job = t.db.select().from(durableJobs).where(eq(durableJobs.storyId, story.id)).get()!;
+    const leased = queue.claim(job.slot)!;
     expect(leased.kind).toBe('merge');
 
     // The runner lost the job (crash/hang): the lease is dead even though the row still says leased.
