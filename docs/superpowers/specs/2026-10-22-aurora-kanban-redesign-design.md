@@ -487,7 +487,7 @@ apps/ui/components.json
 ```
 apps/ui/src/index.css                          tokens, aurora canvas, @theme mapping
 apps/ui/package.json                           the eight exact-pinned dependencies
-apps/ui/src/lib/theme.ts                       unchanged API; token-aware
+apps/ui/src/lib/stories.ts                     exposes a `loading` flag for the board skeleton
 apps/ui/src/components/ui/button.tsx           cva variants, aurora tokens
 apps/ui/src/components/ui/badge.tsx            status tone, aurora tokens
 apps/ui/src/components/ui/dialog.tsx           Radix-backed, glass panel
@@ -503,4 +503,6 @@ apps/ui/src/routes/settings.tsx                settings cards
 
 ```
 apps/desktop/**   packages/**   e2e/tests/board.spec.ts   e2e/tests/dashboard.spec.ts
+apps/ui/src/lib/theme.ts    loadTheme()/applyTheme() keep working untouched — the
+                            existing `.dark` class toggle already drives the new tokens
 ```
