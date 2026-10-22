@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { OpencodeModelInfo, OpencodeStatus } from '@aik/contracts';
 import { Button } from '../components/ui/button.tsx';
+import { GitHubSettingsCard } from '../components/settings/github-settings.tsx';
 import { api } from '../lib/api.ts';
 import { applyTheme, loadTheme, type Theme } from '../lib/theme.ts';
 import type { Health } from './root.tsx';
@@ -263,6 +264,7 @@ export function SettingsPage() {
         )}
       </section>
       <ModelPicker status={opencode} />
+      <GitHubSettingsCard />
     </div>
   );
 }

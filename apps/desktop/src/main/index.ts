@@ -59,8 +59,14 @@ function main(): void {
     }),
     schedule: isE2E && process.env.AIK_TEST_FAST_RESTART === '1' ? [50, 50, 50, 50, 50] : undefined,
   });
-  const forwarder = new EventForwarder({ getPort: () => supervisor.port, token, send: (e) => win?.webContents.send('aik:event', e) });
-  supervisor.on('state', () => win?.webContents.send('aik:system', { state: supervisor.state, fatal: supervisor.fatal }));
+  const sendToWindow = (channel: string, ...args: unknown[]): void => {
+    if (win && !win.isDestroyed() && !win.webContents.isDestroyed()) {
+      win.webContents.send(channel, ...args);
+    }
+  };
+
+  const forwarder = new EventForwarder({ getPort: () => supervisor.port, token, send: (e) => sendToWindow('aik:event', e) });
+  supervisor.on('state', () => sendToWindow('aik:system', { state: supervisor.state, fatal: supervisor.fatal }));
 
   app.on('second-instance', () => {
     if (!win) return;
@@ -91,6 +97,9 @@ function main(): void {
     supervisor.start();
     forwarder.start();
     win = createMainWindow({ preload: path.join(__dirname, 'preload.cjs'), url: devUrl ?? 'app://ui/index.html' });
+    win.on('closed', () => {
+      win = null;
+    });
     if (isE2E) (globalThis as Record<string, unknown>).__aik = { supervisor, dataDir: paths.dataDir, token };
   });
 }

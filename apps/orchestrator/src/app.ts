@@ -9,12 +9,15 @@ import { ReviewerAgent } from './agents/reviewer.ts';
 import { AgentRunner } from './agents/runner.ts';
 import { OpenCodeRuntime } from './agents/runtime.ts';
 import { registerEventRoutes } from './api/routes/events.ts';
+import { registerGitHubRoutes } from './api/routes/github.ts';
 import { registerHealthRoutes } from './api/routes/health.ts';
 import { registerProjectRoutes } from './api/routes/projects.ts';
 import { registerStoryRoutes } from './api/routes/stories.ts';
 import { createApiServer } from './api/server.ts';
 import { dataPaths } from './config.ts';
 import { EventBus } from './events/bus.ts';
+import { createCredentialStore } from './github/credentials.ts';
+import { GitHubAuthService } from './github/service.ts';
 import { LocalMerger } from './git/merger.ts';
 import { WorktreeManager } from './git/worktree.ts';
 import { JobQueue } from './jobs/queue.ts';
@@ -109,11 +112,15 @@ export async function startOrchestrator(opts: OrchestratorOptions): Promise<Runn
   });
   runner.start();
 
+  const credentials = createCredentialStore();
+  const github = new GitHubAuthService({ db, credentials, now: systemClock });
+
   let port = 0;
   const app = createApiServer({ token: opts.token, getPort: () => port, logger });
   registerHealthRoutes(app, { db, versions: { ...opts.versions, node: process.versions.node }, dataDir: opts.dataDir });
   registerProjectRoutes(app, { db, now: systemClock, projects });
   registerStoryRoutes(app, { db, now: systemClock, stories });
+  registerGitHubRoutes(app, { db, now: systemClock, github });
   registerEventRoutes(app, { db, bus, heartbeatMs: opts.heartbeatMs });
   await app.listen({ host: '127.0.0.1', port: 0 });
   port = (app.server.address() as AddressInfo).port;

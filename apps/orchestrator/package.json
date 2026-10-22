@@ -3,12 +3,15 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "exports": { ".": "./src/app.ts" },
+  "exports": {
+    ".": "./src/app.ts"
+  },
   "dependencies": {
     "@aik/contracts": "0.0.0",
     "@aik/db": "0.0.0",
-    "@aik/workflow": "0.0.0",
     "@aik/skill-vault": "0.1.0",
+    "@aik/workflow": "0.0.0",
+    "@napi-rs/keyring": "2.1.1",
     "better-sqlite3": "13.0.3",
     "drizzle-orm": "0.45.4",
     "fastify": "5.12.7",

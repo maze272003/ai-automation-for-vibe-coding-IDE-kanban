@@ -138,8 +138,12 @@ describe('runCheckCommand stop seam', () => {
     let grandchildPid = 0;
     while (Date.now() < deadline) {
       if (fs.existsSync(pidFile)) {
-        grandchildPid = Number.parseInt(fs.readFileSync(pidFile, 'utf8'), 10);
-        break;
+        const raw = fs.readFileSync(pidFile, 'utf8').trim();
+        const parsed = Number.parseInt(raw, 10);
+        if (Number.isFinite(parsed) && parsed > 0) {
+          grandchildPid = parsed;
+          break;
+        }
       }
       await new Promise((resolve) => setTimeout(resolve, 25));
     }

@@ -57,4 +57,20 @@ describe('startOrchestrator', () => {
     expect(dto).toMatchObject({ status: 'BLOCKED', blocked: { reason: 'interrupted', from: 'IN_PROGRESS' } });
     await o.close();
   });
+
+  it('serves GitHub settings and connection endpoints', async () => {
+    const dataDir = makeTempDir();
+    const o = await startOrchestrator(opts(dataDir));
+
+    const s1 = await (await call(o.port, 'GET', '/github/settings')).json();
+    expect(s1).toEqual({ clientId: null });
+
+    const s2 = await (await call(o.port, 'PATCH', '/github/settings', { clientId: 'Iv1.test_client_id_123' })).json();
+    expect(s2).toEqual({ clientId: 'Iv1.test_client_id_123' });
+
+    const conn = await (await call(o.port, 'GET', '/github/connection')).json();
+    expect(conn).toBeNull();
+
+    await o.close();
+  });
 });
