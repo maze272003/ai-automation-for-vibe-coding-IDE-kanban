@@ -5,6 +5,7 @@ import { ApiRequestError, api } from '../../lib/api.ts';
 import { answerClarifications, performEvent, rejectPlan, type ClarificationAnswer } from '../../lib/transitions.ts';
 import { useToast } from '../ui/toast.tsx';
 import { ClarificationAnswersForm, RejectPlanDialog, type ClarificationQuestion } from './clarifications-dialog.tsx';
+import { PullRequestCard } from '../github/pull-request-card.tsx';
 
 interface OpenCodeMessageContent {
   type?: 'reasoning' | 'tool' | 'text' | string;
@@ -98,7 +99,7 @@ export function TerminalModal({
   const [data, setData] = useState<AgentRunResponse | null>(null);
   const [details, setDetails] = useState<StoryDetailsResponse | null>(null);
   const [loading, setLoading] = useState(true);
-  const [activeMode, setActiveMode] = useState<'terminal' | 'plan' | 'verification' | 'review' | 'diff'>(
+  const [activeMode, setActiveMode] = useState<'terminal' | 'plan' | 'verification' | 'review' | 'diff' | 'github'>(
     story.status === 'AWAITING_MERGE' ? 'diff' : story.status === 'TESTING' || (story.status === 'BLOCKED' && story.blocked?.reason === 'post_merge_failed') ? 'verification' : 'terminal',
   );
   const [activeTerminalTab, setActiveTerminalTab] = useState<'all' | 'reasoning' | 'tools' | 'output'>('all');
@@ -540,6 +541,15 @@ export function TerminalModal({
           >
             Git Changes (Diff) {details?.diff ? '✓' : ''}
           </button>
+          <button
+            type="button"
+            onClick={() => setActiveMode('github')}
+            className={`border-b-2 px-3 py-2 text-xs font-medium transition-colors ${
+              activeMode === 'github' ? 'border-emerald-500 text-emerald-400 font-semibold' : 'border-transparent text-zinc-400 hover:text-zinc-200'
+            }`}
+          >
+            GitHub PR {story.pullRequest ? `(#${story.pullRequest.number})` : ''}
+          </button>
         </div>
 
         {/* Tab Content Area */}
@@ -878,6 +888,13 @@ export function TerminalModal({
                   <p>No git diff available yet. A candidate commit must be captured first.</p>
                 </div>
               )}
+            </div>
+          )}
+
+          {/* 6. GitHub PR Mode */}
+          {activeMode === 'github' && (
+            <div className="p-4 max-w-4xl mx-auto">
+              <PullRequestCard story={story} onChanged={onChanged} />
             </div>
           )}
         </div>

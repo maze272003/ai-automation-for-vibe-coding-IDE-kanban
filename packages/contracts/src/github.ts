@@ -125,3 +125,72 @@ export function normalizeGitHubRemoteUrl(rawUrl: string): string | null {
   return `${match[1].toLowerCase()}/${match[2].toLowerCase()}`;
 }
 
+export const GitHubCheckItemSchema = z.object({
+  name: z.string(),
+  status: z.string(),
+  conclusion: z.string().nullable(),
+  url: z.string().nullable().optional(),
+});
+export type GitHubCheckItem = z.infer<typeof GitHubCheckItemSchema>;
+
+export const ChecksSummarySchema = z.object({
+  total: z.number().int().nonnegative(),
+  passed: z.number().int().nonnegative(),
+  failed: z.number().int().nonnegative(),
+  pending: z.number().int().nonnegative(),
+  conclusion: z.enum(['success', 'failure', 'pending', 'none']),
+  checks: z.array(GitHubCheckItemSchema).default([]),
+});
+export type ChecksSummary = z.infer<typeof ChecksSummarySchema>;
+
+export const GitHubReviewItemSchema = z.object({
+  user: z.string(),
+  state: z.string(),
+  body: z.string().optional(),
+  submittedAt: z.string().optional(),
+});
+export type GitHubReviewItem = z.infer<typeof GitHubReviewItemSchema>;
+
+export const ReviewsSummarySchema = z.object({
+  approved: z.number().int().nonnegative(),
+  changesRequested: z.number().int().nonnegative(),
+  commented: z.number().int().nonnegative(),
+  state: z.enum(['APPROVED', 'CHANGES_REQUESTED', 'COMMENTED', 'DISMISSED', 'NONE']).default('NONE'),
+  reviews: z.array(GitHubReviewItemSchema).default([]),
+});
+export type ReviewsSummary = z.infer<typeof ReviewsSummarySchema>;
+
+export const PullRequestDTOSchema = z.object({
+  id: z.number().int().positive(),
+  storyId: z.number().int().positive(),
+  repositoryConnectionId: z.number().int().positive(),
+  number: z.number().int().positive(),
+  url: z.string().url(),
+  headBranch: z.string(),
+  headSha: z.string(),
+  baseBranch: z.string(),
+  state: z.enum(['open', 'closed', 'merged']),
+  mergeable: z.boolean().nullable(),
+  checksSummary: ChecksSummarySchema.nullable(),
+  reviewsSummary: ReviewsSummarySchema.nullable(),
+  mergeCommitSha: z.string().nullable(),
+  lastPolledAt: z.number().nullable(),
+});
+export type PullRequestDTO = z.infer<typeof PullRequestDTOSchema>;
+
+export const PublishStoryRequestSchema = z.object({
+  expectedVersion: z.number().int().min(0).optional(),
+});
+export type PublishStoryRequest = z.infer<typeof PublishStoryRequestSchema>;
+
+export const OverrideRemoteReviewRequestSchema = z.object({
+  expectedVersion: z.number().int().min(0),
+  note: z.string().trim().min(1).max(2000),
+});
+export type OverrideRemoteReviewRequest = z.infer<typeof OverrideRemoteReviewRequestSchema>;
+
+export const SyncBaseRequestSchema = z.object({
+  expectedVersion: z.number().int().min(0).optional(),
+});
+export type SyncBaseRequest = z.infer<typeof SyncBaseRequestSchema>;
+

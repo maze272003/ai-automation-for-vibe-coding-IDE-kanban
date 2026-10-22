@@ -1,9 +1,8 @@
-// apps/orchestrator/src/stories/service.ts
 import {
-  STORY_STATUS, type CreateStoryRequest, type PatchStoryRequest, type PlanV1, type StoryDTO, type StoryListQuery, type StoryStatus, type TransitionRequest,
+  STORY_STATUS, type CreateStoryRequest, type PatchStoryRequest, type PlanV1, type PullRequestDTO, type StoryDTO, type StoryListQuery, type StoryStatus, type TransitionRequest,
 } from '@aik/contracts';
 import {
-  acceptanceCriteria, agentRuns, clarifications, durableJobs, mergeApprovals, modelProfiles, plans, projects, reviewAcResults, reviewFindings, reviews, storyDependencies, storyEvents, userStories,
+  acceptanceCriteria, agentRuns, clarifications, durableJobs, mergeApprovals, modelProfiles, plans, projects, pullRequests, reviewAcResults, reviewFindings, reviews, storyDependencies, storyEvents, userStories,
   verificationChecks, verificationRuns, type AikDb, type AikTx,
 } from '@aik/db';
 import type { WorkflowEvent } from '@aik/workflow';
@@ -15,6 +14,10 @@ import { OpenCodeRuntime } from '../agents/runtime.ts';
 import type { EventBus } from '../events/bus.ts';
 import { appendOutbox } from '../events/outbox.ts';
 import type { LocalMerger } from '../git/merger.ts';
+import type { GitHubPublishService, PublishResult } from '../github/publish-service.ts';
+import type { GitHubPRPoller, PollResult } from '../github/pr-poller.ts';
+import type { GitHubSyncService, SyncResult } from '../github/sync-service.ts';
+import type { GitHubMergeService } from '../github/merge-service.ts';
 import { heavyLane } from '../jobs/lane.ts';
 import type { JobQueue } from '../jobs/queue.ts';
 import { systemClock, type Clock } from '../time.ts';
@@ -44,14 +47,33 @@ export class StoryService {
   private readonly bus: EventBus;
   private readonly queue?: JobQueue;
   private readonly merger?: LocalMerger;
+  private readonly publishService?: GitHubPublishService;
+  private readonly poller?: GitHubPRPoller;
+  private readonly syncService?: GitHubSyncService;
+  private readonly remoteMerger?: GitHubMergeService;
   private readonly now: Clock;
 
-  constructor(deps: { db: AikDb; workflow: WorkflowService; bus: EventBus; queue?: JobQueue; merger?: LocalMerger; now?: Clock }) {
+  constructor(deps: {
+    db: AikDb;
+    workflow: WorkflowService;
+    bus: EventBus;
+    queue?: JobQueue;
+    merger?: LocalMerger;
+    publishService?: GitHubPublishService;
+    poller?: GitHubPRPoller;
+    syncService?: GitHubSyncService;
+    remoteMerger?: GitHubMergeService;
+    now?: Clock;
+  }) {
     this.db = deps.db;
     this.workflow = deps.workflow;
     this.bus = deps.bus;
     this.queue = deps.queue;
     this.merger = deps.merger;
+    this.publishService = deps.publishService;
+    this.poller = deps.poller;
+    this.syncService = deps.syncService;
+    this.remoteMerger = deps.remoteMerger;
     this.now = deps.now ?? systemClock;
   }
 
@@ -176,13 +198,94 @@ export class StoryService {
   }
 
   transition(id: number, req: TransitionRequest, idempotencyKey?: string): StoryDTO {
-    if (req.event in UNAVAILABLE && !(req.event === 'approve_merge' && this.merger && this.queue)) {
+    const isAvailable =
+      (req.event === 'approve_merge' && (this.merger || this.remoteMerger) && this.queue) ||
+      (req.event === 'approve_publish') ||
+      (req.event === 'override_remote_review');
+
+    if (req.event in UNAVAILABLE && !isAvailable) {
       throw new ApiHttpError(409, 'GUARD_FAILED', `${req.event} is not available yet`, {
         failedGuards: [{ guard: 'feature_unavailable', reason: `${req.event} is handled by ${UNAVAILABLE[req.event]}, which is not installed in this build` }],
       });
     }
 
-    if (req.event === 'approve_merge' && this.merger && this.queue) {
+    if (req.event === 'approve_publish') {
+      const story = getStoryRow(this.db, id);
+      if (!story) throw new ApiHttpError(404, 'NOT_FOUND', `Story ${id} not found`);
+      const project = this.db.select().from(projects).where(eq(projects.id, story.projectId)).get();
+      if (!project) throw new ApiHttpError(404, 'NOT_FOUND', `Project for story ${id} not found`);
+      if (story.status !== 'AWAITING_MERGE') {
+        throw new ApiHttpError(409, 'GUARD_FAILED', `A publish can only be approved while the story is AWAITING_MERGE`, {
+          failedGuards: [{ guard: 'state', reason: `approve_publish is not allowed while the story is ${story.status}` }],
+        });
+      }
+      if (story.candidateSha !== req.sha) {
+        throw new ApiHttpError(409, 'GUARD_FAILED', 'The approval is not for the current candidate', {
+          failedGuards: [{ guard: 'sha', reason: `Candidate ${story.candidateSha ?? 'none'} does not match the approved ${req.sha}` }],
+        });
+      }
+      if (req.expectedVersion !== story.statusVersion) {
+        throw new ApiHttpError(409, 'VERSION_CONFLICT', 'The story changed since it was loaded');
+      }
+
+      const now = new Date(this.now());
+      this.db
+        .insert(mergeApprovals)
+        .values({
+          storyId: id,
+          kind: 'publish',
+          commitSha: req.sha,
+          approver: 'local-user',
+          approvedAt: now,
+        })
+        .onConflictDoNothing()
+        .run();
+
+      if (this.publishService) {
+        void this.publishService.publishStory(id).then((res) => {
+          if (res.ok) this.bus.notify(1);
+        });
+      }
+
+      return toStoryDTO(this.db, getStoryRow(this.db, id)!);
+    }
+
+    if (req.event === 'override_remote_review') {
+      const story = getStoryRow(this.db, id);
+      if (!story) throw new ApiHttpError(404, 'NOT_FOUND', `Story ${id} not found`);
+      if (story.status !== 'AWAITING_MERGE') {
+        throw new ApiHttpError(409, 'GUARD_FAILED', `Review can only be overridden while AWAITING_MERGE`, {
+          failedGuards: [{ guard: 'state', reason: `override_remote_review is not allowed while the story is ${story.status}` }],
+        });
+      }
+      if (story.candidateSha !== req.sha) {
+        throw new ApiHttpError(409, 'GUARD_FAILED', 'The override is not for the current candidate', {
+          failedGuards: [{ guard: 'sha', reason: `Candidate ${story.candidateSha ?? 'none'} does not match the approved ${req.sha}` }],
+        });
+      }
+      if (req.expectedVersion !== story.statusVersion) {
+        throw new ApiHttpError(409, 'VERSION_CONFLICT', 'The story changed since it was loaded');
+      }
+
+      const now = new Date(this.now());
+      this.db
+        .insert(mergeApprovals)
+        .values({
+          storyId: id,
+          kind: 'override_remote_review',
+          commitSha: req.sha,
+          approver: 'local-user',
+          note: req.note,
+          approvedAt: now,
+        })
+        .onConflictDoNothing()
+        .run();
+
+      this.bus.notify(1);
+      return toStoryDTO(this.db, getStoryRow(this.db, id)!);
+    }
+
+    if (req.event === 'approve_merge' && (this.merger || this.remoteMerger) && this.queue) {
       const queue = this.queue;
       const story = getStoryRow(this.db, id);
       if (!story) throw new ApiHttpError(404, 'NOT_FOUND', `Story ${id} not found`);
@@ -661,6 +764,69 @@ export class StoryService {
       review,
       diff,
     };
+  }
+
+  getPullRequest(storyId: number): PullRequestDTO | null {
+    const row = this.db.select().from(pullRequests).where(eq(pullRequests.storyId, storyId)).orderBy(desc(pullRequests.id)).limit(1).get();
+    if (!row) return null;
+    return {
+      id: row.id,
+      storyId: row.storyId,
+      repositoryConnectionId: row.repositoryConnectionId,
+      number: row.number,
+      url: row.url,
+      headBranch: row.headBranch,
+      headSha: row.headSha,
+      baseBranch: row.baseBranch,
+      state: row.state as 'open' | 'closed' | 'merged',
+      mergeable: row.mergeable,
+      checksSummary: row.checksSummary
+        ? {
+            total: row.checksSummary.total,
+            passed: row.checksSummary.passed,
+            failed: row.checksSummary.failed,
+            pending: row.checksSummary.pending,
+            conclusion: row.checksSummary.conclusion,
+            checks: row.checksSummary.checks ?? [],
+          }
+        : null,
+      reviewsSummary: row.reviewsSummary
+        ? {
+            approved: row.reviewsSummary.approved,
+            changesRequested: row.reviewsSummary.changesRequested,
+            commented: row.reviewsSummary.commented,
+            state: row.reviewsSummary.state ?? 'NONE',
+            reviews: row.reviewsSummary.reviews ?? [],
+          }
+        : null,
+      mergeCommitSha: row.mergeCommitSha,
+      lastPolledAt: row.lastPolledAt?.getTime() ?? null,
+    };
+  }
+
+  async publish(storyId: number): Promise<PublishResult> {
+    if (!this.publishService) {
+      throw new ApiHttpError(409, 'GUARD_FAILED', 'GitHub publishing is not available in this build');
+    }
+    return this.publishService.publishStory(storyId);
+  }
+
+  async syncBase(storyId: number): Promise<SyncResult> {
+    if (!this.syncService) {
+      throw new ApiHttpError(409, 'GUARD_FAILED', 'GitHub base sync is not available in this build');
+    }
+    return this.syncService.syncStoryWithBase(storyId);
+  }
+
+  async pollPullRequest(storyId: number): Promise<PollResult> {
+    if (!this.poller) {
+      throw new ApiHttpError(409, 'GUARD_FAILED', 'GitHub PR polling is not available in this build');
+    }
+    const pr = this.db.select().from(pullRequests).where(eq(pullRequests.storyId, storyId)).orderBy(desc(pullRequests.id)).limit(1).get();
+    if (!pr) {
+      throw new ApiHttpError(404, 'NOT_FOUND', `No pull request found for story ${storyId}`);
+    }
+    return this.poller.pollPullRequest(pr.id);
   }
 }
 

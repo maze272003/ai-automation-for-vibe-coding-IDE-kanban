@@ -1,5 +1,4 @@
-// apps/orchestrator/src/agents/runner.ts
-import type { BlockedReason } from '@aik/contracts';
+import { ProjectSettings, type BlockedReason } from '@aik/contracts';
 import { durableJobs, mergeApprovals, plans, projects, reviews, userStories, verificationRuns, agentRuns, type AikDb } from '@aik/db';
 import { and, desc, eq, inArray, isNull } from 'drizzle-orm';
 import type { EventBus } from '../events/bus.ts';
@@ -9,6 +8,7 @@ import { systemClock, type Clock } from '../time.ts';
 import type { VerificationRunner } from '../verify/runner.ts';
 import type { WorkflowService } from '../workflow/service.ts';
 import type { LocalMerger } from '../git/merger.ts';
+import type { GitHubMergeService } from '../github/merge-service.ts';
 import type { ImplementerAgent } from './implementer.ts';
 import type { PlannerAgent } from './planner.ts';
 import type { ReviewerAgent } from './reviewer.ts';
@@ -38,6 +38,7 @@ export interface AgentRunnerDeps {
   verification: VerificationRunner;
   reviewer: ReviewerAgent;
   merger?: LocalMerger;
+  remoteMerger?: GitHubMergeService;
   now?: Clock;
   pollIntervalMs?: number;
   /** How often a running job handler renews its lease (spec §15, FND-7, I9). */
@@ -56,6 +57,7 @@ export class AgentRunner {
   private readonly verification: VerificationRunner;
   private readonly reviewer: ReviewerAgent;
   private readonly merger?: LocalMerger;
+  private readonly remoteMerger?: GitHubMergeService;
   private readonly now: Clock;
   private readonly pollIntervalMs: number;
   private readonly heartbeatMs: number;
@@ -78,6 +80,7 @@ export class AgentRunner {
     this.verification = deps.verification;
     this.reviewer = deps.reviewer;
     this.merger = deps.merger;
+    this.remoteMerger = deps.remoteMerger;
     this.now = deps.now ?? systemClock;
     this.pollIntervalMs = deps.pollIntervalMs ?? 1000;
     this.heartbeatMs = deps.heartbeatMs ?? 20_000;
@@ -467,7 +470,16 @@ export class AgentRunner {
     }, this.heartbeatMs);
     heartbeatTimer.unref?.();
     try {
-      const result = await this.merger.approveAndMergeStory({ storyId: story.id, assertLease });
+      const project = this.db.select().from(projects).where(eq(projects.id, story.projectId)).get();
+      const settings = project ? ProjectSettings.parse(project.settings) : null;
+      let result: { ok: boolean; error?: string };
+      if (settings?.publish && settings?.remoteMerge && this.remoteMerger) {
+        result = await this.remoteMerger.mergeStory(story.id, { method: settings.mergeMethod });
+      } else if (this.merger) {
+        result = await this.merger.approveAndMergeStory({ storyId: story.id, assertLease });
+      } else {
+        result = { ok: false, error: 'No merger configured' };
+      }
       if (result.ok) this.complete(job);
       else this.queue.fail(job.id, job.leaseToken, result.error ?? 'Merge failed', { retry: false });
     } finally {

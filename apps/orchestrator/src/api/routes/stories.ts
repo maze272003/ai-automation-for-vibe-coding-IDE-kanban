@@ -28,4 +28,17 @@ export function registerStoryRoutes(app: FastifyInstance, deps: { db: AikDb; now
     status: 200,
     body: await deps.stories.revertMerge(parse(IdParams, req.params).id, parse(RevertMergeRequest, req.body).expectedVersion),
   }));
+  app.get('/stories/:id/pr', async (req) => deps.stories.getPullRequest(parse(IdParams, req.params).id));
+  mutation(app, deps, 'POST', '/stories/:id/publish', async (req) => ({
+    status: 200,
+    body: await deps.stories.publish(parse(IdParams, req.params).id),
+  }));
+  mutation(app, deps, 'POST', '/stories/:id/sync-base', async (req) => ({
+    status: 200,
+    body: await deps.stories.syncBase(parse(IdParams, req.params).id),
+  }));
+  mutation(app, deps, 'POST', '/stories/:id/poll-pr', async (req) => ({
+    status: 200,
+    body: await deps.stories.pollPullRequest(parse(IdParams, req.params).id),
+  }));
 }

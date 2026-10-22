@@ -7,8 +7,12 @@ import type { AikDb } from '@aik/db';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import type { GitHubCloneService } from '../../github/clone-service.ts';
+import type { GitHubMergeService } from '../../github/merge-service.ts';
+import type { GitHubPRPoller } from '../../github/pr-poller.ts';
+import type { GitHubPublishService } from '../../github/publish-service.ts';
 import type { GitHubRepositoryService } from '../../github/repository-service.ts';
 import type { GitHubAuthService } from '../../github/service.ts';
+import type { GitHubSyncService } from '../../github/sync-service.ts';
 import type { Clock } from '../../time.ts';
 import { mutation, parse } from '../idempotency.ts';
 
@@ -28,6 +32,10 @@ export function registerGitHubRoutes(
     github: GitHubAuthService;
     githubRepos?: GitHubRepositoryService;
     githubClone?: GitHubCloneService;
+    githubSync?: GitHubSyncService;
+    githubPublish?: GitHubPublishService;
+    githubPoller?: GitHubPRPoller;
+    githubMerge?: GitHubMergeService;
   },
 ): void {
   app.get('/github/settings', async () => deps.github.getSettings());
