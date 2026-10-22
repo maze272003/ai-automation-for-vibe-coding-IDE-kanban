@@ -177,7 +177,8 @@ observation; **[U]** = a sound inference that was **not** directly observed.
      `content-type` and the status code. Streaming responses are piped, never buffered.
 5. **No silent fallback.** If the upstream call fails, the gateway returns the
    upstream status to OpenCode. It never retries against a different provider
-   (parent spec D-2). Retry/backoff policy belongs to the orchestrator (PK-7).
+   (parent spec D-2). A **5xx or a transport failure is retried twice** with backoff
+   before the status is returned; a 4xx is returned immediately.
 6. **No secret in the gateway.** The gateway never logs the key, the incoming
    `Authorization`/`x-api-key`/`x-goog-api-key` values, or the upstream response body
    verbatim. Error details returned to the caller pass through the existing redactor
@@ -246,12 +247,12 @@ observation; **[U]** = a sound inference that was **not** directly observed.
 5. **The connected state** shows a "Connected" badge, the number of unlocked models,
    a **Test** button and a **Remove** button. A provider whose last test failed with
    an auth error shows "Key rejected".
-6. **Test** performs one minimal, non-streaming completion request through the
-   gateway, using the provider's first catalog model (for a custom endpoint, the
-   first model discovered from its model list), and reports success or the provider's
-   own error message, redacted. It is a real (billed) request and the button is
-   labelled accordingly. A provider with no models at all cannot be tested and its
-   Test button is disabled with the reason shown.
+6. **Test** performs one minimal request **through OpenCode** — the only component that
+   speaks the provider's own protocol — using the provider's first catalog model (for a
+   custom endpoint, the first model discovered from its model list), and reports success
+   or the provider's own error message, redacted. It is a real (billed) request and the
+   button is labelled accordingly. A provider with no models at all cannot be tested and
+   its Test button is disabled with the reason shown.
 7. **The renderer never receives key material.** The key is posted once to the
    orchestrator through the IPC bridge and is never returned by any endpoint. The key
    input is cleared after a successful connect.
@@ -282,7 +283,7 @@ observation; **[U]** = a sound inference that was **not** directly observed.
 |---|---|
 | Upstream `401`/`403` | The run ends `BLOCKED(auth)`; the provider is flagged "Key rejected" in the UI; re-entering the key clears the flag. |
 | Upstream `429` | The run ends `BLOCKED(quota)` with the existing recovery hint (`packages/contracts/src/hints.ts`). The provider's `quota_state` records the exhaustion. |
-| Upstream `5xx` or timeout | Two retries with backoff, then `BLOCKED(provider_down)`. |
+| Upstream `5xx` or timeout | The gateway retries twice with backoff, then the run ends `BLOCKED(provider_down)`. |
 | Prompt exceeds the model's context | `BLOCKED(model_limit)`, using the catalog's `contextLimit`. |
 | The provider's model id no longer exists upstream | The upstream `404` is surfaced as `BLOCKED(provider_down)` with the upstream detail. |
 | The orchestrator (and with it the gateway) restarts | The desktop learns the new gateway port from the orchestrator's `ready` message and restarts the isolated OpenCode server so its configuration matches. |
@@ -383,15 +384,23 @@ new gateway.
 
 | Method & path | Body | Returns |
 |---|---|---|
-| `GET /api/providers` | — | `{ providers: ProviderDTO[] }` — every catalog provider, with `connected` set; `models` is populated only for connected providers. Never key material. |
-| `POST /api/providers` | `{ providerId, apiKey?, baseUrl? }` | `{ ok: true, provider: ProviderDTO }` |
-| `DELETE /api/providers/:id` | — | `{ ok: true }` |
-| `POST /api/providers/:id/test` | — | `{ ok: true }` or `{ ok: false, error }` |
-| `GET /api/settings/default-model` | — | `{ providerId, modelId } \| null` |
-| `PUT /api/settings/default-model` | `{ providerId, modelId }` | `{ ok: true }` |
+| `GET /providers` | — | `{ providers: ProviderDTO[] }` — every catalog provider, with `connected` set; `models` is populated only for connected providers. Never key material. |
+| `POST /providers` | `{ providerId, apiKey?, baseUrl? }` | `{ ok: true, provider: ProviderDTO }` |
+| `DELETE /providers/:id` | — | `{ ok: true }` — `:id` is the provider's `connectedId`. |
+| `GET /settings/default-model` | — | `{ providerId, modelId } \| null` |
+| `PUT /settings/default-model` | `{ providerId, modelId }` | `{ ok: true }` |
 
-`ProviderDTO` = `{ id, label, kind, baseUrl, connected, costClass, dataUse, doc, env[],
+The paths are **root-relative**, matching the existing `/github/settings` and `/stories`
+routes. There is **no test route**: the connection test runs through OpenCode in the
+desktop, because only OpenCode speaks each provider's native protocol — the gateway
+forwards a request body verbatim and cannot produce an Anthropic- or Google-shaped
+request itself.
+
+`ProviderDTO` = `{ id, label, kind, npm, baseUrl, connected, connectedId, featured,
+costClass, dataUse, doc, env[], unsupportedReason,
 models: [{ id, name, contextLimit, outputLimit, inputCost, outputCost }] }`.
+`connectedId` is the provider row's name and differs from `id` for a custom endpoint
+(`custom-<slug>`).
 
 ### 4.5 Data flow — connecting a provider
 
@@ -465,7 +474,7 @@ uses a real key.
 | Unit | `config generator` | The generated configuration contains one virtual provider per connected provider, with the gateway URL, the gateway token and the routing header — and **no** provider key. |
 | Unit | `resolveModel` | The configured default wins; the fallback still works when it is absent. |
 | Integration | gateway ↔ mock upstream | The key is injected; the incoming token is not forwarded; the SSE stream is passed through byte-for-byte; a request without the token never reaches the upstream. |
-| E2E | the full chain | Connect a mock provider through the Settings UI, pick a model, run a story, and assert the story completes. |
+| E2E | the full chain | Connect a mock provider as a custom endpoint, then assert that OpenCode now offers its model, that the key is absent from the response, and that the key is absent from the orchestrator's database file and its log file. |
 | Security | the whole surface | The key appears in no config file, log line, database row or IPC payload; the renderer cannot obtain the gateway token; the gateway token cannot call an orchestrator route. |
 
 Two **probes** are part of the plan and are recorded as evidence before the
