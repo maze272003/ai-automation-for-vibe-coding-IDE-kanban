@@ -7,7 +7,7 @@
 | **Stories** | `PK-1` (Catalog), `PK-2` (Registry & Vault), `PK-3` (Model Gateway), `PK-4` (OpenCode Configuration), `PK-5` (Settings UI), `PK-6` (Default Model & Routing), `PK-7` (Failure Behaviour), `PK-8` (Security Boundary) |
 | **Parent Spec** | `docs/superpowers/specs/2026-10-18-autonomous-ai-ide-design.md` §9, §15.2, §18.4, §18.7 |
 | **Scope** | **Managed mode only.** Personal mode is unchanged. |
-| **Decision log** | Provider list is a curated shortlist + a custom OpenAI-compatible endpoint; keys are stored in Windows Credential Manager; the key reaches the model **only** through a loopback gateway; the first version supports every provider family in the catalog (OpenAI-compatible, Anthropic-native, Google-native, local). |
+| **Decision log** | The provider list is the **full models.dev catalog** (232 providers) with a *featured* subset shown first, plus a custom OpenAI-compatible endpoint; keys are stored in Windows Credential Manager; the key reaches the model **only** through a loopback gateway; the first version supports every provider family in the catalog (OpenAI-compatible, Anthropic-native, Google-native, local). |
 
 ---
 
@@ -42,12 +42,12 @@ All probes were run on 2026-10-22 against the pinned **OpenCode 2.0.32** binary
 (`@opencode/cli@2.0.32`, the same build the app installs) with an isolated
 `XDG_DATA_HOME` / `XDG_CONFIG_HOME` / `XDG_STATE_HOME` / `XDG_CACHE_HOME` and a local
 mock provider that logged every request. Marker **[V]** = verified by direct
-observation.
+observation; **[U]** = a sound inference that was **not** directly observed.
 
 | # | Question | Result | Marker |
 |---|---|---|---|
 | 1 | Can OpenCode 2.0.32 be given a provider without any CLI login? | **Yes.** With `OPENAI_API_KEY` set in the server process environment, `GET /api/provider` and `GET /api/model` expose the `openai` provider and its models. Verified identically for `ANTHROPIC_API_KEY` → `anthropic`, `GROQ_API_KEY` → `groq`, `OPENROUTER_API_KEY` → `openrouter`. The provider is picked up **only at server start**, so a new key requires a server restart. | [V] |
-| 2 | Does an environment-variable key reach the agent's shell? | OpenCode spawns shell commands from the server's own environment, so a key in that environment is readable by repository code. This is why the key must not be in the environment. | [V] (by inspection of the isolation design; see `checks/run.ts` env stripping) |
+| 2 | Does an environment-variable key reach the agent's shell? | Not directly observed. The inference is that OpenCode spawns shell commands from its own process environment (a standard child-process default), which would expose the key to repository code. This is why the key must not be in the environment. The implementation plan **must** confirm this with a probe before the key is ever placed in an environment. | [U] |
 | 3 | What path does an OpenAI-compatible provider receive? | `POST /chat/completions` — **no** `/v1` prefix. The version prefix lives in the provider's base URL, not in the request path. | [V] |
 | 4 | What path does the Anthropic-native provider receive? | `POST /messages`, with headers `x-api-key`, `anthropic-version`, `anthropic-beta`. | [V] |
 | 5 | What path does the Google-native provider receive? | `POST /models/{modelId}:streamGenerateContent?alt=sse`, with header `x-goog-api-key`. | [V] |
@@ -85,15 +85,26 @@ observation.
 6. **Custom endpoint.** The catalog contains one built-in entry `custom` with
    `auth: 'bearer'` and an empty base URL. Choosing it exposes a **base URL** field
    alongside the key field. The base URL must be an `http(s)` URL and is stored on the
-   provider row.
+   provider row. A custom endpoint has no catalog models, so its models are
+   **discovered** from the upstream's OpenAI-compatible model list
+   (`GET <baseUrl>/models`) when it is connected; the response's `data[].id` values
+   become its `model_profiles`. If the endpoint does not expose that route, the
+   connection still succeeds but lists no models.
 7. **Featured list.** The catalog marks a *featured* subset (OpenAI, Anthropic,
    Google, z.ai, Zhipu/GLM, z.ai Coding Plan, OpenRouter, Groq, DeepSeek, Mistral,
    xAI, Together, Moonshot/Kimi, Qwen, Fireworks, Perplexity, NVIDIA, Cerebras,
    LM Studio, Ollama). The UI shows it first; the remaining providers are reachable
    through search.
-8. **Data-use labels.** `dataUse` is `no_training` for the featured providers whose
-   terms were read, and `unknown` for the long tail. `unknown` is displayed as
-   "data use not verified" and is treated as *may train* (parent spec D-5).
+8. **Cost class and data use.**
+   - `costClass` is **derived** by the generator from the catalog's model prices:
+     every model priced at `0` → `free`; some models priced at `0` and others above
+     → `free_limited`; otherwise `paid_metered`. Local providers are `local`.
+   - `dataUse` starts as **`unknown` for every provider**. It is only promoted to
+     `no_training` or `may_train` when a source is recorded in
+     `catalog.overrides.ts` naming the provider's terms document and the sentence
+     that settles it. Until then the UI shows "data use not verified" and the value
+     is treated as *may train* (parent spec D-5). The implementation plan records
+     the terms for the featured providers; the long tail stays `unknown`.
 
 ### PK-2: Provider registry & credential vault
 
@@ -103,7 +114,7 @@ observation.
    | Column | Value |
    |---|---|
    | `preset_key` | the catalog id (`zai`, `anthropic`, `custom`, …) |
-   | `name` | the catalog id — also the virtual OpenCode provider id |
+   | `name` | the unique provider id — also the virtual OpenCode provider id. For a catalog preset it is the preset id; for a **custom** endpoint it is `custom-<slug>` derived from the base URL's host, uniquified with a numeric suffix when needed, so several custom endpoints can coexist. |
    | `kind` | `openai_compatible` \| `anthropic` \| `google` \| `ollama` — the protocol family, **not** the preset. The `custom` preset is `openai_compatible`. |
    | `base_url` | the upstream base URL from the catalog (or the user's, for `custom`) |
    | `key_ref` | `keyring:provider/<provider id>` — a reference, never a secret |
@@ -123,7 +134,8 @@ observation.
       provider's `auth` is `none`; a base URL required for `custom`);
    2. writes the key to the vault;
    3. writes the `providers` row and the `model_profiles` rows (one per catalog model
-      of that provider, with the catalog's context/output limits);
+      of that provider, with the catalog's context/output limits; for a custom
+      endpoint, the models discovered from `GET <baseUrl>/models`);
    4. returns the provider list **without** the key.
 4. **Remove.** `DELETE /api/providers/:id` deletes the vault entry, the `providers` row
    and its `model_profiles` rows, and clears the default model if it pointed at one of
@@ -206,9 +218,10 @@ observation.
    *gateway* token only. A test asserts that no `provider.*.options.apiKey` value
    equals any vault key.
 4. **Generation and restart.** The configuration is generated when the isolated
-   OpenCode server starts. The desktop restarts that server when the connected
-   provider set changes, so newly connected providers appear in the model list without
-   an app restart.
+   OpenCode server starts. After a provider is connected or removed, the renderer
+   asks the desktop to restart that server, so newly connected providers appear in
+   the model list without an app restart. The restart re-reads the connected provider
+   set from the orchestrator.
 5. **Shape.** The generated configuration uses the `provider` / `npm` / `options`
    shape (evidence #10). The existing E2E mock entry is migrated to the same shape.
 6. **Isolation is preserved.** The managed server keeps its redirected `HOME`, XDG
@@ -234,9 +247,11 @@ observation.
    a **Test** button and a **Remove** button. A provider whose last test failed with
    an auth error shows "Key rejected".
 6. **Test** performs one minimal, non-streaming completion request through the
-   gateway, using the provider's first featured model, and reports success or the
-   provider's own error message, redacted. It is a real (billed) request and the
-   button is labelled accordingly.
+   gateway, using the provider's first catalog model (for a custom endpoint, the
+   first model discovered from its model list), and reports success or the provider's
+   own error message, redacted. It is a real (billed) request and the button is
+   labelled accordingly. A provider with no models at all cannot be tested and its
+   Test button is disabled with the reason shown.
 7. **The renderer never receives key material.** The key is posted once to the
    orchestrator through the IPC bridge and is never returned by any endpoint. The key
    input is cleared after a successful connect.
@@ -356,15 +371,19 @@ new gateway.
 | `apps/orchestrator/src/app.ts` | changed | Start the gateway; pass the gateway token |
 | `apps/desktop/src/main/opencode-server.ts` | changed | Generate the virtual providers in the config |
 | `apps/desktop/src/main/index.ts` | changed | Generate and pass the gateway token at init |
+| `apps/desktop/src/main/bridge.ts` | changed | IPC: restart the isolated OpenCode server after a provider change |
+| `apps/desktop/src/preload/index.ts` | changed | Expose the restart call to the renderer |
 | `apps/ui/src/components/settings/providers-card.tsx` | new | The Providers card |
 | `apps/ui/src/routes/settings.tsx` | changed | Mount the card; default-model picker uses connected models |
 | `packages/contracts/src/providers.ts` | new | Shared DTOs (no key material) |
+| `packages/db/src/schema.ts` | changed | Widen the `providers.kind` union (no migration) |
+| `package.json` | changed | The `catalog:refresh` script |
 
 ### 4.4 Orchestrator API
 
 | Method & path | Body | Returns |
 |---|---|---|
-| `GET /api/providers` | — | `{ providers: ProviderDTO[], connected: string[] }` — never key material |
+| `GET /api/providers` | — | `{ providers: ProviderDTO[] }` — every catalog provider, with `connected` set; `models` is populated only for connected providers. Never key material. |
 | `POST /api/providers` | `{ providerId, apiKey?, baseUrl? }` | `{ ok: true, provider: ProviderDTO }` |
 | `DELETE /api/providers/:id` | — | `{ ok: true }` |
 | `POST /api/providers/:id/test` | — | `{ ok: true }` or `{ ok: false, error }` |
@@ -382,8 +401,8 @@ models: [{ id, name, contextLimit, outputLimit, inputCost, outputCost }] }`.
 4. The orchestrator writes the `providers` row and one `model_profiles` row per
    catalog model.
 5. The orchestrator returns the provider DTO.
-6. The renderer refreshes the model list; the desktop restarts the isolated OpenCode
-   server so the new virtual provider appears in `/api/model`.
+6. The renderer asks the desktop (IPC) to restart the isolated OpenCode server, and
+   then refreshes the model list; the new virtual provider appears in `/api/model`.
 
 ### 4.6 Data flow — an agent run
 
@@ -436,16 +455,26 @@ uses a real key.
 
 | Level | Subject | Assertions |
 |---|---|---|
-| Unit | `catalog` | The generated catalog parses; every entry has an `npm`, a base URL and at least one model; overrides cover the 25 providers models.dev leaves without a base URL; local entries exist. |
+| Unit | `catalog` | The generated catalog parses; every entry has an `npm`, a base URL and at least one model; overrides cover the 25 providers models.dev leaves without a base URL; local entries exist; `costClass` is derived by the stated rule; `dataUse` is `unknown` unless an override records a source. |
+| Unit | `catalog` (offline) | The generator is tested against a **fixture** of the models.dev payload, never the live API. |
 | Unit | `upstream` (URL + auth rewriting) | One case per flavour: `bearer`, `x-api-key`, `x-goog-api-key`, `api-key`, `none`; the path and query are preserved; the model id in the path is not rewritten; incoming auth headers are stripped. |
 | Unit | `gateway` | The token is required; an unknown provider is rejected; a model that does not belong to the named provider is rejected; a missing vault entry is rejected; the upstream status and body are passed through. |
+| Unit | `gateway` (routing fallback) | With no `x-aik-provider` header, the provider is resolved from the body's `model` field and from the `/models/{id}` path segment. |
 | Unit | `vault` | The memory vault round-trips; the keyring vault writes to the expected service/account. |
-| Unit | `registry` | Connect writes the rows and the vault entry; re-connect replaces in place; remove deletes the rows and clears the default model. |
+| Unit | `registry` | Connect writes the rows and the vault entry; re-connect replaces in place; remove deletes the rows and clears the default model; a custom endpoint's models are discovered from `GET <baseUrl>/models`; a custom endpoint gets a unique `custom-<slug>` id. |
 | Unit | `config generator` | The generated configuration contains one virtual provider per connected provider, with the gateway URL, the gateway token and the routing header — and **no** provider key. |
 | Unit | `resolveModel` | The configured default wins; the fallback still works when it is absent. |
 | Integration | gateway ↔ mock upstream | The key is injected; the incoming token is not forwarded; the SSE stream is passed through byte-for-byte; a request without the token never reaches the upstream. |
 | E2E | the full chain | Connect a mock provider through the Settings UI, pick a model, run a story, and assert the story completes. |
 | Security | the whole surface | The key appears in no config file, log line, database row or IPC payload; the renderer cannot obtain the gateway token; the gateway token cannot call an orchestrator route. |
+
+Two **probes** are part of the plan and are recorded as evidence before the
+implementation depends on them:
+
+| Probe | Question | Why it matters |
+|---|---|---|
+| P-1 | Does OpenCode's shell tool see the server's environment? | Evidence #2 is **[U]**. If a shell command can read the server's environment, the key must never be placed in an environment — which is the premise of the whole design. The probe starts an isolated OpenCode server with a canary variable and asks the agent to print it. |
+| P-2 | Does a custom provider's `options.headers` reach the request for every AI SDK package in the catalog? | Evidence #6 verified it for `@ai-sdk/openai-compatible`, `@ai-sdk/anthropic` and `@ai-sdk/google`. The catalog contains other packages (`@ai-sdk/groq`, `@ai-sdk/xai`, `@ai-sdk/mistral`, …). The probe checks one package per protocol family; the fallback (model-id routing) covers any package that does not forward headers. |
 
 Test doubles follow the repository's existing conventions: a temporary directory
 helper that asserts paths are under the OS temp directory
@@ -464,10 +493,11 @@ E2E mock provider pattern.
 - **Usage and cost accounting.** `model_usage` rows are not written by this version.
 - **OAuth providers** (GitHub Copilot, OpenCode accounts, ChatGPT sign-in) — these
   need an OAuth flow, not an API key.
-- **Azure OpenAI and Vertex AI**, which need a resource name / project in addition
-  to the key, and Amazon Bedrock, which needs AWS credentials. They remain
-  reachable through the **custom** endpoint only if their protocol is
-  OpenAI-compatible.
+- **Azure OpenAI, Amazon Bedrock and Vertex AI**, which need a resource name, a
+  project or AWS credentials in addition to the key, and whose authentication is not
+  a bearer token. They are not supported in this version. Any other service that
+  speaks the OpenAI chat-completions protocol with a bearer token is reachable
+  through the **custom** endpoint.
 - **A live catalog refresh at runtime.** The catalog is generated on demand by a
   script, not fetched by the app.
 
