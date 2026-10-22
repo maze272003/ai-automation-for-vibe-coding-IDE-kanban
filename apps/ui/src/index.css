@@ -1,4 +1,175 @@
 @import "tailwindcss";
 @custom-variant dark (&:where(.dark, .dark *));
 
-html, body, #root { height: 100%; }
+/* ===========================================================================
+   Layer 1 — primitives. Raw values with no meaning attached.
+   =========================================================================== */
+:root {
+  --aurora-400: #a78bfa;
+  --aurora-500: #8b5cf6;
+  --aurora-600: #6366f1;
+  --teal-400: #2dd4bf;
+  --teal-300: #5eead4;
+  --rose-400: #fb7185;
+  --emerald-400: #34d399;
+  --amber-400: #fbbf24;
+  --sky-400: #38bdf8;
+  --cyan-400: #22d3ee;
+  --slate-400: #94a3b8;
+}
+
+/* ===========================================================================
+   Layer 2 — semantic. Role-based, defined once per theme.
+   =========================================================================== */
+
+/* Light — refined counterpart of Aurora. */
+:root {
+  --background: #f4f4f8;
+  --surface: rgb(255 255 255 / 0.66);
+  --surface-2: rgb(255 255 255 / 0.92);
+  --surface-3: rgb(255 255 255 / 0.98);
+  --border: rgb(24 24 37 / 0.10);
+  --border-strong: rgb(24 24 37 / 0.18);
+  --foreground: #15161a;
+  --muted: #5e6270;
+  --muted-2: #8b90a0;
+  --accent: #6d28d9;
+  --accent-2: #4f46e5;
+  --accent-foreground: #ffffff;
+  --ring: rgb(109 40 217 / 0.75);
+  --danger: #e11d48;
+  --danger-foreground: #9f1239;
+  --success: #059669;
+  --success-foreground: #047857;
+  --warning: #d97706;
+  --warning-foreground: #92400e;
+  --glass-fill: rgb(255 255 255 / 0.66);
+  --glass-border: rgb(24 24 37 / 0.09);
+  --glass-highlight: rgb(255 255 255 / 0.85);
+  --scrim: rgb(255 255 255 / 0.92);
+  --panel-shadow: 0 30px 70px -35px rgb(24 24 37 / 0.35);
+  --card-shadow: 0 8px 22px -14px rgb(24 24 37 / 0.35);
+}
+
+/* Dark — Aurora. */
+.dark {
+  --background: #090d1a;
+  --surface: rgb(255 255 255 / 0.045);
+  --surface-2: rgb(255 255 255 / 0.055);
+  --surface-3: rgb(0 0 0 / 0.28);
+  --border: rgb(255 255 255 / 0.10);
+  --border-strong: rgb(255 255 255 / 0.18);
+  --foreground: #eef1fb;
+  --muted: #a6aec8;
+  --muted-2: #7e86a2;
+  --accent: #8b5cf6;
+  --accent-2: #6366f1;
+  --accent-foreground: #ffffff;
+  --ring: rgb(167 139 250 / 0.85);
+  --danger: #fb7185;
+  --danger-foreground: #fda4af;
+  --success: #34d399;
+  --success-foreground: #6ee7b7;
+  --warning: #fbbf24;
+  --warning-foreground: #fcd34d;
+  --glass-fill: rgb(255 255 255 / 0.045);
+  --glass-border: rgb(255 255 255 / 0.10);
+  --glass-highlight: rgb(255 255 255 / 0.06);
+  --scrim: rgb(16 20 36 / 0.90);
+  --panel-shadow: 0 40px 90px -40px rgb(0 0 0 / 0.95);
+  --card-shadow: 0 10px 26px -16px rgb(0 0 0 / 0.90);
+}
+
+/* ===========================================================================
+   Layer 3 — component. Constant across themes, so it is declared directly in
+   @theme. Do NOT write `--radius-card: var(--radius-card)` inside `@theme
+   inline` — that is a self-reference and resolves to nothing.
+   =========================================================================== */
+@theme {
+  --radius-card: 11px;
+  --radius-panel: 14px;
+  --radius-control: 9px;
+}
+
+/* ===========================================================================
+   Tailwind mapping. `inline` keeps the var() reference so the .dark override
+   cascades into the generated utilities.
+   =========================================================================== */
+@theme inline {
+  --color-background: var(--background);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-surface-3: var(--surface-3);
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+  --color-foreground: var(--foreground);
+  --color-muted: var(--muted);
+  --color-muted-2: var(--muted-2);
+  --color-accent: var(--accent);
+  --color-accent-2: var(--accent-2);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-ring: var(--ring);
+  --color-danger: var(--danger);
+  --color-danger-foreground: var(--danger-foreground);
+  --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
+  --color-glass: var(--glass-fill);
+  --color-glass-border: var(--glass-border);
+  --color-glass-highlight: var(--glass-highlight);
+  --color-scrim: var(--scrim);
+  --shadow-panel: var(--panel-shadow);
+  --shadow-card: var(--card-shadow);
+}
+
+/* ===========================================================================
+   Base
+   =========================================================================== */
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  background-color: var(--background);
+  color: var(--foreground);
+  font-family: -apple-system, "Segoe UI", Inter, system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* The aurora wash is painted once on a fixed layer so scrolling and dragging
+   never repaint it. */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background-image:
+    radial-gradient(1000px 520px at 6% -12%, rgb(41 86 196 / 0.55) 0%, transparent 60%),
+    radial-gradient(820px 420px at 92% -8%, rgb(138 47 158 / 0.50) 0%, transparent 58%),
+    radial-gradient(700px 500px at 60% 120%, rgb(24 117 122 / 0.30) 0%, transparent 60%);
+}
+
+:root:not(.dark) body::before {
+  background-image:
+    radial-gradient(900px 460px at 4% -14%, rgb(196 181 253 / 0.55) 0%, transparent 60%),
+    radial-gradient(760px 400px at 96% -6%, rgb(251 207 232 / 0.50) 0%, transparent 58%),
+    radial-gradient(700px 460px at 60% 118%, rgb(191 219 254 / 0.45) 0%, transparent 60%);
+}
+
+/* ===========================================================================
+   Motion
+   =========================================================================== */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
