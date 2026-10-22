@@ -80,7 +80,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 const exe = process.env.AIKA_E2E_OPENCODE_EXE
-  ?? path.join('spikes', 'spk-1', 'node_modules', '@opencode', 'cli', 'bin', 'opencode.exe');
+  ?? path.join(process.env.LOCALAPPDATA ?? process.env.TEMP, 'Temp', 'opencode', 'spk5-cli', 'node_modules', '@opencode', 'cli', 'bin', 'opencode.exe');
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'aik-spk5-'));
 const CANARY = 'aik-canary-7f3d9a2b';
 const cfg = {
@@ -128,7 +128,7 @@ proc.on('exit', () => {
 - [ ] **Step 2: Run the P-1 probe**
 
 Run: `node spikes/spk-5/probe-env.mjs`
-Expected: a `P-1 VERDICT:` line. If the binary is missing, install it first with `npm ci` in `spikes/spk-1` and run `node node_modules/@opencode/cli/postinstall.mjs` (npm 12 blocks the postinstall; see SPK-1's install note).
+Expected: a `P-1 VERDICT:` line. Binary resolution: run `opencode --version`; if it is 2.0.32, set `AIKA_E2E_OPENCODE_EXE` to that install's real exe (`%APPDATA%\npm\node_modules\@opencode\cli\bin\opencode.exe`), otherwise install the pinned CLI into the throwaway dir the scripts default to — `npm install --prefix "$env:LOCALAPPDATA\Temp\opencode\spk5-cli" @opencode/cli@2.0.32 --no-audit --no-fund` — and run the package's install helper if npm blocks its postinstall (see SPK-1's install note). There is no vendored copy under `spikes/spk-1`.
 
 - [ ] **Step 3: Write the P-2 probe (does `options.headers` reach the request for each AI SDK package?)**
 
@@ -144,7 +144,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 const exe = process.env.AIKA_E2E_OPENCODE_EXE
-  ?? path.join('spikes', 'spk-1', 'node_modules', '@opencode', 'cli', 'bin', 'opencode.exe');
+  ?? path.join(process.env.LOCALAPPDATA ?? process.env.TEMP, 'Temp', 'opencode', 'spk5-cli', 'node_modules', '@opencode', 'cli', 'bin', 'opencode.exe');
 
 const PACKAGES = ['@ai-sdk/openai-compatible', '@ai-sdk/anthropic', '@ai-sdk/google', '@ai-sdk/openai'];
 
@@ -522,6 +522,8 @@ export const OVERRIDES: CatalogOverrides = {
   },
 
   // ── Shown first in the picker ─────────────────────────────────────────────────────
+  // Verify every id against the downloaded models.dev payload; adjust to the real ids,
+  // keeping the intent (OpenAI, Anthropic, Google, z.ai / Zhipu, OpenRouter, Groq, …).
   featured: [
     'openai', 'anthropic', 'google', 'zai', 'zhipuai', 'zai-coding-plan', 'openrouter',
     'groq', 'deepseek', 'mistral', 'xai', 'togetherai', 'moonshotai', 'fireworks-ai',
@@ -550,6 +552,18 @@ export const OVERRIDES: CatalogOverrides = {
       models: [
         { id: 'qwen3-coder', name: 'Qwen3 Coder', contextLimit: 262144, outputLimit: 32768, inputCost: null, outputCost: null, toolCall: true, reasoning: true },
         { id: 'llama3.3', name: 'Llama 3.3', contextLimit: 131072, outputLimit: 32768, inputCost: null, outputCost: null, toolCall: true, reasoning: false },
+      ],
+    },
+    // LM Studio is not in models.dev. Its real model list is discovered from the
+    // endpoint's /v1/models at connect time; this entry is the documented fallback.
+    lmstudio: {
+      label: 'LM Studio (local)',
+      npm: '@ai-sdk/openai-compatible',
+      baseUrl: 'http://127.0.0.1:1234/v1',
+      auth: 'none',
+      doc: 'https://lmstudio.ai/docs',
+      models: [
+        { id: 'local-model', name: 'Local model', contextLimit: 131072, outputLimit: 8192, inputCost: null, outputCost: null, toolCall: true, reasoning: false },
       ],
     },
   },
@@ -3217,3 +3231,18 @@ git commit -m "test(e2e): connect a provider and verify the key never lands on d
 - [ ] The gateway token is rejected by every orchestrator API route, and the orchestrator API token is rejected by the gateway.
 - [ ] The gateway never falls back to another provider.
 - [ ] SPK-5 records a **[V]** verdict for P-1 and P-2, and the implementation matches them.
+
+---
+
+## Corrections recorded during parallel dispatch (2026-10-23)
+
+Found while pre-flighting the parallel execution; the dispatch instructions carry the same deltas.
+
+1. **The failure-marker helpers live in `@aik/contracts`, not in `apps/orchestrator/src/gateway/failure.ts`.** The gateway imports them from `@aik/contracts`; the contracts file exports them from the start; Task 10's Step 1 (the move) is obsolete — only its agent-side classification remains. This avoids a two-step move while agents run in parallel.
+2. **`packages/db/src/schema.ts` must widen the `providers.kind` enum** from `['ollama', 'openai_compatible']` to include `'anthropic'` and `'google'` (TS-level union only; no SQL migration exists to change). The File Structure table omitted this file; the **registry task (Task 4) owns the change**.
+3. **Local providers (`auth: 'none'`) get model discovery at connect time too** — `GET <baseUrl>/models` — falling back to the catalog's representative models when the endpoint does not answer, because neither Ollama nor LM Studio ships a fixed, known model id.
+4. **`lmstudio` local entry added** to the catalog overrides (it was missing; the committed-catalog test asserts it).
+5. **Keyring naming confirmed**: the repo's per-purpose service convention (`AiKanban/github`) → the vault uses service `AiKanban/provider`, account `<providerId>`.
+6. **The `restartOpencode` IPC surface** (`packages/contracts/src/bridge.ts` type, the preload invoke line, the desktop handler) is owned by the **Settings-UI task (Task 11)**; the restart *implementation* it delegates to lives in the OpenCode server module and is owned by Task 9's wiring agent. Do not widen `AikWindowApi` from two places.
+7. **The generated `src/catalog.data.ts` is one huge line by design** (`JSON.stringify(payload, null, 0)`); no repo lint rule forbids it (checked: no `max-len` rule exists).
+8. **E2E helpers confirmed present** in `e2e/fixtures.ts` (`apiCall` — GET/POST/PATCH only, `startMockLlm`, `waitReady`, `aik`), so Task 12's imports are valid as written.
