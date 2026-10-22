@@ -17,6 +17,8 @@ import { createApiServer } from './api/server.ts';
 import { dataPaths } from './config.ts';
 import { EventBus } from './events/bus.ts';
 import { createCredentialStore } from './github/credentials.ts';
+import { GitHubCloneService } from './github/clone-service.ts';
+import { GitHubRepositoryService } from './github/repository-service.ts';
 import { GitHubAuthService } from './github/service.ts';
 import { LocalMerger } from './git/merger.ts';
 import { WorktreeManager } from './git/worktree.ts';
@@ -114,13 +116,21 @@ export async function startOrchestrator(opts: OrchestratorOptions): Promise<Runn
 
   const credentials = createCredentialStore();
   const github = new GitHubAuthService({ db, credentials, now: systemClock });
+  const githubRepos = new GitHubRepositoryService({ db, authService: github, now: systemClock });
+  const githubClone = new GitHubCloneService({
+    db,
+    authService: github,
+    repoService: githubRepos,
+    projectService: projects,
+    now: systemClock,
+  });
 
   let port = 0;
   const app = createApiServer({ token: opts.token, getPort: () => port, logger });
   registerHealthRoutes(app, { db, versions: { ...opts.versions, node: process.versions.node }, dataDir: opts.dataDir });
   registerProjectRoutes(app, { db, now: systemClock, projects });
   registerStoryRoutes(app, { db, now: systemClock, stories });
-  registerGitHubRoutes(app, { db, now: systemClock, github });
+  registerGitHubRoutes(app, { db, now: systemClock, github, githubRepos, githubClone });
   registerEventRoutes(app, { db, bus, heartbeatMs: opts.heartbeatMs });
   await app.listen({ host: '127.0.0.1', port: 0 });
   port = (app.server.address() as AddressInfo).port;

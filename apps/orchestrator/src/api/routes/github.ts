@@ -1,9 +1,13 @@
 import {
+  CloneRepositoryRequestSchema,
+  LinkRepositoryRequestSchema,
   PatchGitHubSettingsSchema,
 } from '@aik/contracts';
 import type { AikDb } from '@aik/db';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
+import type { GitHubCloneService } from '../../github/clone-service.ts';
+import type { GitHubRepositoryService } from '../../github/repository-service.ts';
 import type { GitHubAuthService } from '../../github/service.ts';
 import type { Clock } from '../../time.ts';
 import { mutation, parse } from '../idempotency.ts';
@@ -12,9 +16,19 @@ const PollParams = z.object({
   sessionToken: z.string().min(1),
 });
 
+const IdParam = z.object({
+  id: z.coerce.number().int().positive(),
+});
+
 export function registerGitHubRoutes(
   app: FastifyInstance,
-  deps: { db: AikDb; now: Clock; github: GitHubAuthService },
+  deps: {
+    db: AikDb;
+    now: Clock;
+    github: GitHubAuthService;
+    githubRepos?: GitHubRepositoryService;
+    githubClone?: GitHubCloneService;
+  },
 ): void {
   app.get('/github/settings', async () => deps.github.getSettings());
   app.get('/github/connection', async () => deps.github.getConnection());
@@ -57,4 +71,34 @@ export function registerGitHubRoutes(
       body: { refreshed },
     };
   });
+
+  if (deps.githubRepos) {
+    app.get('/github/repositories', async () => deps.githubRepos!.listRepositories());
+
+    mutation(app, deps, 'POST', '/github/repositories/refresh', async () => ({
+      status: 200,
+      body: await deps.githubRepos!.listRepositories({ forceRefresh: true }),
+    }));
+  }
+
+  if (deps.githubClone) {
+    mutation(app, deps, 'POST', '/github/repositories/:id/clone', async (req) => {
+      const { id } = parse(IdParam, req.params);
+      const body = parse(CloneRepositoryRequestSchema, req.body);
+      return {
+        status: 200,
+        body: await deps.githubClone!.cloneRepository(id, body),
+      };
+    });
+
+    mutation(app, deps, 'POST', '/github/repositories/:id/link', async (req) => {
+      const { id } = parse(IdParam, req.params);
+      const body = parse(LinkRepositoryRequestSchema, req.body);
+      return {
+        status: 200,
+        body: await deps.githubClone!.linkRepository(id, body),
+      };
+    });
+  }
 }
+

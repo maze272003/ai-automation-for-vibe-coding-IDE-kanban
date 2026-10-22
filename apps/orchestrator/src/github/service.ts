@@ -347,4 +347,26 @@ export class GitHubAuthService {
         .run();
     }
   }
+
+  async getValidAccessToken(): Promise<{ token: string; userId: number; connection: GitHubConnectionDTO } | null> {
+    const conn = this.db.select().from(githubConnections).where(eq(githubConnections.status, 'connected')).get();
+    if (!conn) return null;
+
+    if (conn.accessExpiresAt && conn.accessExpiresAt.getTime() - this.now() < 10 * 60 * 1000) {
+      const refreshed = await this.refreshToken();
+      if (!refreshed) return null;
+    }
+
+    const tokens = await this.credentials.loadTokens(conn.githubUserId);
+    if (!tokens || !tokens.accessToken) {
+      this.db.update(githubConnections).set({ status: 'expired', updatedAt: this.nowDate() }).where(eq(githubConnections.id, conn.id)).run();
+      return null;
+    }
+
+    return {
+      token: tokens.accessToken,
+      userId: conn.githubUserId,
+      connection: this.toDTO(conn),
+    };
+  }
 }

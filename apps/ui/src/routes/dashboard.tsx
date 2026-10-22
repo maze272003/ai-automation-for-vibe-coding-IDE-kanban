@@ -68,9 +68,14 @@ function CreateProjectForm({ onCreated }: { onCreated: () => Promise<void> }) {
   );
 }
 
+import { RepositoryBrowser } from '../components/github/repository-browser.tsx';
+
 export function DashboardPage() {
   const [projects, setProjects] = useState<ProjectDTO[]>([]);
+  const [activeTab, setActiveTab] = useState<'local' | 'github'>('local');
+  const [isGitHubConnected, setIsGitHubConnected] = useState(false);
   const system = useSystemState();
+
   const load = useCallback(async () => {
     try {
       setProjects(await api.get<ProjectDTO[]>('/projects'));
@@ -78,25 +83,71 @@ export function DashboardPage() {
       setProjects([]);
     }
   }, []);
+
   useEffect(() => {
-    if (system.state === 'ready') void load();
+    if (system.state === 'ready') {
+      void load();
+      void api
+        .get<{ status?: string } | null>('/github/connection')
+        .then((conn) => {
+          if (conn && conn.status === 'connected') {
+            setIsGitHubConnected(true);
+          }
+        })
+        .catch(() => {});
+    }
   }, [system.state, load]);
 
   return (
     <div className="mx-auto max-w-4xl p-6">
-      <h1 className="text-2xl font-semibold">Projects</h1>
-      <ul data-testid="project-list" className="mt-4 divide-y divide-zinc-200 dark:divide-zinc-800">
-        {projects.map((p) => (
-          <li key={p.id} className="flex items-center gap-3 py-2">
-            <Link to="/projects/$projectId" params={{ projectId: String(p.id) }} className="font-medium hover:underline">
-              {`${p.key} · ${p.name}`}
-            </Link>
-            <span className="text-sm text-zinc-500">{p.baseBranch}</span>
-            {p.status === 'unavailable' && <Badge tone="warn">unavailable</Badge>}
-          </li>
-        ))}
-      </ul>
-      <CreateProjectForm onCreated={load} />
+      <div className="mb-6 flex items-center justify-between">
+        <h1 className="text-2xl font-semibold">Projects</h1>
+        <div className="flex rounded-lg border border-zinc-200 p-1 dark:border-zinc-800">
+          <button
+            type="button"
+            onClick={() => setActiveTab('local')}
+            className={`rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
+              activeTab === 'local'
+                ? 'bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900 shadow-sm'
+                : 'text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100'
+            }`}
+          >
+            Local Projects ({projects.length})
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab('github')}
+            className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
+              activeTab === 'github'
+                ? 'bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900 shadow-sm'
+                : 'text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100'
+            }`}
+          >
+            GitHub Repositories
+            {isGitHubConnected && <Badge tone="ok">connected</Badge>}
+          </button>
+        </div>
+      </div>
+
+      {activeTab === 'local' ? (
+        <>
+          <ul data-testid="project-list" className="mt-4 divide-y divide-zinc-200 dark:divide-zinc-800">
+            {projects.map((p) => (
+              <li key={p.id} className="flex items-center gap-3 py-2">
+                <Link to="/projects/$projectId" params={{ projectId: String(p.id) }} className="font-medium hover:underline">
+                  {`${p.key} · ${p.name}`}
+                </Link>
+                <span className="text-sm text-zinc-500">{p.baseBranch}</span>
+                {p.status === 'unavailable' && <Badge tone="warn">unavailable</Badge>}
+              </li>
+            ))}
+          </ul>
+          <CreateProjectForm onCreated={load} />
+        </>
+      ) : (
+        <RepositoryBrowser onProjectCreated={load} />
+      )}
     </div>
   );
 }
+
