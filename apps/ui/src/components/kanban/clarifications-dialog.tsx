@@ -16,7 +16,7 @@ export function RejectPlanDialog({ open, onAnswer }: { open: boolean; onAnswer: 
   const [text, setText] = useState('');
   return (
     <Dialog open={open} title="Reject plan" onClose={() => onAnswer(null)}>
-      <p className="mb-2 text-sm">The plan is marked rejected and the planner re-plans with your feedback.</p>
+      <p className="mb-2 text-sm text-muted">The plan is marked rejected and the planner re-plans with your feedback.</p>
       <TextArea
         label="What must the new plan fix?"
         value={text}
@@ -68,9 +68,9 @@ export function ClarificationAnswersForm({
     >
       <div className="space-y-2">
         {questions.map((q) => (
-          <div key={q.ordinal} className="space-y-2 rounded-lg border border-zinc-800 bg-zinc-900/30 p-3">
-            <p className="text-[11px] font-semibold uppercase tracking-wider text-zinc-400">Question {q.ordinal}</p>
-            <p className="text-sm font-medium text-zinc-200">{q.question}</p>
+          <div key={q.ordinal} className="space-y-2 rounded-card border border-border bg-surface-3 p-3">
+            <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-2">Question {q.ordinal}</p>
+            <p className="text-sm font-medium text-foreground">{q.question}</p>
             <TextField
               label={`Answer to question ${q.ordinal}`}
               value={answers[q.ordinal] ?? ''}
@@ -82,12 +82,12 @@ export function ClarificationAnswersForm({
         ))}
       </div>
       <div className="flex items-center justify-between gap-3">
-        <p className="text-[11px] text-zinc-500">All answers are sent together; every question needs an answer.</p>
+        <p className="text-[11px] text-muted-2">All answers are sent together; every question needs an answer.</p>
         <button
           type="submit"
           data-testid="clarifications-submit"
           disabled={!complete || busy}
-          className="shrink-0 cursor-pointer rounded bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white shadow-lg shadow-emerald-900/20 transition-all hover:bg-emerald-500 disabled:opacity-50"
+          className="shrink-0 cursor-pointer rounded-control bg-gradient-to-br from-accent to-accent-2 px-3 py-1.5 text-xs font-bold text-accent-foreground transition-[filter] hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
         >
           {busy ? 'Sending…' : 'Send answers'}
         </button>
