@@ -12,6 +12,20 @@
 
 ---
 
+## Execution status (parallel dispatch, 2026-10-23)
+
+Executed via parallel subagents with per-wave integration (see the Corrections appendix below for deltas discovered en route). Every integrated wave ran the full repo gate (check:pins, lint, typecheck, test) before its file-scoped commits.
+
+- **Tasks 1–11: done and committed.** Wave 1 (Tasks 1, 2, 3, 5, 7's contracts slice + 10's helpers), Wave 2 (Tasks 4, 6, 7's routes, 10, 11), Wave 3 (Tasks 8, 9).
+- **Task 12 (E2E verification): in flight** — status box to be finalized below when its full-gate run lands.
+
+Deviations that survive as implementation facts:
+- `planner.ts` deliberately NOT classified (planning failures have no reason slot; `NEW` can fail guard any `fail` event — machine change would be cross-package). Marker text stays parseable in `agent_runs.exit_reason`.
+- The gateway starts only in managed mode (`OrchestratorOptions.gatewayToken` presence is the gate); personal mode is byte-identical and `/providers` routes 404 there.
+- `default_model` is read once at orchestrator startup; a `PUT /settings/default-model` applies after the next orchestrator restart.
+
+---
+
 ## Global Constraints
 
 - Dependencies use **exact versions only** (`npm install -E`). `npm run check:pins` enforces this.
