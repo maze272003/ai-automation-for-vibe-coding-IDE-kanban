@@ -327,13 +327,24 @@ import { describe, expect, it } from 'vitest';
 const cssPath = path.resolve(import.meta.dirname, '..', 'src', 'index.css');
 const css = readFileSync(cssPath, 'utf8');
 
-/** Extracts the body of the first `selector { ... }` block. */
-function block(selector: string): string {
-  const at = css.indexOf(`${selector} {`);
-  if (at < 0) return '';
-  const open = css.indexOf('{', at);
-  const close = css.indexOf('}', open);
-  return css.slice(open + 1, close);
+/**
+ * Concatenates the bodies of every `selector { ... }` block. There is more than
+ * one `:root` block (primitives, then the light theme), so taking only the first
+ * would miss every semantic token.
+ */
+function blocks(selector: string): string {
+  const bodies: string[] = [];
+  let from = 0;
+  for (;;) {
+    const at = css.indexOf(`${selector} {`, from);
+    if (at < 0) break;
+    const open = css.indexOf('{', at);
+    const close = css.indexOf('}', open);
+    if (open < 0 || close < 0) break;
+    bodies.push(css.slice(open + 1, close));
+    from = close + 1;
+  }
+  return bodies.join('\n');
 }
 
 const SEMANTIC_TOKENS = [
@@ -350,7 +361,7 @@ const SEMANTIC_TOKENS = [
 
 describe('design tokens', () => {
   it('defines every semantic token in the light theme', () => {
-    const light = block(':root');
+    const light = blocks(':root');
     expect(light).not.toBe('');
     for (const token of SEMANTIC_TOKENS) {
       expect(light, `light theme is missing ${token}`).toContain(`${token}:`);
@@ -358,7 +369,7 @@ describe('design tokens', () => {
   });
 
   it('defines every semantic token in the Aurora dark theme', () => {
-    const dark = block('.dark');
+    const dark = blocks('.dark');
     expect(dark).not.toBe('');
     for (const token of SEMANTIC_TOKENS) {
       expect(dark, `dark theme is missing ${token}`).toContain(`${token}:`);
@@ -366,7 +377,7 @@ describe('design tokens', () => {
   });
 
   it('maps every semantic token into the Tailwind theme', () => {
-    const theme = block('@theme inline');
+    const theme = blocks('@theme inline');
     expect(theme).not.toBe('');
     for (const token of SEMANTIC_TOKENS) {
       expect(theme, `@theme inline is missing ${token}`).toContain(`var(${token})`);
@@ -482,9 +493,11 @@ Replace `apps/ui/src/index.css` with:
 }
 
 /* ===========================================================================
-   Layer 3 — component. Only where a component diverges from the semantic layer.
+   Layer 3 — component. Constant across themes, so it is declared directly in
+   @theme. Do NOT write `--radius-card: var(--radius-card)` inside `@theme
+   inline` — that is a self-reference and resolves to nothing.
    =========================================================================== */
-:root {
+@theme {
   --radius-card: 11px;
   --radius-panel: 14px;
   --radius-control: 9px;
@@ -516,9 +529,6 @@ Replace `apps/ui/src/index.css` with:
   --color-warning-foreground: var(--warning-foreground);
   --color-glass: var(--glass-fill);
   --color-glass-border: var(--glass-border);
-  --radius-card: var(--radius-card);
-  --radius-panel: var(--radius-panel);
-  --radius-control: var(--radius-control);
   --shadow-panel: var(--panel-shadow);
   --shadow-card: var(--card-shadow);
 }
