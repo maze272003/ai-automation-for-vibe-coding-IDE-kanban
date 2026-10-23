@@ -48,6 +48,10 @@ export async function forceDarkTheme(page: Page): Promise<void> {
 
 /** Navigates to the INV board from anywhere in the app. */
 export async function openBoard(page: Page): Promise<void> {
+  // The dashboard fetches its project list on mount, so clicking "Projects"
+  // while already on the dashboard does not refetch it. Hop through Settings
+  // first so the project created in beforeEach is actually listed.
+  await page.getByRole('link', { name: 'Settings' }).click();
   await page.getByRole('link', { name: 'Projects' }).click();
   await page.getByRole('link', { name: /^INV · Inventory$/ }).click();
   await expect(page.getByTestId('board')).toBeVisible();
