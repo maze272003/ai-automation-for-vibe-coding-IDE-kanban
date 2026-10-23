@@ -2,6 +2,7 @@
 import { ACTIVE_STATUSES, type PlanV1, type StoryDTO } from '@aik/contracts';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ApiRequestError, api } from '../../lib/api.ts';
+import { STATUS_THEME } from '../../lib/status-theme.ts';
 import { answerClarifications, performEvent, rejectPlan, type ClarificationAnswer } from '../../lib/transitions.ts';
 import { useToast } from '../ui/toast.tsx';
 import { ClarificationAnswersForm, RejectPlanDialog, type ClarificationQuestion } from './clarifications-dialog.tsx';
@@ -182,6 +183,7 @@ export function TerminalModal({
 
   const sessionId = data?.run?.opencodeSessionId;
   const isRunning = story.status === 'IN_PROGRESS' || story.planningStatus === 'planning' || data?.run?.status === 'running';
+  const statusTheme = STATUS_THEME[story.status];
 
   const handleCopyCommand = async () => {
     if (!sessionId) return;
@@ -368,35 +370,37 @@ export function TerminalModal({
       role="dialog"
       aria-modal="true"
       aria-labelledby="modal-story-title"
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-sm p-4 animate-in fade-in duration-150"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-[rgb(4_7_16/0.70)] p-4 backdrop-blur-[3px]"
     >
       <div
-        className="flex h-[90vh] w-full max-w-5xl flex-col rounded-xl border border-zinc-800 bg-zinc-950 shadow-2xl overflow-hidden"
+        className="flex h-[90vh] w-full max-w-5xl flex-col overflow-hidden rounded-panel border border-glass-border bg-[rgb(16_20_36/0.90)] shadow-panel backdrop-blur-[22px]"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Top Header */}
-        <div className="flex items-center justify-between border-b border-zinc-800 bg-zinc-900/90 px-4 py-3">
-          <div className="flex items-center gap-3 min-w-0">
+        <div className="flex items-center justify-between border-b border-border bg-surface/40 px-4 py-3">
+          <div className="flex min-w-0 items-center gap-3">
             <div className="flex items-center gap-2">
-              <span className="font-mono text-xs font-semibold text-zinc-400 bg-zinc-800 px-2 py-0.5 rounded">
+              <span className="rounded-[6px] border border-border bg-surface-3 px-2 py-0.5 font-mono text-xs font-semibold text-muted">
                 {story.key}
               </span>
-              <span className={`text-[11px] font-semibold uppercase px-2 py-0.5 rounded ${
-                story.status === 'DONE' ? 'bg-emerald-950 text-emerald-400 border border-emerald-500/30' :
-                story.status === 'AWAITING_MERGE' ? 'bg-cyan-950 text-cyan-300 border border-cyan-500/40' :
-                story.status === 'TESTING' ? 'bg-amber-950 text-amber-300 border border-amber-500/30' :
-                'bg-zinc-800 text-zinc-300'
-              }`}>
+              <span
+                className="rounded-[6px] border px-2 py-0.5 text-[11px] font-bold uppercase tracking-wider"
+                style={{
+                  background: statusTheme.softBg,
+                  color: statusTheme.softFg,
+                  borderColor: 'transparent',
+                }}
+              >
                 {story.status}
               </span>
             </div>
 
-            <h2 id="modal-story-title" className="truncate text-sm font-semibold text-zinc-100 max-w-md">
+            <h2 id="modal-story-title" className="max-w-md truncate text-sm font-semibold text-foreground">
               {story.title}
             </h2>
 
             {elapsed && (
-              <span className="font-mono text-xs text-zinc-500 bg-zinc-950/60 px-2 py-0.5 rounded border border-zinc-800">
+              <span className="rounded-[6px] border border-border bg-surface-3 px-2 py-0.5 font-mono text-xs text-muted-2">
                 {elapsed}
               </span>
             )}
@@ -410,7 +414,7 @@ export function TerminalModal({
                 onClick={handleStopRun}
                 disabled={stopping}
                 title="Interrupt the active run (the story becomes BLOCKED: interrupted)"
-                className="flex items-center gap-1.5 rounded bg-red-600 hover:bg-red-500 px-3 py-1.5 text-xs font-semibold text-white shadow-lg shadow-red-900/20 transition-all cursor-pointer disabled:opacity-50"
+                className="flex cursor-pointer items-center gap-1.5 rounded border border-danger/40 bg-danger/15 px-3 py-1.5 text-xs font-bold text-danger-foreground transition-colors hover:bg-danger/25 disabled:opacity-50"
               >
                 <span aria-hidden="true">■</span>
                 <span>{stopping ? 'Stopping…' : 'Stop run'}</span>
@@ -422,7 +426,7 @@ export function TerminalModal({
                 type="button"
                 onClick={handleApproveMerge}
                 disabled={merging || !story.candidateSha}
-                className="flex items-center gap-1.5 rounded bg-emerald-600 hover:bg-emerald-500 px-3 py-1.5 text-xs font-semibold text-white shadow-lg shadow-emerald-900/20 transition-all cursor-pointer disabled:opacity-50"
+                className="flex cursor-pointer items-center gap-1.5 rounded border border-success/40 bg-success/15 px-3 py-1.5 text-xs font-bold text-success-foreground transition-colors hover:bg-success/25 disabled:opacity-50"
               >
                 <span>✓</span>
                 <span>{merging ? 'Merging...' : 'Approve & Merge'}</span>
@@ -436,7 +440,7 @@ export function TerminalModal({
                 onClick={handleRevertMerge}
                 disabled={reverting}
                 title="Create a revert commit on the base branch to undo this failed merge"
-                className="flex items-center gap-1.5 rounded bg-red-600 hover:bg-red-500 px-3 py-1.5 text-xs font-semibold text-white shadow-lg shadow-red-900/20 transition-all cursor-pointer disabled:opacity-50"
+                className="flex cursor-pointer items-center gap-1.5 rounded border border-danger/40 bg-danger/15 px-3 py-1.5 text-xs font-bold text-danger-foreground transition-colors hover:bg-danger/25 disabled:opacity-50"
               >
                 <span>↺</span>
                 <span>{reverting ? 'Reverting…' : 'Revert Merge'}</span>
@@ -448,7 +452,7 @@ export function TerminalModal({
                 <button
                   type="button"
                   onClick={handleOpenTerminal}
-                  className="hidden sm:flex items-center gap-1.5 rounded-md border border-emerald-500/30 bg-emerald-950/30 hover:bg-emerald-900/50 text-emerald-300 px-2.5 py-1.5 text-xs font-mono transition-colors"
+                  className="hidden items-center gap-1.5 rounded border border-teal-400/30 bg-teal-400/10 px-2.5 py-1.5 font-mono text-xs text-teal-300 transition-colors hover:bg-teal-400/20 sm:flex"
                   title="Open live session in external terminal"
                 >
                   <span>Open in CLI</span>
@@ -456,7 +460,7 @@ export function TerminalModal({
                 <button
                   type="button"
                   onClick={handleCopyCommand}
-                  className="flex items-center gap-1.5 rounded-md border border-zinc-700 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 px-2 py-1 text-xs font-mono transition-colors"
+                  className="flex items-center gap-1.5 rounded border border-border bg-surface-3 px-2 py-1 font-mono text-xs text-muted transition-colors hover:text-foreground"
                 >
                   <span>{copied ? 'Copied' : 'Copy CLI'}</span>
                 </button>
@@ -467,7 +471,7 @@ export function TerminalModal({
               type="button"
               onClick={onClose}
               aria-label="Close modal"
-              className="rounded-md p-1.5 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100 transition-colors"
+              className="rounded p-1.5 text-muted transition-colors hover:bg-surface-2 hover:text-foreground"
             >
               <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
@@ -477,9 +481,9 @@ export function TerminalModal({
         </div>
 
         {story.status === 'BLOCKED' && story.blocked?.reason === 'post_merge_failed' && (
-          <div className="bg-red-950/60 border-b border-red-800/80 px-4 py-2 flex items-center justify-between text-xs text-red-200">
-            <div className="flex items-center gap-2 min-w-0">
-              <span className="font-semibold text-red-300 shrink-0">⚠ Post-Merge Checks Failed:</span>
+          <div className="flex items-center justify-between border-b border-danger/40 bg-danger/10 px-4 py-2 text-xs text-danger-foreground">
+            <div className="flex min-w-0 items-center gap-2">
+              <span className="shrink-0 font-semibold text-danger-foreground">⚠ Post-Merge Checks Failed:</span>
               <span className="truncate">{story.blocked.detail || 'Checks failed on the merged commit.'}</span>
             </div>
             <button
@@ -487,7 +491,7 @@ export function TerminalModal({
               data-testid={`banner-revert-merge-${story.key}`}
               onClick={handleRevertMerge}
               disabled={reverting}
-              className="ml-3 shrink-0 px-2.5 py-1 rounded bg-red-700 hover:bg-red-600 text-white font-medium text-[11px] shadow transition-colors disabled:opacity-50 cursor-pointer"
+              className="ml-3 shrink-0 cursor-pointer rounded border border-danger/40 bg-danger/15 px-2.5 py-1 text-[11px] font-medium text-danger-foreground transition-colors hover:bg-danger/25 disabled:opacity-50"
             >
               {reverting ? 'Reverting…' : 'Revert Merge Commit'}
             </button>
@@ -495,96 +499,124 @@ export function TerminalModal({
         )}
 
         {/* Top-Level Mode Navigation */}
-        <div className="flex items-center border-b border-zinc-800 bg-zinc-900/50 px-4">
+        <div className="flex items-center border-b border-border bg-surface/20 px-4">
           <button
             type="button"
             onClick={() => setActiveMode('terminal')}
-            className={`border-b-2 px-3 py-2 text-xs font-medium transition-colors ${
-              activeMode === 'terminal' ? 'border-emerald-500 text-emerald-400 font-semibold' : 'border-transparent text-zinc-400 hover:text-zinc-200'
-            }`}
+            className={
+              activeMode === 'terminal'
+                ? 'border-b-2 border-accent px-3 py-2 text-xs font-bold text-foreground [box-shadow:0_6px_14px_-10px_var(--accent)]'
+                : 'border-b-2 border-transparent px-3 py-2 text-xs font-semibold text-muted transition-colors hover:text-foreground'
+            }
           >
             Terminal Logs & Thoughts {allEvents.length > 0 && `(${allEvents.length})`}
           </button>
           <button
             type="button"
             onClick={() => setActiveMode('plan')}
-            className={`border-b-2 px-3 py-2 text-xs font-medium transition-colors ${
-              activeMode === 'plan' ? 'border-emerald-500 text-emerald-400 font-semibold' : 'border-transparent text-zinc-400 hover:text-zinc-200'
-            }`}
+            className={
+              activeMode === 'plan'
+                ? 'border-b-2 border-accent px-3 py-2 text-xs font-bold text-foreground [box-shadow:0_6px_14px_-10px_var(--accent)]'
+                : 'border-b-2 border-transparent px-3 py-2 text-xs font-semibold text-muted transition-colors hover:text-foreground'
+            }
           >
             Architecture Plan {details?.plan ? '✓' : ''}
           </button>
           <button
             type="button"
             onClick={() => setActiveMode('verification')}
-            className={`border-b-2 px-3 py-2 text-xs font-medium transition-colors ${
-              activeMode === 'verification' ? 'border-emerald-500 text-emerald-400 font-semibold' : 'border-transparent text-zinc-400 hover:text-zinc-200'
-            }`}
+            className={
+              activeMode === 'verification'
+                ? 'border-b-2 border-accent px-3 py-2 text-xs font-bold text-foreground [box-shadow:0_6px_14px_-10px_var(--accent)]'
+                : 'border-b-2 border-transparent px-3 py-2 text-xs font-semibold text-muted transition-colors hover:text-foreground'
+            }
           >
             Verification Checks {details?.verification ? `(${details.verification.status})` : ''}
           </button>
           <button
             type="button"
             onClick={() => setActiveMode('review')}
-            className={`border-b-2 px-3 py-2 text-xs font-medium transition-colors ${
-              activeMode === 'review' ? 'border-emerald-500 text-emerald-400 font-semibold' : 'border-transparent text-zinc-400 hover:text-zinc-200'
-            }`}
+            className={
+              activeMode === 'review'
+                ? 'border-b-2 border-accent px-3 py-2 text-xs font-bold text-foreground [box-shadow:0_6px_14px_-10px_var(--accent)]'
+                : 'border-b-2 border-transparent px-3 py-2 text-xs font-semibold text-muted transition-colors hover:text-foreground'
+            }
           >
             Code Review {details?.review ? `(${details.review.verdict})` : ''}
           </button>
           <button
             type="button"
             onClick={() => setActiveMode('diff')}
-            className={`border-b-2 px-3 py-2 text-xs font-medium transition-colors ${
-              activeMode === 'diff' ? 'border-emerald-500 text-emerald-400 font-semibold' : 'border-transparent text-zinc-400 hover:text-zinc-200'
-            }`}
+            className={
+              activeMode === 'diff'
+                ? 'border-b-2 border-accent px-3 py-2 text-xs font-bold text-foreground [box-shadow:0_6px_14px_-10px_var(--accent)]'
+                : 'border-b-2 border-transparent px-3 py-2 text-xs font-semibold text-muted transition-colors hover:text-foreground'
+            }
           >
             Git Changes (Diff) {details?.diff ? '✓' : ''}
           </button>
           <button
             type="button"
             onClick={() => setActiveMode('github')}
-            className={`border-b-2 px-3 py-2 text-xs font-medium transition-colors ${
-              activeMode === 'github' ? 'border-emerald-500 text-emerald-400 font-semibold' : 'border-transparent text-zinc-400 hover:text-zinc-200'
-            }`}
+            className={
+              activeMode === 'github'
+                ? 'border-b-2 border-accent px-3 py-2 text-xs font-bold text-foreground [box-shadow:0_6px_14px_-10px_var(--accent)]'
+                : 'border-b-2 border-transparent px-3 py-2 text-xs font-semibold text-muted transition-colors hover:text-foreground'
+            }
           >
             GitHub PR {story.pullRequest ? `(#${story.pullRequest.number})` : ''}
           </button>
         </div>
 
         {/* Tab Content Area */}
-        <div className="flex-1 overflow-y-auto bg-zinc-950 font-sans text-xs select-text">
+        <div className="flex-1 overflow-y-auto bg-surface-3 font-sans text-xs select-text">
           {/* 1. Terminal Mode */}
           {activeMode === 'terminal' && (
             <div className="flex flex-col h-full">
               {/* Filter pills */}
-              <div className="flex items-center justify-between border-b border-zinc-800/60 bg-zinc-900/40 px-4 py-2 text-xs">
-                <div className="flex rounded-lg bg-zinc-900 p-0.5 border border-zinc-800 font-mono">
+              <div className="flex items-center justify-between border-b border-border/60 bg-surface-3 px-4 py-2 text-xs">
+                <div className="inline-flex gap-0.5 rounded-control border border-border bg-surface-3 p-0.5 font-mono">
                   <button
                     type="button"
                     onClick={() => setActiveTerminalTab('all')}
-                    className={`rounded px-2.5 py-1 text-xs transition-colors ${activeTerminalTab === 'all' ? 'bg-zinc-800 text-zinc-100' : 'text-zinc-400 hover:text-zinc-200'}`}
+                    className={
+                      activeTerminalTab === 'all'
+                        ? 'rounded-[6px] bg-accent/20 px-2.5 py-1 text-xs font-semibold text-accent-foreground'
+                        : 'px-2.5 py-1 text-xs text-muted-2 transition-colors hover:text-foreground'
+                    }
                   >
                     All ({allEvents.length})
                   </button>
                   <button
                     type="button"
                     onClick={() => setActiveTerminalTab('reasoning')}
-                    className={`rounded px-2.5 py-1 text-xs transition-colors ${activeTerminalTab === 'reasoning' ? 'bg-purple-900/60 text-purple-200' : 'text-zinc-400 hover:text-zinc-200'}`}
+                    className={
+                      activeTerminalTab === 'reasoning'
+                        ? 'rounded-[6px] bg-accent/20 px-2.5 py-1 text-xs font-semibold text-accent-foreground'
+                        : 'px-2.5 py-1 text-xs text-muted-2 transition-colors hover:text-foreground'
+                    }
                   >
                     Thoughts ({allEvents.filter((e) => e.type === 'reasoning').length})
                   </button>
                   <button
                     type="button"
                     onClick={() => setActiveTerminalTab('tools')}
-                    className={`rounded px-2.5 py-1 text-xs transition-colors ${activeTerminalTab === 'tools' ? 'bg-cyan-900/60 text-cyan-200' : 'text-zinc-400 hover:text-zinc-200'}`}
+                    className={
+                      activeTerminalTab === 'tools'
+                        ? 'rounded-[6px] bg-teal-400/15 px-2.5 py-1 text-xs font-semibold text-teal-300'
+                        : 'px-2.5 py-1 text-xs text-muted-2 transition-colors hover:text-foreground'
+                    }
                   >
                     Tools ({allEvents.filter((e) => e.type === 'tool').length})
                   </button>
                   <button
                     type="button"
                     onClick={() => setActiveTerminalTab('output')}
-                    className={`rounded px-2.5 py-1 text-xs transition-colors ${activeTerminalTab === 'output' ? 'bg-emerald-900/60 text-emerald-200' : 'text-zinc-400 hover:text-zinc-200'}`}
+                    className={
+                      activeTerminalTab === 'output'
+                        ? 'rounded-[6px] bg-success/15 px-2.5 py-1 text-xs font-semibold text-success-foreground'
+                        : 'px-2.5 py-1 text-xs text-muted-2 transition-colors hover:text-foreground'
+                    }
                   >
                     Output
                   </button>
@@ -593,8 +625,8 @@ export function TerminalModal({
                 <button
                   type="button"
                   onClick={() => setAutoScroll((v) => !v)}
-                  className={`rounded px-2 py-1 text-[11px] font-mono border transition-colors ${
-                    autoScroll ? 'border-emerald-500/40 bg-emerald-950/40 text-emerald-300' : 'border-zinc-800 text-zinc-500'
+                  className={`rounded border px-2 py-1 font-mono text-[11px] transition-colors ${
+                    autoScroll ? 'border-success/40 bg-success/10 text-success-foreground' : 'border-border text-muted-2'
                   }`}
                 >
                   Auto-scroll {autoScroll ? 'ON' : 'OFF'}
@@ -602,44 +634,49 @@ export function TerminalModal({
               </div>
 
               {/* Terminal log messages */}
-              <div ref={logContainerRef} className="flex-1 overflow-y-auto p-4 space-y-3 font-mono">
+              <div ref={logContainerRef} className="flex-1 space-y-3 overflow-y-auto p-4 font-mono">
                 {loading && (
-                  <div className="flex items-center justify-center py-12 text-zinc-500">
-                    <span className="h-4 w-4 animate-spin rounded-full border-2 border-emerald-500 border-t-transparent mr-2" />
+                  <div className="flex items-center justify-center py-12 text-muted-2">
+                    <span className="mr-2 h-4 w-4 animate-spin rounded-full border-2 border-success border-t-transparent" />
                     Connecting to OpenCode agent runtime...
                   </div>
                 )}
                 {!loading && filteredEvents.length === 0 && (
-                  <div className="rounded-lg border border-dashed border-zinc-800 p-8 text-center text-zinc-500">
-                    <p className="font-semibold text-zinc-400">Agent session started</p>
-                    <p className="text-[11px] mt-1">
+                  <div className="rounded-card border border-dashed border-border p-8 text-center text-muted-2">
+                    <p className="font-semibold text-muted">Agent session started</p>
+                    <p className="mt-1 text-[11px]">
                       {isRunning ? 'Analyzing repository and preparing reasoning thoughts...' : 'No message logs recorded.'}
                     </p>
                   </div>
                 )}
-                {filteredEvents.map((ev) => (
-                  <div key={ev.key} className="rounded-lg border border-zinc-800/80 bg-zinc-900/40 p-3">
-                    <div className="flex items-center justify-between border-b border-zinc-800/40 pb-1.5 mb-1.5 text-[11px] text-zinc-400">
-                      <span className="font-semibold uppercase tracking-wider">{ev.type}</span>
-                      {ev.content.time?.created && <span>{new Date(ev.content.time.created).toLocaleTimeString()}</span>}
+                {filteredEvents.map((ev) => {
+                  const rail = ev.type === 'reasoning' ? '#a78bfa' : ev.type === 'tool' ? '#22d3ee' : ev.type === 'user' ? '#94a3b8' : '#34d399';
+                  return (
+                    <div key={ev.key} className="rounded-card border border-border bg-surface-3 p-3" style={{ borderLeft: `2px solid ${rail}` }}>
+                      <div className="mb-1.5 flex items-center justify-between border-b border-border/60 pb-1.5 text-[11px] text-muted-2">
+                        <span className="font-semibold uppercase tracking-wider" style={{ color: rail }}>
+                          {ev.type}
+                        </span>
+                        {ev.content.time?.created && <span>{new Date(ev.content.time.created).toLocaleTimeString()}</span>}
+                      </div>
+                      <div className="whitespace-pre-wrap font-mono text-xs text-muted">
+                        {ev.content.text || JSON.stringify(ev.content.state?.input ?? ev.content.state?.content ?? '', null, 2)}
+                      </div>
                     </div>
-                    <div className="whitespace-pre-wrap text-zinc-200 text-xs font-mono">
-                      {ev.content.text || JSON.stringify(ev.content.state?.input ?? ev.content.state?.content ?? '', null, 2)}
-                    </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
           )}
 
           {/* 2. Architecture Plan Mode */}
           {activeMode === 'plan' && (
-            <div className="p-6 space-y-6 max-w-4xl">
+            <div className="max-w-4xl space-y-6 p-6">
               {planProposed && (
-                <div className="flex items-center justify-between gap-3 rounded-lg border border-amber-500/30 bg-amber-950/20 p-4">
+                <div className="flex items-center justify-between gap-3 rounded-card border border-warning/30 bg-warning/10 p-4">
                   <div>
-                    <h3 className="text-sm font-semibold text-amber-300">Plan v{story.activePlanVersion} proposed</h3>
-                    <p className="mt-0.5 text-[11px] text-zinc-400">
+                    <h3 className="text-sm font-semibold text-warning-foreground">Plan v{story.activePlanVersion} proposed</h3>
+                    <p className="mt-0.5 text-[11px] text-muted">
                       Approve it by dragging the card to Ready, or reject it — the planner re-plans with your feedback.
                     </p>
                   </div>
@@ -648,7 +685,7 @@ export function TerminalModal({
                     data-testid={`modal-reject-plan-${story.key}`}
                     onClick={() => setRejectOpen(true)}
                     disabled={rejecting}
-                    className="shrink-0 cursor-pointer rounded bg-red-600 px-3 py-1.5 text-xs font-semibold text-white shadow-lg shadow-red-900/20 transition-all hover:bg-red-500 disabled:opacity-50"
+                    className="shrink-0 cursor-pointer rounded border border-danger/40 bg-danger/15 px-3 py-1.5 text-xs font-bold text-danger-foreground transition-colors hover:bg-danger/25 disabled:opacity-50"
                   >
                     {rejecting ? 'Rejecting…' : 'Reject plan…'}
                   </button>
@@ -656,10 +693,10 @@ export function TerminalModal({
               )}
 
               {needsClarification && (
-                <div className="space-y-3 rounded-lg border border-amber-500/30 bg-amber-950/20 p-4">
+                <div className="space-y-3 rounded-card border border-warning/30 bg-warning/10 p-4">
                   <div>
-                    <h3 className="text-sm font-semibold text-amber-300">Clarifications needed</h3>
-                    <p className="mt-0.5 text-[11px] text-zinc-400">
+                    <h3 className="text-sm font-semibold text-warning-foreground">Clarifications needed</h3>
+                    <p className="mt-0.5 text-[11px] text-muted">
                       The planner cannot finish plan v{story.activePlanVersion ?? '—'} without these answers.
                     </p>
                   </div>
@@ -670,37 +707,37 @@ export function TerminalModal({
                       onSubmit={(answers) => void handleAnswerClarifications(answers)}
                     />
                   ) : (
-                    <p className="text-xs text-zinc-500">Waiting for the plan's questions to load…</p>
+                    <p className="text-xs text-muted-2">Waiting for the plan's questions to load…</p>
                   )}
                 </div>
               )}
 
               {details?.plan ? (
                 <>
-                  <div className="rounded-lg border border-zinc-800 bg-zinc-900/40 p-4 space-y-2">
-                    <h3 className="text-sm font-semibold text-emerald-400">Technical Approach</h3>
-                    <p className="text-zinc-300 leading-relaxed">{details.plan.summary}</p>
-                    <div className="pt-2 flex items-center gap-2">
-                      <span className="rounded bg-zinc-800 px-2 py-0.5 text-[11px] font-mono text-zinc-300">
+                  <div className="space-y-2 rounded-card border border-border bg-surface-3 p-4">
+                    <h3 className="text-sm font-semibold text-success">Technical Approach</h3>
+                    <p className="leading-relaxed text-foreground">{details.plan.summary}</p>
+                    <div className="flex items-center gap-2 pt-2">
+                      <span className="rounded bg-surface-2 px-2 py-0.5 font-mono text-[11px] text-foreground">
                         Complexity: {details.plan.complexity}
                       </span>
                     </div>
                   </div>
 
                   <div className="space-y-3">
-                    <h3 className="text-xs font-semibold uppercase tracking-wider text-zinc-400">Subtasks & Steps</h3>
+                    <h3 className="text-xs font-semibold uppercase tracking-wider text-muted">Subtasks & Steps</h3>
                     <div className="space-y-2">
                       {details.plan.subtasks.map((task) => (
-                        <div key={task.id} className="rounded-lg border border-zinc-850 bg-zinc-900/30 p-3 flex items-start gap-3">
-                          <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded bg-emerald-950 text-emerald-400 font-mono text-[11px] border border-emerald-500/30">
+                        <div key={task.id} className="flex items-start gap-3 rounded-card border border-border bg-surface-2 p-3">
+                          <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded border border-success/30 bg-success/10 font-mono text-[11px] text-success">
                             {task.id}
                           </span>
                           <div className="space-y-1">
-                            <p className="font-medium text-zinc-200">{task.description}</p>
+                            <p className="font-medium text-foreground">{task.description}</p>
                             {task.files.length > 0 && (
                               <div className="flex flex-wrap gap-1 pt-1">
                                 {task.files.map((f) => (
-                                  <span key={f} className="rounded bg-zinc-800/80 px-1.5 py-0.5 font-mono text-[10px] text-zinc-400">
+                                  <span key={f} className="rounded bg-surface-2 px-1.5 py-0.5 font-mono text-[10px] text-muted">
                                     {f}
                                   </span>
                                 ))}
@@ -713,7 +750,7 @@ export function TerminalModal({
                   </div>
                 </>
               ) : (
-                <div className="text-center py-12 text-zinc-500">
+                <div className="py-12 text-center text-muted-2">
                   <p>No architecture plan recorded for this story yet.</p>
                 </div>
               )}
@@ -722,42 +759,42 @@ export function TerminalModal({
 
           {/* 3. Verification Mode */}
           {activeMode === 'verification' && (
-            <div className="p-6 space-y-6 max-w-4xl">
+            <div className="max-w-4xl space-y-6 p-6">
               {details?.verification ? (
                 <>
-                  <div className="flex items-center justify-between rounded-lg border border-zinc-800 bg-zinc-900/40 p-4">
+                  <div className="flex items-center justify-between rounded-card border border-border bg-surface-3 p-4">
                     <div>
-                      <h3 className="text-sm font-semibold text-zinc-200">Candidate Commit Verification</h3>
-                      <p className="font-mono text-xs text-zinc-500">SHA: {details.verification.commitSha}</p>
+                      <h3 className="text-sm font-semibold text-foreground">Candidate Commit Verification</h3>
+                      <p className="font-mono text-xs text-muted-2">SHA: {details.verification.commitSha}</p>
                     </div>
-                    <span className={`px-2.5 py-1 rounded text-xs font-semibold uppercase ${
-                      details.verification.status === 'passed' ? 'bg-emerald-950 text-emerald-400 border border-emerald-500/30' : 'bg-rose-950 text-rose-400 border border-rose-500/30'
+                    <span className={`rounded px-2.5 py-1 text-xs font-semibold uppercase ${
+                      details.verification.status === 'passed' ? 'border border-success/30 bg-success/10 text-success-foreground' : 'border border-danger/30 bg-danger/10 text-danger-foreground'
                     }`}>
                       {details.verification.status}
                     </span>
                   </div>
 
                   <div className="space-y-3">
-                    <h3 className="text-xs font-semibold uppercase tracking-wider text-zinc-400">Verification Checks</h3>
+                    <h3 className="text-xs font-semibold uppercase tracking-wider text-muted">Verification Checks</h3>
                     <div className="space-y-3">
                       {details.verification.checks.map((c) => (
-                        <div key={c.key} className="rounded-lg border border-zinc-800 bg-zinc-900/30 p-4 space-y-2">
+                        <div key={c.key} className="space-y-2 rounded-card border border-border bg-surface-2 p-4">
                           <div className="flex items-center justify-between">
                             <div className="flex items-center gap-2">
-                              <span className="font-mono text-xs font-semibold text-zinc-300">{c.key}</span>
-                              {c.mandatory && <span className="rounded bg-zinc-800 px-1.5 py-0.5 text-[10px] text-zinc-400">Mandatory</span>}
+                              <span className="font-mono text-xs font-semibold text-foreground">{c.key}</span>
+                              {c.mandatory && <span className="rounded bg-surface-2 px-1.5 py-0.5 text-[10px] text-muted">Mandatory</span>}
                             </div>
-                            <span className={`px-2 py-0.5 rounded text-[11px] font-mono ${
-                              c.status === 'passed' ? 'text-emerald-400 bg-emerald-950' : 'text-rose-400 bg-rose-950'
+                            <span className={`rounded px-2 py-0.5 font-mono text-[11px] ${
+                              c.status === 'passed' ? 'bg-success/10 text-success' : 'bg-danger/10 text-danger'
                             }`}>
                               {c.status} (exit {c.exitCode ?? 0})
                             </span>
                           </div>
-                          <code className="block rounded bg-black/60 p-2 font-mono text-xs text-zinc-400 border border-zinc-900">
+                          <code className="block rounded border border-border bg-black/50 p-2 font-mono text-xs text-muted">
                             {c.command}
                           </code>
                           {c.outputTail && (
-                            <pre className="rounded bg-black/40 p-2 font-mono text-[11px] text-zinc-300 max-h-40 overflow-y-auto whitespace-pre-wrap">
+                            <pre className="max-h-40 overflow-y-auto whitespace-pre-wrap rounded bg-black/40 p-2 font-mono text-[11px] text-foreground">
                               {c.outputTail}
                             </pre>
                           )}
@@ -767,7 +804,7 @@ export function TerminalModal({
                   </div>
                 </>
               ) : (
-                <div className="text-center py-12 text-zinc-500">
+                <div className="py-12 text-center text-muted-2">
                   <p>Verification checks have not executed yet.</p>
                 </div>
               )}
@@ -776,21 +813,21 @@ export function TerminalModal({
 
           {/* 4. Code Review Mode */}
           {activeMode === 'review' && (
-            <div className="p-6 space-y-6 max-w-4xl">
+            <div className="max-w-4xl space-y-6 p-6">
               {details?.review ? (
                 <>
-                  <div className="rounded-lg border border-zinc-800 bg-zinc-900/40 p-4 space-y-2">
+                  <div className="space-y-2 rounded-card border border-border bg-surface-3 p-4">
                     <div className="flex items-center justify-between">
-                      <h3 className="text-sm font-semibold text-zinc-200">Review Decision</h3>
-                      <span className={`px-2.5 py-1 rounded text-xs font-semibold uppercase ${
-                        details.review.verdict === 'APPROVED' ? 'bg-emerald-950 text-emerald-400 border border-emerald-500/30' : 'bg-amber-950 text-amber-400 border border-amber-500/30'
+                      <h3 className="text-sm font-semibold text-foreground">Review Decision</h3>
+                      <span className={`rounded px-2.5 py-1 text-xs font-semibold uppercase ${
+                        details.review.verdict === 'APPROVED' ? 'border border-success/30 bg-success/10 text-success-foreground' : 'border border-warning/30 bg-warning/10 text-warning-foreground'
                       }`}>
                         {details.review.verdict}
                       </span>
                     </div>
-                    <p className="text-zinc-300">{details.review.summary}</p>
+                    <p className="text-foreground">{details.review.summary}</p>
                     {details.review.normalizationNote && (
-                      <p className="text-amber-400 text-xs italic border-t border-zinc-800/80 pt-2">
+                      <p className="border-t border-border/80 pt-2 text-xs italic text-warning-foreground">
                         {details.review.normalizationNote}
                       </p>
                     )}
@@ -798,30 +835,30 @@ export function TerminalModal({
 
                   {details.review.findings.length > 0 && (
                     <div className="space-y-3">
-                      <h3 className="text-xs font-semibold uppercase tracking-wider text-zinc-400">Findings</h3>
+                      <h3 className="text-xs font-semibold uppercase tracking-wider text-muted">Findings</h3>
                       <div className="space-y-2">
                         {details.review.findings.map((f) => (
-                          <div key={f.id} className="rounded-lg border border-zinc-800 bg-zinc-900/30 p-3 space-y-1">
+                          <div key={f.id} className="space-y-1 rounded-card border border-border bg-surface-2 p-3">
                             <div className="flex items-center justify-between text-xs">
-                              <span className="font-mono text-zinc-400">
+                              <span className="font-mono text-muted">
                                 {f.id} · {f.category}
-                                {f.file && <span className="text-zinc-500"> · {f.file}</span>}
+                                {f.file && <span className="text-muted-2"> · {f.file}</span>}
                               </span>
                               <span className="flex items-center gap-1.5">
                                 {f.unverifiedLocation && (
-                                  <span className="px-1.5 py-0.5 rounded text-[10px] uppercase font-semibold bg-zinc-800 text-zinc-400" title="This file is neither in the diff nor in the repository">
+                                  <span className="rounded bg-surface-2 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-muted" title="This file is neither in the diff nor in the repository">
                                     unverified location
                                   </span>
                                 )}
-                                <span className={`px-1.5 py-0.5 rounded text-[10px] uppercase font-semibold ${
-                                  f.severity === 'critical' ? 'bg-rose-950 text-rose-400' : 'bg-amber-950 text-amber-400'
+                                <span className={`rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase ${
+                                  f.severity === 'critical' ? 'bg-danger/10 text-danger' : 'bg-warning/10 text-warning-foreground'
                                 }`}>
                                   {f.severity}
                                 </span>
                               </span>
                             </div>
-                            <p className="text-zinc-200 font-medium">{f.explanation}</p>
-                            <p className="text-zinc-400 text-xs">Recommendation: {f.recommendation}</p>
+                            <p className="font-medium text-foreground">{f.explanation}</p>
+                            <p className="text-xs text-muted">Recommendation: {f.recommendation}</p>
                           </div>
                         ))}
                       </div>
@@ -830,13 +867,13 @@ export function TerminalModal({
 
                   {details.review.acResults.length > 0 && (
                     <div className="space-y-3">
-                      <h3 className="text-xs font-semibold uppercase tracking-wider text-zinc-400">Acceptance Criteria Verified</h3>
+                      <h3 className="text-xs font-semibold uppercase tracking-wider text-muted">Acceptance Criteria Verified</h3>
                       <div className="space-y-2">
                         {details.review.acResults.map((ac) => (
-                          <div key={ac.criterionId} className="flex items-center justify-between rounded border border-zinc-850 p-2.5">
-                            <span className="text-zinc-300">{ac.text}</span>
-                            <span className={`text-[11px] font-mono px-2 py-0.5 rounded ${
-                              ac.status === 'met' ? 'text-emerald-400 bg-emerald-950' : 'text-amber-400 bg-amber-950'
+                          <div key={ac.criterionId} className="flex items-center justify-between rounded border border-border p-2.5">
+                            <span className="text-foreground">{ac.text}</span>
+                            <span className={`rounded px-2 py-0.5 font-mono text-[11px] ${
+                              ac.status === 'met' ? 'bg-success/10 text-success' : 'bg-warning/10 text-warning-foreground'
                             }`}>
                               {ac.status}
                             </span>
@@ -847,7 +884,7 @@ export function TerminalModal({
                   )}
                 </>
               ) : (
-                <div className="text-center py-12 text-zinc-500">
+                <div className="py-12 text-center text-muted-2">
                   <p>Independent code review has not run yet.</p>
                 </div>
               )}
@@ -858,11 +895,11 @@ export function TerminalModal({
           {activeMode === 'diff' && (
             <div className="p-4">
               {details?.diff ? (
-                <div className="rounded-lg border border-zinc-800 bg-zinc-950 font-mono text-xs overflow-x-auto">
-                  <div className="bg-zinc-900/80 px-4 py-2 border-b border-zinc-800 text-zinc-400 text-[11px]">
+                <div className="overflow-x-auto rounded-card border border-border bg-surface-3 font-mono text-xs">
+                  <div className="border-b border-border bg-surface-2 px-4 py-2 text-[11px] text-muted">
                     Git Candidate Diff · {story.candidateSha ? `Commit: ${story.candidateSha}` : ''}
                   </div>
-                  <pre className="p-4 leading-relaxed whitespace-pre font-mono">
+                  <pre className="whitespace-pre p-4 font-mono leading-relaxed">
                     {details.diff.split('\n').map((line, idx) => {
                       const isAdd = line.startsWith('+') && !line.startsWith('+++');
                       const isDel = line.startsWith('-') && !line.startsWith('---');
@@ -874,7 +911,7 @@ export function TerminalModal({
                           className={`${
                             isAdd ? 'bg-emerald-950/40 text-emerald-300' :
                             isDel ? 'bg-rose-950/40 text-rose-300' :
-                            isHeader ? 'text-cyan-400 font-semibold' : 'text-zinc-400'
+                            isHeader ? 'font-semibold text-teal-300' : 'text-muted'
                           } px-2 py-0.5`}
                         >
                           {line || ' '}
@@ -884,7 +921,7 @@ export function TerminalModal({
                   </pre>
                 </div>
               ) : (
-                <div className="text-center py-12 text-zinc-500">
+                <div className="py-12 text-center text-muted-2">
                   <p>No git diff available yet. A candidate commit must be captured first.</p>
                 </div>
               )}
@@ -893,7 +930,7 @@ export function TerminalModal({
 
           {/* 6. GitHub PR Mode */}
           {activeMode === 'github' && (
-            <div className="p-4 max-w-4xl mx-auto">
+            <div className="mx-auto max-w-4xl p-4">
               <PullRequestCard story={story} onChanged={onChanged} />
             </div>
           )}
