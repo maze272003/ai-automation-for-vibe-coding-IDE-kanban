@@ -12,6 +12,8 @@ import {
   pullRequests,
   remoteSyncRuns,
   repositoryConnections,
+  reviewFindings,
+  reviews,
   userStories,
   type AikDb,
 } from '@aik/db';
@@ -405,6 +407,99 @@ export class GitHubPRPoller {
           actor: 'system',
         });
         this.bus.notify(1);
+      }
+
+      // REL-2: Automatic rework on remote CI check failure
+      const settings = ProjectSettings.parse(project.settings);
+      if (
+        story.status === 'AWAITING_MERGE' &&
+        !headDrifted &&
+        remoteHeadSha === story.candidateSha &&
+        settings.requireRemoteChecks &&
+        checksSummary.conclusion === 'failure'
+      ) {
+        const failedChecks = checksItems.filter(
+          (c) => c.conclusion !== null && c.conclusion !== 'success' && c.conclusion !== 'neutral' && c.status !== 'queued' && c.status !== 'in_progress',
+        );
+
+        const findings = (failedChecks.length > 0 ? failedChecks : [{ name: 'remote-checks', conclusion: 'failure', url: null }]).map((fc, i) => {
+          const checkName = this.redact(fc.name);
+          const checkUrl = fc.url ? this.redact(fc.url) : '';
+          const findingText = `Remote CI check '${checkName}' failed with conclusion '${fc.conclusion}'.${checkUrl ? ` Details: ${checkUrl}` : ''}`;
+          return {
+            id: `CI-${i + 1}`,
+            severity: 'high' as const,
+            category: 'other' as const,
+            evidence: findingText,
+            explanation: findingText,
+            recommendation: `Inspect the failure in ${checkName} and update the codebase to pass CI.`,
+            blocking: true,
+          };
+        });
+
+        if (story.attemptCount < story.maxAttempts) {
+          const review = this.db
+            .insert(reviews)
+            .values({
+              storyId: story.id,
+              commitSha: remoteHeadSha,
+              actor: 'human',
+              agentRunId: null,
+              rawVerdict: 'CHANGES_REQUESTED',
+              verdict: 'CHANGES_REQUESTED',
+              summary: this.redact(
+                `Changes requested: remote CI checks failed (${findings.map((f) => f.explanation).join('; ')})`,
+              ),
+              raw: {
+                schemaVersion: 1,
+                verdict: 'CHANGES_REQUESTED',
+                summary: this.redact(`Remote CI checks failed: ${findings.map((f) => f.id).join(', ')}`),
+                acChecklist: [],
+                findings,
+                priorFindings: [],
+              },
+              createdAt: this.nowDate(),
+            })
+            .returning({ id: reviews.id })
+            .get();
+
+          for (const f of findings) {
+            this.db.insert(reviewFindings).values({
+              reviewId: review.id,
+              findingKey: f.id,
+              severity: f.severity,
+              category: f.category,
+              filePath: null,
+              evidence: f.evidence,
+              explanation: f.explanation,
+              recommendation: f.recommendation,
+              blocking: true,
+            }).run();
+          }
+
+          this.workflow.transition({
+            storyId: story.id,
+            event: {
+              type: 'request_changes',
+              sha: remoteHeadSha,
+            },
+            actor: 'system',
+          });
+          this.bus.notify(1);
+        } else {
+          this.workflow.transition({
+            storyId: story.id,
+            event: {
+              type: 'fail',
+              reason: 'retry_limit',
+              detail: this.redact(
+                `Remote CI checks failed and attempt budget is exhausted (${story.attemptCount}/${story.maxAttempts})`,
+              ),
+            },
+            actor: 'system',
+          });
+          this.bus.notify(1);
+        }
       }
 
       this.db.insert(remoteSyncRuns).values({

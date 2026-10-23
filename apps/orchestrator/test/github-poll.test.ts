@@ -5,6 +5,8 @@ import {
   projects,
   pullRequests,
   repositoryConnections,
+  reviewFindings,
+  reviews,
   userStories,
 } from '@aik/db';
 import { eq } from 'drizzle-orm';
@@ -404,5 +406,365 @@ describe('GitHubPRPoller (GH-8)', () => {
     // Merge gate should now allow merge
     mergeGate = poller.isMergeAllowed(pr.id);
     expect(mergeGate.allowed).toBe(true);
+  });
+
+  it('automatically triggers rework when remote CI checks fail and attempts remain (REL-2)', async () => {
+    const repoPath = makeTempRepo();
+    const now = new Date();
+    const candidateSha = 'a'.repeat(40);
+
+    const project = dbHolder.db
+      .insert(projects)
+      .values({
+        name: 'Auto-Rework Project',
+        key: 'ARW1',
+        repoPath,
+        baseBranch: 'main',
+        repositoryConnectionId: repoConnId,
+        settings: {
+          checks: [],
+          shellAllowlist: [],
+          protectedPaths: [],
+          secretsOnlyVerification: false,
+          publish: true,
+          remoteMerge: true,
+          requireRemoteChecks: true,
+          autoAcceptPlans: false,
+          maxAttempts: 3,
+          allowPaid: false,
+          allowMayTrain: false,
+          webfetch: false,
+          mergeMethod: 'merge',
+          budgets: { requestsPerRun: 10, requestsPerStory: 20, inputTokensPerStory: 1000 },
+          jobLimits: { memoryMb: 512, maxProcesses: 10 },
+        },
+        createdAt: now,
+        updatedAt: now,
+      })
+      .returning()
+      .get();
+
+    const story = dbHolder.db
+      .insert(userStories)
+      .values({
+        projectId: project.id,
+        key: 'ARW-1',
+        title: 'Auto Rework Story',
+        priority: 'P2',
+        rank: 1,
+        status: 'AWAITING_MERGE',
+        statusVersion: 1,
+        attemptCount: 1,
+        maxAttempts: 3,
+        candidateSha,
+        candidateTree: 't'.repeat(40),
+        createdAt: now,
+        updatedAt: now,
+      })
+      .returning()
+      .get();
+
+    const pr = dbHolder.db
+      .insert(pullRequests)
+      .values({
+        storyId: story.id,
+        repositoryConnectionId: repoConnId,
+        number: 101,
+        url: 'https://github.com/octocat/poller-repo/pull/101',
+        headBranch: 'ai/ARW-1',
+        headSha: candidateSha,
+        baseBranch: 'main',
+        state: 'open',
+      })
+      .returning()
+      .get();
+
+    const mockApi: GitHubPollerApi = {
+      getPull: async () => ({
+        status: 200,
+        data: { head: { sha: candidateSha }, state: 'open', merged: false },
+      }),
+      getCheckRuns: async () => [
+        {
+          name: 'ci/test-suite',
+          status: 'completed',
+          conclusion: 'failure',
+          html_url: 'https://github.com/octocat/poller-repo/actions/runs/101',
+        },
+      ],
+      getCombinedStatus: async () => null,
+      getReviews: async () => [],
+    };
+
+    const poller = new GitHubPRPoller({
+      db: dbHolder.db,
+      authService,
+      workflow,
+      bus,
+      api: mockApi,
+    });
+
+    const res = await poller.pollPullRequest(pr.id);
+    expect(res.ok).toBe(true);
+
+    // Story should have transitioned automatically to REWORK
+    const updatedStory = dbHolder.db
+      .select()
+      .from(userStories)
+      .where(eq(userStories.id, story.id))
+      .get();
+    expect(updatedStory?.status).toBe('REWORK');
+
+    // A review and reviewFindings should have been recorded
+    const reviewList = dbHolder.db
+      .select()
+      .from(reviews)
+      .where(eq(reviews.storyId, story.id))
+      .all();
+    expect(reviewList.length).toBeGreaterThan(0);
+    const latestReview = reviewList[reviewList.length - 1]!;
+    expect(latestReview.verdict).toBe('CHANGES_REQUESTED');
+
+    const findings = dbHolder.db
+      .select()
+      .from(reviewFindings)
+      .where(eq(reviewFindings.reviewId, latestReview.id))
+      .all();
+    expect(findings.length).toBeGreaterThan(0);
+    expect(findings[0]!.blocking).toBe(true);
+    expect(findings[0]!.evidence).toContain('ci/test-suite');
+    expect(findings[0]!.evidence).toContain('https://github.com/octocat/poller-repo/actions/runs/101');
+  });
+
+  it('blocks the story when remote CI checks fail and attempt budget is exhausted (REL-2)', async () => {
+    const repoPath = makeTempRepo();
+    const now = new Date();
+    const candidateSha = 'b'.repeat(40);
+
+    const project = dbHolder.db
+      .insert(projects)
+      .values({
+        name: 'Exhausted Project',
+        key: 'EXH1',
+        repoPath,
+        baseBranch: 'main',
+        repositoryConnectionId: repoConnId,
+        settings: {
+          checks: [],
+          shellAllowlist: [],
+          protectedPaths: [],
+          secretsOnlyVerification: false,
+          publish: true,
+          remoteMerge: true,
+          requireRemoteChecks: true,
+          autoAcceptPlans: false,
+          maxAttempts: 3,
+          allowPaid: false,
+          allowMayTrain: false,
+          webfetch: false,
+          mergeMethod: 'merge',
+          budgets: { requestsPerRun: 10, requestsPerStory: 20, inputTokensPerStory: 1000 },
+          jobLimits: { memoryMb: 512, maxProcesses: 10 },
+        },
+        createdAt: now,
+        updatedAt: now,
+      })
+      .returning()
+      .get();
+
+    const story = dbHolder.db
+      .insert(userStories)
+      .values({
+        projectId: project.id,
+        key: 'EXH-1',
+        title: 'Exhausted Budget Story',
+        priority: 'P2',
+        rank: 1,
+        status: 'AWAITING_MERGE',
+        statusVersion: 1,
+        attemptCount: 3,
+        maxAttempts: 3,
+        candidateSha,
+        candidateTree: 't'.repeat(40),
+        createdAt: now,
+        updatedAt: now,
+      })
+      .returning()
+      .get();
+
+    const pr = dbHolder.db
+      .insert(pullRequests)
+      .values({
+        storyId: story.id,
+        repositoryConnectionId: repoConnId,
+        number: 102,
+        url: 'https://github.com/octocat/poller-repo/pull/102',
+        headBranch: 'ai/EXH-1',
+        headSha: candidateSha,
+        baseBranch: 'main',
+        state: 'open',
+      })
+      .returning()
+      .get();
+
+    const mockApi: GitHubPollerApi = {
+      getPull: async () => ({
+        status: 200,
+        data: { head: { sha: candidateSha }, state: 'open', merged: false },
+      }),
+      getCheckRuns: async () => [
+        {
+          name: 'ci/test-suite',
+          status: 'completed',
+          conclusion: 'failure',
+          html_url: 'https://github.com/octocat/poller-repo/actions/runs/102',
+        },
+      ],
+      getCombinedStatus: async () => null,
+      getReviews: async () => [],
+    };
+
+    const poller = new GitHubPRPoller({
+      db: dbHolder.db,
+      authService,
+      workflow,
+      bus,
+      api: mockApi,
+    });
+
+    const res = await poller.pollPullRequest(pr.id);
+    expect(res.ok).toBe(true);
+
+    // Story should have transitioned to BLOCKED with retry_limit
+    const updatedStory = dbHolder.db
+      .select()
+      .from(userStories)
+      .where(eq(userStories.id, story.id))
+      .get();
+    expect(updatedStory?.status).toBe('BLOCKED');
+    expect(updatedStory?.blockedReason).toBe('retry_limit');
+    expect(updatedStory?.blockedDetail).toContain('attempt budget is exhausted');
+  });
+
+  it('redacts sensitive output in CI failure findings (REL-2)', async () => {
+    const repoPath = makeTempRepo();
+    const now = new Date();
+    const candidateSha = 'd'.repeat(40);
+
+    const project = dbHolder.db
+      .insert(projects)
+      .values({
+        name: 'Redact Project',
+        key: 'RED1',
+        repoPath,
+        baseBranch: 'main',
+        repositoryConnectionId: repoConnId,
+        settings: {
+          checks: [],
+          shellAllowlist: [],
+          protectedPaths: [],
+          secretsOnlyVerification: false,
+          publish: true,
+          remoteMerge: true,
+          requireRemoteChecks: true,
+          autoAcceptPlans: false,
+          maxAttempts: 3,
+          allowPaid: false,
+          allowMayTrain: false,
+          webfetch: false,
+          mergeMethod: 'merge',
+          budgets: { requestsPerRun: 10, requestsPerStory: 20, inputTokensPerStory: 1000 },
+          jobLimits: { memoryMb: 512, maxProcesses: 10 },
+        },
+        createdAt: now,
+        updatedAt: now,
+      })
+      .returning()
+      .get();
+
+    const story = dbHolder.db
+      .insert(userStories)
+      .values({
+        projectId: project.id,
+        key: 'RED-1',
+        title: 'Redact Story',
+        priority: 'P2',
+        rank: 1,
+        status: 'AWAITING_MERGE',
+        statusVersion: 1,
+        attemptCount: 1,
+        maxAttempts: 3,
+        candidateSha,
+        candidateTree: 't'.repeat(40),
+        createdAt: now,
+        updatedAt: now,
+      })
+      .returning()
+      .get();
+
+    const pr = dbHolder.db
+      .insert(pullRequests)
+      .values({
+        storyId: story.id,
+        repositoryConnectionId: repoConnId,
+        number: 103,
+        url: 'https://github.com/octocat/poller-repo/pull/103',
+        headBranch: 'ai/RED-1',
+        headSha: candidateSha,
+        baseBranch: 'main',
+        state: 'open',
+      })
+      .returning()
+      .get();
+
+    const mockApi: GitHubPollerApi = {
+      getPull: async () => ({
+        status: 200,
+        data: { head: { sha: candidateSha }, state: 'open', merged: false },
+      }),
+      getCheckRuns: async () => [
+        {
+          name: 'ci/deploy-ghp_superSecretToken12345',
+          status: 'completed',
+          conclusion: 'failure',
+          html_url: 'https://ci.example.com/build?token=ghp_superSecretToken12345',
+        },
+      ],
+      getCombinedStatus: async () => null,
+      getReviews: async () => [],
+    };
+
+    const redactor = (s: string) => s.replace(/ghp_superSecretToken12345/g, '[REDACTED_SECRET]');
+
+    const poller = new GitHubPRPoller({
+      db: dbHolder.db,
+      authService,
+      workflow,
+      bus,
+      api: mockApi,
+      redact: redactor,
+    });
+
+    const res = await poller.pollPullRequest(pr.id);
+    expect(res.ok).toBe(true);
+
+    const reviewList = dbHolder.db
+      .select()
+      .from(reviews)
+      .where(eq(reviews.storyId, story.id))
+      .all();
+    expect(reviewList.length).toBeGreaterThan(0);
+    const latestReview = reviewList[reviewList.length - 1]!;
+    expect(latestReview.summary).not.toContain('ghp_superSecretToken12345');
+    expect(latestReview.summary).toContain('[REDACTED_SECRET]');
+
+    const findings = dbHolder.db
+      .select()
+      .from(reviewFindings)
+      .where(eq(reviewFindings.reviewId, latestReview.id))
+      .all();
+    expect(findings.length).toBeGreaterThan(0);
+    expect(findings[0]!.evidence).not.toContain('ghp_superSecretToken12345');
+    expect(findings[0]!.evidence).toContain('[REDACTED_SECRET]');
   });
 });
