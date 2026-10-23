@@ -3,6 +3,9 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 
+import type { IsolationRunner } from '../isolation/index.ts';
+import { getIsolationRunner } from '../isolation/index.ts';
+
 export type CommandStatus = 'passed' | 'failed' | 'timed_out' | 'error' | 'unsupported';
 
 export interface RunCommandOptions {
@@ -14,6 +17,8 @@ export interface RunCommandOptions {
   redact?: (text: string) => string;
   /** Called once when the check process is spawned; exposes the tree-kill stop seam. */
   onSpawned?: (info: SpawnedCheckProcess) => void;
+  /** Optional isolation runner; defaults to getIsolationRunner(). */
+  runner?: IsolationRunner;
 }
 
 /** Handle onto a running check process, for callers that must be able to stop it (EXE-13). */
@@ -140,6 +145,42 @@ function run(command: string, opts: RunCommandOptions): Promise<RunCommandResult
       return;
     }
 
+    const tailLines = opts.tailLines ?? 200;
+
+    if (opts.runner) {
+      const runner = opts.runner;
+      runner
+        .run([parsed.file, ...parsed.args], {
+          worktreeDir: opts.cwd,
+          timeoutMs: opts.timeoutMs,
+          onSpawned: opts.onSpawned,
+        })
+        .then((res) => {
+          const full = Buffer.concat([res.stdout, res.stderr]).toString('utf8');
+          const redact = opts.redact ?? ((s: string) => s);
+          const output = redact(lastLines(full, tailLines));
+          if (opts.logFile) {
+            try {
+              fs.mkdirSync(path.dirname(opts.logFile), { recursive: true });
+              fs.writeFileSync(opts.logFile, redact(full).trimEnd());
+            } catch {
+              // log persistence is best-effort
+            }
+          }
+          if (res.timedOut) {
+            resolve({ status: 'timed_out', exitCode: res.exitCode, output, error: `Timed out after ${opts.timeoutMs} ms` });
+          } else if (res.exitCode === 0) {
+            resolve({ status: 'passed', exitCode: 0, output });
+          } else {
+            resolve({ status: 'failed', exitCode: res.exitCode, output });
+          }
+        })
+        .catch((err) => {
+          resolve({ status: 'error', exitCode: null, output: '', error: err instanceof Error ? err.message : String(err) });
+        });
+      return;
+    }
+
     const useCmd = process.platform === 'win32' && (WINDOWS_SHIMS.has(parsed.file.toLowerCase()) || /\.(cmd|bat)$/i.test(parsed.file));
     const isWindows = process.platform === 'win32';
     const file = useCmd ? (process.env.ComSpec ?? 'cmd.exe') : parsed.file;
@@ -147,7 +188,6 @@ function run(command: string, opts: RunCommandOptions): Promise<RunCommandResult
       ? ['/d', '/s', '/c', [parsed.file, ...parsed.args].map(quoteForCmd).join(' ')]
       : parsed.args;
 
-    const tailLines = opts.tailLines ?? 200;
     const maxBytes = 8 * 1024 * 1024;
     let full = '';
     let tailText = '';

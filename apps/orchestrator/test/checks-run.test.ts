@@ -94,6 +94,34 @@ describe('runCheckCommand', () => {
     expect(result.status).toBe('failed');
     expect(result.exitCode).toBe(3);
   });
+
+  test('delegates execution to custom IsolationRunner when provided', async () => {
+    let runnerCalledWith: string[] = [];
+    const mockRunner = {
+      kind: 'job_object' as const,
+      run: async (command: string[]) => {
+        runnerCalledWith = command;
+        return {
+          exitCode: 0,
+          stdout: Buffer.from('mock runner output'),
+          stderr: Buffer.from(''),
+          timedOut: false,
+        };
+      },
+    };
+
+    const dir = makeTempDir('aik-runner-delegation-');
+    const result = await runCheckCommand({
+      command: 'npm run lint',
+      cwd: dir,
+      timeoutMs: 5_000,
+      runner: mockRunner,
+    });
+
+    expect(result.status).toBe('passed');
+    expect(result.output).toBe('mock runner output');
+    expect(runnerCalledWith).toEqual(['npm', 'run', 'lint']);
+  });
 });
 
 /** Long-lived check script: spawns a grandchild, publishes its pid next to itself, then idles. */
