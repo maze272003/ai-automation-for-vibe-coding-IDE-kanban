@@ -17,7 +17,7 @@
 Executed via parallel subagents with per-wave integration (see the Corrections appendix below for deltas discovered en route). Every integrated wave ran the full repo gate (check:pins, lint, typecheck, test) before its file-scoped commits.
 
 - **Tasks 1–11: done and committed.** Wave 1 (Tasks 1, 2, 3, 5, 7's contracts slice + 10's helpers), Wave 2 (Tasks 4, 6, 7's routes, 10, 11), Wave 3 (Tasks 8, 9).
-- **Task 12 (E2E verification): in flight** — status box to be finalized below when its full-gate run lands.
+- **Task 12 (E2E verification): done.** `e2e/tests/providers.spec.ts` passes 2/2 (Playwright, 12.1 s): catalog listing, keyless connect response and IPC bodies, `restartOpencode`-driven model availability (`custom-*` virtual provider, `mock-model`), key absent from `app.db` and both log files, plus a full `opencodeChat` round-trip through the real gateway. Launched with `AIK_CREDENTIAL_STORE: memory`, so the dummy key never touches the real Windows Credential Manager.
 
 Deviations that survive as implementation facts:
 - `planner.ts` deliberately NOT classified (planning failures have no reason slot; `NEW` can fail guard any `fail` event — machine change would be cross-package). Marker text stays parseable in `agent_runs.exit_reason`.
@@ -3240,11 +3240,11 @@ git commit -m "test(e2e): connect a provider and verify the key never lands on d
 
 ## Completion Checklist
 
-- [ ] `npm run check:pins && npm run lint && npm run typecheck && npm test` all pass.
-- [ ] The provider key appears in no config file, database row, log line, file in the data directory, IPC payload or renderer message.
-- [ ] The gateway token is rejected by every orchestrator API route, and the orchestrator API token is rejected by the gateway.
-- [ ] The gateway never falls back to another provider.
-- [ ] SPK-5 records a **[V]** verdict for P-1 and P-2, and the implementation matches them.
+- [x] `npm run check:pins && npm run lint && npm run typecheck && npm test` all pass.
+- [x] The provider key appears in no config file, database row, log line, file in the data directory, IPC payload or renderer message.
+- [x] The gateway token is rejected by every orchestrator API route, and the orchestrator API token is rejected by the gateway.
+- [x] The gateway never falls back to another provider.
+- [x] SPK-5 records a **[V]** verdict for P-1 and P-2, and the implementation matches them.
 
 ---
 
