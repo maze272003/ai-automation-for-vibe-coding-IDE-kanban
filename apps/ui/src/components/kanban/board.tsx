@@ -66,7 +66,7 @@ export function Board({ stories, onChanged }: { stories: StoryDTO[]; onChanged: 
       {/* The board scrolls horizontally; each column owns its own vertical scroll. */}
       <div
         data-testid="board"
-        className="flex min-h-0 min-w-0 flex-1 gap-2.5 overflow-x-auto p-4 [scrollbar-color:var(--border-strong)_transparent]"
+        className="flex min-h-0 min-w-0 flex-1 gap-2.5 overflow-x-auto p-4"
       >
         {STORY_STATUS.map((status) => (
           <Column

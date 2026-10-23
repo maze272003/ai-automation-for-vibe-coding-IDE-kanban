@@ -62,7 +62,7 @@ export function Sidebar({ projects, orchestratorState, dataDir }: SidebarProps) 
                   'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring',
                 )}
               >
-                <span className="rounded-[5px] border border-accent/25 bg-accent/15 px-1 py-px font-mono text-[10px] font-bold text-accent-foreground">
+                <span className="rounded-[5px] border border-accent/25 bg-accent-soft px-1 py-px font-mono text-[10px] font-bold text-accent-soft-foreground">
                   {p.key}
                 </span>
                 <span className="truncate">{` · ${p.name}`}</span>

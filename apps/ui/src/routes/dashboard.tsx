@@ -135,7 +135,7 @@ export function DashboardPage() {
                 className={cn(
                   'inline-flex items-center gap-1.5 rounded-control px-2.5 py-1 text-xs font-semibold transition-colors',
                   activeTab === 'local'
-                    ? 'bg-accent/15 text-accent-foreground'
+                    ? 'bg-accent-soft text-accent-soft-foreground'
                     : 'text-muted hover:bg-surface-2 hover:text-foreground',
                 )}
               >
@@ -148,7 +148,7 @@ export function DashboardPage() {
                 className={cn(
                   'inline-flex items-center gap-1.5 rounded-control px-2.5 py-1 text-xs font-semibold transition-colors',
                   activeTab === 'github'
-                    ? 'bg-accent/15 text-accent-foreground'
+                    ? 'bg-accent-soft text-accent-soft-foreground'
                     : 'text-muted hover:bg-surface-2 hover:text-foreground',
                 )}
               >
@@ -177,7 +177,7 @@ export function DashboardPage() {
                         params={{ projectId: String(p.id) }}
                         className="flex items-baseline gap-1.5 text-sm font-semibold text-foreground hover:underline"
                       >
-                        <span className="rounded-[5px] border border-accent/25 bg-accent/15 px-1.5 py-px font-mono text-[10px] font-bold text-accent-foreground">
+                        <span className="rounded-[5px] border border-accent/25 bg-accent-soft px-1.5 py-px font-mono text-[10px] font-bold text-accent-soft-foreground">
                           {p.key}
                         </span>
                         <span className="truncate">{` · ${p.name}`}</span>

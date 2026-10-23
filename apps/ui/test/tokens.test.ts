@@ -30,7 +30,7 @@ const SEMANTIC_TOKENS = [
   '--background', '--surface', '--surface-2', '--surface-3',
   '--border', '--border-strong',
   '--foreground', '--muted', '--muted-2',
-  '--accent', '--accent-2', '--accent-foreground', '--ring',
+  '--accent', '--accent-2', '--accent-foreground', '--accent-soft', '--accent-soft-foreground', '--ring',
   '--danger', '--danger-foreground',
   '--success', '--success-foreground',
   '--warning', '--warning-foreground',
