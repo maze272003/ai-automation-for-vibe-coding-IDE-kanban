@@ -173,3 +173,11 @@ body::before {
     scroll-behavior: auto !important;
   }
 }
+
+/* Off-screen story cards skip layout and paint; ignored where unsupported. */
+@layer utilities {
+  .content-visibility-auto {
+    content-visibility: auto;
+    contain-intrinsic-size: 0 132px;
+  }
+}
