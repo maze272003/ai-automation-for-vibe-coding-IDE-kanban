@@ -7,6 +7,11 @@ export interface ProcessResult {
   timedOut?: boolean;
 }
 
+export interface SpawnedProcessInfo {
+  pid: number;
+  killTree: () => Promise<void>;
+}
+
 export interface IsolationOptions {
   worktreeDir: string;
   allowedPorts?: number[];
@@ -14,6 +19,7 @@ export interface IsolationOptions {
   timeoutMs?: number;
   memMb?: number;
   maxProcs?: number;
+  onSpawned?: (info: SpawnedProcessInfo) => void;
 }
 
 export interface IsolationRunner {

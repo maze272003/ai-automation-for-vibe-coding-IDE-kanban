@@ -3,7 +3,7 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import type { IsolationOptions, IsolationRunner, ProcessResult } from './runner.js';
+import type { IsolationOptions, IsolationRunner, ProcessResult } from './runner.ts';
 
 const WINDOWS_SHIMS = new Set(['npm', 'npx', 'pnpm', 'yarn', 'corepack']);
 const quoteForCmd = (token: string) => (/\s/.test(token) ? `"${token.replace(/"/g, '""')}"` : token);
@@ -56,11 +56,15 @@ export class JobObjectIsolationRunner implements IsolationRunner {
       throw new Error('Command array must not be empty');
     }
 
-    const [fileToken, ...argsTokens] = command;
+    const fileToken = command[0];
+    if (!fileToken) {
+      throw new Error('Command token must not be empty');
+    }
+    const argsTokens = command.slice(1);
     const isWindows = process.platform === 'win32';
     const useCmd = isWindows && (WINDOWS_SHIMS.has(fileToken.toLowerCase()) || /\.(cmd|bat)$/i.test(fileToken));
     const file = useCmd ? (process.env.ComSpec ?? 'cmd.exe') : fileToken;
-    const args = useCmd
+    const args: string[] = useCmd
       ? ['/d', '/s', '/c', [fileToken, ...argsTokens].map(quoteForCmd).join(' ')]
       : argsTokens;
 
@@ -83,7 +87,7 @@ export class JobObjectIsolationRunner implements IsolationRunner {
         windowsHide: true,
         shell: false,
         detached: !isWindows,
-        stdio: ['ignore', 'pipe', 'pipe'],
+        stdio: ['ignore', 'pipe', 'pipe'] as const,
       });
 
       const killTree = (): Promise<void> => {
@@ -92,8 +96,12 @@ export class JobObjectIsolationRunner implements IsolationRunner {
         return killPromise;
       };
 
-      child.stdout?.on('data', (chunk: Buffer) => stdoutChunks.push(chunk));
-      child.stderr?.on('data', (chunk: Buffer) => stderrChunks.push(chunk));
+      if (child.pid !== undefined && options.onSpawned) {
+        options.onSpawned({ pid: child.pid, killTree });
+      }
+
+      child.stdout.on('data', (chunk: Buffer) => stdoutChunks.push(chunk));
+      child.stderr.on('data', (chunk: Buffer) => stderrChunks.push(chunk));
 
       let timer: NodeJS.Timeout | null = null;
       if (options.timeoutMs && options.timeoutMs > 0) {
@@ -112,7 +120,7 @@ export class JobObjectIsolationRunner implements IsolationRunner {
         }
       };
 
-      child.on('error', (err) => {
+      child.on('error', (err: Error) => {
         exited = true;
         cleanup();
         resolve({
@@ -123,7 +131,7 @@ export class JobObjectIsolationRunner implements IsolationRunner {
         });
       });
 
-      child.on('close', (code) => {
+      child.on('close', (code: number | null) => {
         exited = true;
         cleanup();
         resolve({

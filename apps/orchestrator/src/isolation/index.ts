@@ -1,9 +1,9 @@
 // apps/orchestrator/src/isolation/index.ts
-import { JobObjectIsolationRunner } from './job-object.js';
-import type { IsolationRunner } from './runner.js';
+import { JobObjectIsolationRunner } from './job-object.ts';
+import type { IsolationRunner } from './runner.ts';
 
-export * from './runner.js';
-export * from './job-object.js';
+export * from './runner.ts';
+export * from './job-object.ts';
 
 let defaultRunner: IsolationRunner | null = null;
 

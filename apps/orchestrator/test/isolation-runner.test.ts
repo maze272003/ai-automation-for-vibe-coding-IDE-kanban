@@ -1,10 +1,8 @@
 // apps/orchestrator/test/isolation-runner.test.ts
 import { describe, expect, it } from 'vitest';
-import fs from 'node:fs';
-import path from 'node:path';
-import { assertInTemp, makeTempDir } from './helpers/temp.js';
-import { JobObjectIsolationRunner } from '../src/isolation/job-object.js';
-import { getIsolationRunner } from '../src/isolation/index.js';
+import { assertInTemp, makeTempDir } from './helpers/temp.ts';
+import { JobObjectIsolationRunner } from '../src/isolation/job-object.ts';
+import { getIsolationRunner } from '../src/isolation/index.ts';
 
 describe('IsolationRunner', () => {
   it('runs command in worktree and captures stdout, stderr, exit code', async () => {
@@ -73,6 +71,23 @@ describe('IsolationRunner', () => {
     expect(result.exitCode).toBe(0);
     const parsed = JSON.parse(result.stdout.toString('utf8').trim());
     expect(parsed.hasSecret).toBe(false);
+  });
+
+  it('calls onSpawned when provided', async () => {
+    const dir = makeTempDir('aik-iso-test-');
+    assertInTemp(dir);
+    const runner = new JobObjectIsolationRunner();
+
+    let spawnedPid = 0;
+    const result = await runner.run(['node', '-e', 'console.log("ok")'], {
+      worktreeDir: dir,
+      onSpawned: (info) => {
+        spawnedPid = info.pid;
+      },
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(spawnedPid).toBeGreaterThan(0);
   });
 
   it('factory getIsolationRunner returns a valid runner', () => {
