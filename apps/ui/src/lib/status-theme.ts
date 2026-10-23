@@ -106,7 +106,7 @@ export const STATUS_THEME: Record<StoryStatus, StatusTheme> = {
     dot: '#64748b',
     rail: 'linear-gradient(90deg, #64748b, rgb(100 116 139 / 0.15))',
     softBg: 'rgb(100 116 139 / 0.18)',
-    softFg: '#94a3b8',
+    softFg: '#9aa9bd',
     glow: 'rgb(100 116 139 / 0.55)',
   },
 };

@@ -8,6 +8,7 @@ import { TopBar } from '../components/shell/top-bar.tsx';
 import { Button } from '../components/ui/button.tsx';
 import { Input } from '../components/ui/input.tsx';
 import { Select } from '../components/ui/select.tsx';
+import { Skeleton } from '../components/ui/skeleton.tsx';
 import { api } from '../lib/api.ts';
 import { useStories, type StoryQuery } from '../lib/stories.ts';
 
@@ -28,7 +29,7 @@ export function BoardPage() {
     return () => clearTimeout(timer);
   }, [query.q]);
 
-  const { stories, error, refetch } = useStories(id, { ...query, q: debouncedSearch });
+  const { stories, error, refetch, loading } = useStories(id, { ...query, q: debouncedSearch });
 
   useEffect(() => {
     void api.get<ProjectDTO>(`/projects/${id}`).then(setProject, () => setProject(null));
@@ -71,7 +72,19 @@ export function BoardPage() {
           {error}
         </p>
       )}
-      <Board stories={stories} onChanged={refetch} />
+      {loading && stories.length === 0 ? (
+        <div className="flex gap-2.5 p-4" aria-hidden="true">
+          {['NEW', 'READY', 'IN_PROGRESS'].map((s) => (
+            <div key={s} className="w-[246px] shrink-0 space-y-2 rounded-panel border border-glass-border bg-surface p-2">
+              <Skeleton className="h-3 w-20" />
+              <Skeleton className="h-16 w-full" />
+              <Skeleton className="h-16 w-full" />
+            </div>
+          ))}
+        </div>
+      ) : (
+        <Board stories={stories} onChanged={refetch} />
+      )}
       <CreateStoryDialog open={creating} projectId={id} onClose={() => setCreating(false)} onCreated={() => void refetch()} />
     </div>
   );

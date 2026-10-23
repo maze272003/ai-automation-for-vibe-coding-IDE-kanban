@@ -82,6 +82,14 @@ export function Column(props: {
       </header>
       {!collapsed && (
         <ol className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto px-2 pb-2">
+          {stories.length === 0 && (
+            <li
+              data-testid={`column-empty-${status}`}
+              className="rounded-card border border-dashed border-border px-3 py-6 text-center text-[11px] text-muted-2"
+            >
+              Nothing here yet
+            </li>
+          )}
           {stories.map((s) => (
             <li key={s.id}>
               <Card story={s} onMove={onMove} onOpenTerminal={onOpenTerminal} />

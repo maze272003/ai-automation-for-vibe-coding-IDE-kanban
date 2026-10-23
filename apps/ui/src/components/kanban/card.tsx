@@ -230,7 +230,7 @@ function CardImpl({ story, onMove, onOpenTerminal }: CardProps) {
         </div>
       )}
 
-      <div className="mt-2 flex items-center justify-between gap-2 border-t border-border pt-2 text-[11px] text-muted-2">
+      <div className="mt-2 flex items-center justify-between gap-2 border-t border-border pt-2 text-[11px] text-muted">
         <span data-testid={`story-attempts-${story.key}`}>
           attempt {story.attempts.used}/{story.attempts.max}
         </span>

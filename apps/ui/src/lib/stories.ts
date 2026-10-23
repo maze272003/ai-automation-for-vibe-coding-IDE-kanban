@@ -13,6 +13,9 @@ export interface StoryQuery {
 export function useStories(projectId: number, query: StoryQuery) {
   const [stories, setStories] = useState<StoryDTO[]>([]);
   const [error, setError] = useState<string | null>(null);
+  // True until the first fetch settles, so the board can show skeleton cards
+  // instead of flashing ten empty columns.
+  const [loading, setLoading] = useState(true);
   const qs = new URLSearchParams({ sort: query.sort, ...(query.q ? { q: query.q } : {}), ...(query.label ? { label: query.label } : {}) }).toString();
 
   const refetch = useCallback(async () => {
@@ -21,6 +24,8 @@ export function useStories(projectId: number, query: StoryQuery) {
       setError(null);
     } catch (e) {
       setError(e instanceof ApiRequestError ? e.reason : String(e));
+    } finally {
+      setLoading(false);
     }
   }, [projectId, qs]);
 
@@ -41,5 +46,5 @@ export function useStories(projectId: number, query: StoryQuery) {
     if (system.state === 'ready') void refetch();
   }, [system.state, refetch]);
 
-  return { stories, error, refetch };
+  return { stories, error, refetch, loading };
 }

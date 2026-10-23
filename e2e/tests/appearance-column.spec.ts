@@ -24,3 +24,12 @@ test('the blocked column carries its rose accent rail', async () => {
   const image = await rail.evaluate((el) => getComputedStyle(el).backgroundImage);
   expect(image).toContain('251, 113, 133');
 });
+
+test('an empty column shows a quiet placeholder instead of a blank box', async () => {
+  const { page } = launched;
+  await openBoard(page);
+  const column = page.getByTestId('column-NEW');
+  await expect(column).toBeVisible();
+  await expect(column.getByTestId('column-empty-NEW')).toBeVisible();
+  await expect(column.getByTestId('column-empty-NEW')).toHaveText('Nothing here yet');
+});

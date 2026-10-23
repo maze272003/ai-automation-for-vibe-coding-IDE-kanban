@@ -32,7 +32,7 @@
   --border-strong: rgb(24 24 37 / 0.18);
   --foreground: #15161a;
   --muted: #5e6270;
-  --muted-2: #8b90a0;
+  --muted-2: #6b7280;
   --accent: #6d28d9;
   --accent-2: #4f46e5;
   --accent-foreground: #ffffff;
@@ -179,5 +179,13 @@ body::before {
   .content-visibility-auto {
     content-visibility: auto;
     contain-intrinsic-size: 0 132px;
+  }
+}
+
+/* Last-resort focus ring: a control that forgets its own ring still gets one. */
+@layer base {
+  :focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
   }
 }
