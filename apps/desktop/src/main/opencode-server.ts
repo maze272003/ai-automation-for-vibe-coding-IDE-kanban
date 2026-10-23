@@ -17,6 +17,8 @@ import {
   type OpencodeModelInfo,
   type OpencodeModelsResult,
 } from '@aik/contracts';
+import { getGatewayContext } from './gateway-context.ts';
+import { buildProviderConfig } from './opencode-config.ts';
 import { opencodeExePath } from './opencode.ts';
 
 // ---- app settings (tiny JSON in the data dir; no secrets) ----
@@ -84,15 +86,30 @@ function gitBashPath(): string {
   return path.join(gitRoot, 'bin', 'bash.exe');
 }
 
-/** Minimal isolated config; the E2E mock provider is injected via AIK_OPENCODE_BASE_URL. */
+/**
+ * The generated config (spec PK-4.5): one virtual provider per connected upstream provider —
+ * each keeps its own AI SDK package and points at the loopback gateway with the per-run gateway
+ * token (`apiKey`), never a provider API key (which lives only in the orchestrator's vault).
+ * With nothing connected (or no gateway running) no virtual providers are injected and the
+ * server is configured exactly as before. The E2E mock provider (AIK_OPENCODE_BASE_URL) still
+ * wins, so existing fixtures keep working.
+ */
 function configContent(): Record<string, unknown> {
   const config: Record<string, unknown> = { snapshots: false };
+  const ctx = getGatewayContext();
+  if (ctx.baseUrl && ctx.providers.length > 0) {
+    config.provider = buildProviderConfig({
+      providers: ctx.providers,
+      gatewayBaseUrl: ctx.baseUrl,
+      gatewayToken: ctx.token,
+    });
+  }
   const mockUrl = process.env.AIK_OPENCODE_BASE_URL;
   if (mockUrl) {
-    config.providers = {
+    config.provider = {
       mock: {
-        package: '@opencode/ai/providers/openai-compatible',
-        settings: { baseURL: mockUrl, apiKey: 'spike-not-a-secret' },
+        npm: '@ai-sdk/openai-compatible',
+        options: { baseURL: mockUrl, apiKey: 'spike-not-a-secret' },
         models: { 'mock-model': { capabilities: { tools: true }, limit: { context: 131072, output: 8192 } } },
       },
     };

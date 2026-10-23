@@ -4,7 +4,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { registerBridge } from './bridge.ts';
 import { EventForwarder } from './events-forwarder.ts';
-import { stopOpencodeServer } from './opencode-server.ts';
+import { refreshGatewayContext, setGatewayContext } from './gateway-context.ts';
+import { readAppSettings, stopOpencodeServer } from './opencode-server.ts';
 import { desktopPaths, resolveDataDir } from './paths.ts';
 import { APP_SCHEME, registerAppProtocol } from './protocol.ts';
 import { OrchestratorSupervisor, type ChildLike } from './supervisor.ts';
@@ -44,6 +45,13 @@ function forkOrchestrator(): ChildLike {
 
 function main(): void {
   const token = crypto.randomBytes(32).toString('base64url');
+  // The model gateway (spec PK-2) is managed-mode only: a random per-run token kept in this
+  // function's memory (and in the gateway context for the OpenCode config), never logged or
+  // persisted. Personal mode passes nothing — the orchestrator then starts no gateway and
+  // registers no provider routes, so personal wiring stays byte-identical.
+  const managed = readAppSettings(paths.dataDir).opencodeMode === 'managed';
+  const gatewayToken = managed ? crypto.randomBytes(32).toString('base64url') : null;
+  if (gatewayToken) setGatewayContext({ token: gatewayToken });
   const devUrl = process.env.AIK_UI_DEV_URL ?? null;
   let win: BrowserWindow | null = null;
 
@@ -52,6 +60,7 @@ function main(): void {
     initMessage: () => ({
       type: 'init',
       token,
+      ...(gatewayToken ? { gatewayToken } : {}),
       dataDir: paths.dataDir,
       migrationsFolder: path.join(__dirname, 'migrations'),
       versions: { app: app.getVersion(), electron: process.versions.electron },
@@ -67,6 +76,11 @@ function main(): void {
 
   const forwarder = new EventForwarder({ getPort: () => supervisor.port, token, send: (e) => sendToWindow('aik:event', e) });
   supervisor.on('state', () => sendToWindow('aik:system', { state: supervisor.state, fatal: supervisor.fatal }));
+  supervisor.on('ready', (port: number, gatewayPort: number | null) => {
+    // Publish the connected providers + gateway base URL into the main-process context so the
+    // next lazy OpenCode boot (and every provider connect/remove restart) sees fresh fragments.
+    void refreshGatewayContext({ port, apiToken: token, gatewayPort });
+  });
 
   app.on('second-instance', () => {
     if (!win) return;

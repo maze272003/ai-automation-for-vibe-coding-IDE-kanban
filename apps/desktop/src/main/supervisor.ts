@@ -26,6 +26,8 @@ type Fatal = NonNullable<SystemState['fatal']>;
 export class OrchestratorSupervisor extends EventEmitter {
   state: OrchestratorState = 'stopped';
   port: number | null = null;
+  /** The orchestrator's model-gateway port (managed mode); null before ready / without a gateway. */
+  gatewayPort: number | null = null;
   fatal: Fatal | null = null;
   child: ChildLike | null = null;
 
@@ -81,6 +83,7 @@ export class OrchestratorSupervisor extends EventEmitter {
 
   private spawn(): void {
     this.port = null;
+    this.gatewayPort = null;
     this.setState('starting');
     const child = this.opts.fork();
     this.child = child;
@@ -91,12 +94,13 @@ export class OrchestratorSupervisor extends EventEmitter {
 
   private onMessage(child: ChildLike, message: unknown): void {
     if (child !== this.child) return;
-    const m = message as { type?: string; port?: number; kind?: Fatal['kind']; message?: string };
+    const m = message as { type?: string; port?: number; gatewayPort?: number; kind?: Fatal['kind']; message?: string };
     if (m.type === 'ready' && typeof m.port === 'number') {
       this.port = m.port;
+      if (typeof m.gatewayPort === 'number') this.gatewayPort = m.gatewayPort;
       this.consecutive = 0;
       this.setState('ready');
-      this.emit('ready', m.port);
+      this.emit('ready', m.port, this.gatewayPort);
     } else if (m.type === 'fatal' && m.kind) {
       this.fatal = { kind: m.kind, message: m.message ?? '' };
       this.setState('fatal');

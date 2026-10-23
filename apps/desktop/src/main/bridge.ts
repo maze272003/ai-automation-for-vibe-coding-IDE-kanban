@@ -5,6 +5,7 @@ import { spawn } from 'node:child_process';
 import path from 'node:path';
 import { z } from 'zod';
 import { installOpencode, opencodeStatus } from './opencode.ts';
+import { refreshGatewayContext } from './gateway-context.ts';
 import { listOpencodeModels, opencodeChat, opencodeLoginStart, opencodeLoginWait, opencodeSignedIn, readAppSettings, writeAppSettings } from './opencode-server.ts';
 import { stopOpencodeServer } from './opencode-server.ts';
 import type { DesktopPaths } from './paths.ts';
@@ -137,8 +138,13 @@ export function registerBridge(deps: BridgeDeps): void {
     return opencodeChat(deps.paths.dataDir, { providerID: req.providerID, id: req.id }, req.prompt);
   });
 
-  ipcMain.handle('aik:opencode-restart', (event) => {
+  ipcMain.handle('aik:opencode-restart', async (event) => {
     assertTrusted(event, deps);
+    // Refresh first so the *next* lazy boot (this stop IS the restart) sees the freshly
+    // connected providers; skipped when there is no gateway (personal mode / not started yet).
+    if (deps.supervisor.port !== null) {
+      await refreshGatewayContext({ port: deps.supervisor.port, apiToken: deps.token, gatewayPort: deps.supervisor.gatewayPort });
+    }
     stopOpencodeServer(); // a restart is a stop: the server starts lazily on the next use
   });
 
