@@ -11,11 +11,13 @@ import { OpenCodeRuntime } from './agents/runtime.ts';
 import { registerEventRoutes } from './api/routes/events.ts';
 import { registerGitHubRoutes } from './api/routes/github.ts';
 import { registerHealthRoutes } from './api/routes/health.ts';
+import { registerProviderRoutes } from './api/routes/providers.ts';
 import { registerProjectRoutes } from './api/routes/projects.ts';
 import { registerStoryRoutes } from './api/routes/stories.ts';
 import { createApiServer } from './api/server.ts';
 import { dataPaths } from './config.ts';
 import { EventBus } from './events/bus.ts';
+import { startGateway } from './gateway/server.ts';
 import { createCredentialStore } from './github/credentials.ts';
 import { GitHubCloneService } from './github/clone-service.ts';
 import { GitHubMergeService } from './github/merge-service.ts';
@@ -29,6 +31,8 @@ import { WorktreeManager } from './git/worktree.ts';
 import { JobQueue } from './jobs/queue.ts';
 import { createLogger } from './logging/logger.ts';
 import { ProjectService } from './projects/service.ts';
+import { ProviderService } from './providers/service.ts';
+import { createProviderVault } from './providers/vault.ts';
 import { createRedactor } from './secrets/redactor.ts';
 import { StoryService } from './stories/service.ts';
 import { systemClock } from './time.ts';
@@ -45,10 +49,20 @@ export interface OrchestratorOptions {
   versions: { app: string; electron: string | null };
   logLevel?: string;
   heartbeatMs?: number;
+  /**
+   * The per-run model-gateway token (spec PK-2/PK-3). The desktop generates a fresh random
+   * value for every app run, holds it only in memory and passes it in managed mode. Its
+   * presence switches the whole provider stack on (vault, provider routes, loopback gateway
+   * and the stored default model driving the agent runtime); when it is absent — personal
+   * mode — none of that wiring exists, so personal behaviour stays byte-identical.
+   */
+  gatewayToken?: string;
 }
 
 export interface RunningOrchestrator {
   port: number;
+  /** Loopback port of the model gateway; null when the orchestrator runs without one. */
+  gatewayPort: number | null;
   close(): Promise<void>;
 }
 
@@ -57,6 +71,9 @@ export async function startOrchestrator(opts: OrchestratorOptions): Promise<Runn
   fs.mkdirSync(paths.logs, { recursive: true });
   const redactor = createRedactor();
   redactor.addSecret(opts.token);
+  // The gateway token is a secret with gateway-only power (PK-2): upstream client errors can
+  // echo full URLs, so register it with the redactor like the API token. Only set when passed.
+  if (opts.gatewayToken) redactor.addSecret(opts.gatewayToken);
   const { logger, close: closeLog } = createLogger({ file: paths.orchestratorLog, redactor, level: opts.logLevel });
 
   let opened: ReturnType<typeof openDatabase>;
@@ -94,7 +111,18 @@ export async function startOrchestrator(opts: OrchestratorOptions): Promise<Runn
 
   const projects = new ProjectService({ db });
   const worktreeManager = new WorktreeManager({ rootDir: paths.worktrees, db });
-  const runtime = new OpenCodeRuntime();
+  // Provider stack (spec PK-1..PK-4), gated on the per-run gateway token: managed mode only.
+  // Ordering matters — the vault feeds the service, the service feeds the routes, the
+  // default-model lookup feeds the runtime, and the gateway is started once ports are bound.
+  // In personal mode (no token) none of this is constructed and the runtime is created
+  // exactly as before.
+  const providerVault = opts.gatewayToken === undefined ? null : createProviderVault();
+  const providerService =
+    providerVault === null ? null : new ProviderService({ db, vault: providerVault, now: systemClock });
+  const storedDefault = providerService?.getDefaultModel() ?? null;
+  const runtime = new OpenCodeRuntime(
+    storedDefault ? { defaultModel: { providerID: storedDefault.providerId, id: storedDefault.modelId } } : {},
+  );
   const verification = new VerificationRunner({ db, workflow, bus, worktreeManager, logsDir: paths.logs, redact: redactor.redact, interrupts });
   const merger = new LocalMerger({ db, workflow, bus, worktreeManager, verification, redact: redactor.redact });
 
@@ -192,6 +220,10 @@ export async function startOrchestrator(opts: OrchestratorOptions): Promise<Runn
   const app = createApiServer({ token: opts.token, getPort: () => port, logger });
   registerHealthRoutes(app, { db, versions: { ...opts.versions, node: process.versions.node }, dataDir: opts.dataDir });
   registerProjectRoutes(app, { db, now: systemClock, projects });
+  // Root-relative `/providers` + `/settings/default-model` routes; only wired in managed mode.
+  if (providerService) {
+    registerProviderRoutes(app, { db, now: systemClock, providers: providerService });
+  }
   registerStoryRoutes(app, { db, now: systemClock, stories });
   registerGitHubRoutes(app, {
     db,
@@ -207,12 +239,30 @@ export async function startOrchestrator(opts: OrchestratorOptions): Promise<Runn
   registerEventRoutes(app, { db, bus, heartbeatMs: opts.heartbeatMs });
   await app.listen({ host: '127.0.0.1', port: 0 });
   port = (app.server.address() as AddressInfo).port;
-  logger.info({ port, recovered: swept }, 'orchestrator listening');
+
+  // The loopback model gateway (spec PK-3): binds 127.0.0.1 with an ephemeral port, speaks to
+  // OpenCode with the per-run gateway token and only this token. The provider API key never
+  // passes through it into any config/stream reachable by OpenCode — the gateway injects it
+  // at the last moment (Task 6). It starts with the orchestrator and is closed by `close()`
+  // below; it never starts in personal mode.
+  const gateway =
+    providerVault && providerService && opts.gatewayToken
+      ? await startGateway({
+          token: opts.gatewayToken,
+          providers: providerService,
+          vault: providerVault,
+          redact: redactor.redact,
+          logger: { info: (obj, msg) => logger.info(obj as Record<string, unknown>, msg), warn: (obj, msg) => logger.warn(obj as Record<string, unknown>, msg) },
+        })
+      : null;
+  logger.info({ port, gatewayPort: gateway?.port ?? null, recovered: swept }, 'orchestrator listening');
 
   return {
     port,
+    gatewayPort: gateway?.port ?? null,
     close: async () => {
       clearInterval(pollTimer);
+      if (gateway) await gateway.close();
       runner.stop();
       await app.close();
       opened.close();

@@ -189,6 +189,20 @@ export class ProviderService {
     return out;
   }
 
+  /** The gateway's provider lookup (GatewayProviderSource): null when not connected. */
+  findConnected(providerId: string): { baseUrl: string; auth: AuthFlavour; modelIds: string[] } | null {
+    const found = this.getConnected().find((p) => p.id === providerId);
+    return found ? { baseUrl: found.baseUrl, auth: found.auth, modelIds: found.modelIds } : null;
+  }
+
+  /** Resolves a provider from a bare model id — the fallback when the AI SDK package drops the `x-aik-provider` header (SPK-5 P-2). */
+  findByModel(modelId: string): { id: string; baseUrl: string; auth: AuthFlavour; modelIds: string[] } | null {
+    for (const p of this.getConnected()) {
+      if (p.modelIds.includes(modelId)) return { id: p.id, baseUrl: p.baseUrl, auth: p.auth, modelIds: p.modelIds };
+    }
+    return null;
+  }
+
   getDefaultModel(): { providerId: string; modelId: string } | null {
     const row = this.deps.db.select().from(appSettings).where(eq(appSettings.key, DEFAULT_MODEL_KEY)).get();
     if (!row) return null;

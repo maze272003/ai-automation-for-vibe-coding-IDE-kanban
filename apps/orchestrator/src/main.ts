@@ -25,7 +25,7 @@ parentPort.on('message', ({ data }) => {
     startOrchestrator(msg).then(
       (r) => {
         running = r;
-        parentPort.postMessage({ type: 'ready', port: r.port });
+        parentPort.postMessage({ type: 'ready', port: r.port, gatewayPort: r.gatewayPort });
       },
       (err: unknown) => {
         parentPort.postMessage({
