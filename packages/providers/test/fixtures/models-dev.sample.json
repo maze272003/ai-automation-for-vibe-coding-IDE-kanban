@@ -1,0 +1,41 @@
+{
+  "mockai": {
+    "id": "mockai",
+    "name": "Mock AI",
+    "env": ["MOCKAI_API_KEY"],
+    "npm": "@ai-sdk/openai-compatible",
+    "api": "https://mockai.test/v1",
+    "doc": "https://mockai.test/docs",
+    "models": {
+      "mock-model": {
+        "id": "mock-model",
+        "name": "Mock Model",
+        "tool_call": true,
+        "reasoning": false,
+        "limit": { "context": 131072, "output": 8192 },
+        "cost": { "input": 0.5, "output": 1.5 }
+      }
+    }
+  },
+  "freeai": {
+    "id": "freeai",
+    "name": "Free AI",
+    "env": ["FREEAI_API_KEY"],
+    "npm": "@ai-sdk/openai-compatible",
+    "api": "https://freeai.test/v1",
+    "doc": "https://freeai.test/docs",
+    "models": {
+      "free-model": { "id": "free-model", "name": "Free Model", "limit": { "context": 65536, "output": 4096 }, "cost": { "input": 0, "output": 0 } },
+      "paid-model": { "id": "paid-model", "name": "Paid Model", "limit": { "context": 65536, "output": 4096 }, "cost": { "input": 1, "output": 2 } }
+    }
+  },
+  "nokeyai": {
+    "id": "nokeyai",
+    "name": "No Key AI",
+    "env": [],
+    "npm": "@ai-sdk/openai-compatible",
+    "models": {
+      "m": { "id": "m", "name": "M", "limit": { "context": 8000, "output": 1000 }, "cost": { "input": 0, "output": 0 } }
+    }
+  }
+}

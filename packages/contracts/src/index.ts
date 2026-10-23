@@ -8,5 +8,6 @@ export * from './github.ts';
 export * from './hints.ts';
 export * from './opencode.ts';
 export * from './projects.ts';
+export * from './providers.ts';
 export * from './sse.ts';
 export * from './stories.ts';

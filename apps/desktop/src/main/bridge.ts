@@ -137,6 +137,11 @@ export function registerBridge(deps: BridgeDeps): void {
     return opencodeChat(deps.paths.dataDir, { providerID: req.providerID, id: req.id }, req.prompt);
   });
 
+  ipcMain.handle('aik:opencode-restart', (event) => {
+    assertTrusted(event, deps);
+    stopOpencodeServer(); // a restart is a stop: the server starts lazily on the next use
+  });
+
   ipcMain.handle('aik:restart-orchestrator', (event) => {
     assertTrusted(event, deps);
     deps.supervisor.restart();

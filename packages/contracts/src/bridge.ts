@@ -53,6 +53,8 @@ export interface AikWindowApi {
   systemState(): Promise<SystemState>;
   restoreLatestBackup(): Promise<{ ok: true; restoredFrom: string } | { ok: false; reason: string }>;
   restartOrchestrator(): Promise<void>;
+  /** Restarts the isolated OpenCode server so a newly connected provider appears in the model list. */
+  restartOpencode(): Promise<void>;
   opencodeStatus(): Promise<OpencodeStatus>;
   installOpencode(): Promise<OpencodeInstallResult>;
   opencodeModels(): Promise<OpencodeModelsResult>;

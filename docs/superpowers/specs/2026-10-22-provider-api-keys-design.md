@@ -47,7 +47,7 @@ observation; **[U]** = a sound inference that was **not** directly observed.
 | # | Question | Result | Marker |
 |---|---|---|---|
 | 1 | Can OpenCode 2.0.32 be given a provider without any CLI login? | **Yes.** With `OPENAI_API_KEY` set in the server process environment, `GET /api/provider` and `GET /api/model` expose the `openai` provider and its models. Verified identically for `ANTHROPIC_API_KEY` → `anthropic`, `GROQ_API_KEY` → `groq`, `OPENROUTER_API_KEY` → `openrouter`. The provider is picked up **only at server start**, so a new key requires a server restart. | [V] |
-| 2 | Does an environment-variable key reach the agent's shell? | Not directly observed. The inference is that OpenCode spawns shell commands from its own process environment (a standard child-process default), which would expose the key to repository code. This is why the key must not be in the environment. The implementation plan **must** confirm this with a probe before the key is ever placed in an environment. | [U] |
+| 2 | Does an environment-variable key reach the agent's shell? | **Yes.** Confirmed by SPK-5 probe P-1 (`docs/superpowers/spikes/SPK-5.md`, pinned 2.0.32 binary): with `AIK_CANARY_ENV` set in the isolated server's environment, the agent's shell tool read the canary and echoed it back. A provider key placed in the environment would be readable by repository code — which is why the key only ever exists in the vault and in the gateway's in-flight memory. | [V] |
 | 3 | What path does an OpenAI-compatible provider receive? | `POST /chat/completions` — **no** `/v1` prefix. The version prefix lives in the provider's base URL, not in the request path. | [V] |
 | 4 | What path does the Anthropic-native provider receive? | `POST /messages`, with headers `x-api-key`, `anthropic-version`, `anthropic-beta`. | [V] |
 | 5 | What path does the Google-native provider receive? | `POST /models/{modelId}:streamGenerateContent?alt=sse`, with header `x-goog-api-key`. | [V] |
@@ -482,8 +482,8 @@ implementation depends on them:
 
 | Probe | Question | Why it matters |
 |---|---|---|
-| P-1 | Does OpenCode's shell tool see the server's environment? | Evidence #2 is **[U]**. If a shell command can read the server's environment, the key must never be placed in an environment — which is the premise of the whole design. The probe starts an isolated OpenCode server with a canary variable and asks the agent to print it. |
-| P-2 | Does a custom provider's `options.headers` reach the request for every AI SDK package in the catalog? | Evidence #6 verified it for `@ai-sdk/openai-compatible`, `@ai-sdk/anthropic` and `@ai-sdk/google`. The catalog contains other packages (`@ai-sdk/groq`, `@ai-sdk/xai`, `@ai-sdk/mistral`, …). The probe checks one package per protocol family; the fallback (model-id routing) covers any package that does not forward headers. |
+| P-1 | Does OpenCode's shell tool see the server's environment? | **Settled in SPK-5** — the shell DOES see the environment, so the key must never be placed in one. The gateway design is confirmed as the only safe one for the premise. | [V] |
+| P-2 | Does a custom provider's `options.headers` reach the request for every AI SDK package in the catalog? | **Settled in SPK-5** — all four probed packages forward the header (`@ai-sdk/openai-compatible` → `/chat/completions`, `@ai-sdk/anthropic` → `/messages`, `@ai-sdk/google` → `/models/{id}:streamGenerateContent?alt=sse`, `@ai-sdk/openai` → `/responses`). Header routing works for every family; the model-id fallback stays as the safety net. | [V] |
 
 Test doubles follow the repository's existing conventions: a temporary directory
 helper that asserts paths are under the OS temp directory

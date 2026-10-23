@@ -172,7 +172,9 @@ export const providers = sqliteTable('providers', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   presetKey: text('preset_key'),
   name: text('name').notNull(),
-  kind: text('kind', { enum: ['ollama', 'openai_compatible'] }).notNull(),
+  // TS-level union only: the SQL column (packages/db/migrations/0000_init.sql) is a plain
+  // `text` with no CHECK, so no migration is needed for the added kinds.
+  kind: text('kind', { enum: ['ollama', 'openai_compatible', 'anthropic', 'google'] }).notNull(),
   baseUrl: text('base_url').notNull(),
   keyRef: text('key_ref'),
   costClass: text('cost_class', { enum: ['local', 'free', 'free_limited', 'paid_flat', 'paid_metered'] }).notNull(),

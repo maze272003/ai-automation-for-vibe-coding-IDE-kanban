@@ -1,5 +1,5 @@
 // apps/orchestrator/src/agents/reviewer.ts
-import { ReviewV1, ProjectSettings, type BlockedReason, type ReviewV1 as ReviewOutput, type StoryStatus } from '@aik/contracts';
+import { ReviewV1, ProjectSettings, parseProviderFailure, type BlockedReason, type ReviewV1 as ReviewOutput, type StoryStatus } from '@aik/contracts';
 import {
   acceptanceCriteria, agentRuns, plans, projects, reviewAcResults, reviewFindings, reviews, userStories,
   verificationChecks, verificationRuns, type AikDb,
@@ -333,6 +333,14 @@ export class ReviewerAgent {
     }
 
     this.setActiveRun(story.id, null);
+    // PK-7: the orchestrator's model gateway emits the [aik-provider-error] marker (possibly nested
+    // inside a longer OpenCode error string) when the upstream provider fails. Classify it before
+    // the generic invalid_agent_output/reviewer_blocked reasons so a provider failure always wins.
+    const providerFailure = parseProviderFailure(lastError);
+    if (providerFailure) {
+      this.blockStory(story.id, providerFailure.reason, `The ${providerFailure.provider} provider failed: ${providerFailure.detail}`);
+      return { ok: false, error: lastError };
+    }
     this.blockStory(story.id, lastFailureKind === 'invalid_output' ? 'invalid_agent_output' : 'reviewer_blocked', lastError);
     return { ok: false, error: lastError };
   }

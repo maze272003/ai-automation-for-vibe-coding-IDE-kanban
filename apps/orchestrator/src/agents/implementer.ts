@@ -1,5 +1,5 @@
 // apps/orchestrator/src/agents/implementer.ts
-import { ProjectSettings, type BlockedReason } from '@aik/contracts';
+import { ProjectSettings, parseProviderFailure, type BlockedReason } from '@aik/contracts';
 import {
   agentRuns, plans, projects, reviewFindings, reviews, storyEvents, userStories, verificationChecks, verificationRuns, type AikDb,
 } from '@aik/db';
@@ -359,6 +359,14 @@ ${repairSections ? `${repairSections}\n\n` : ''}${skillPromptHint ? `${skillProm
   private failAttempt(story: StoryRow, runId: number, error: string, agentCaused: boolean): ImplementStoryResult {
     this.failRun(runId, error);
     this.setActiveRun(story.id, null);
+    // PK-7: the orchestrator's model gateway emits the [aik-provider-error] marker (possibly nested
+    // inside a longer OpenCode error string) when the upstream provider fails. Classify it before
+    // the generic agentCaused/environment reasons so a provider failure always wins.
+    const providerFailure = parseProviderFailure(error);
+    if (providerFailure) {
+      this.blockStory(story.id, providerFailure.reason, `The ${providerFailure.provider} provider failed: ${providerFailure.detail}`);
+      return { ok: false, error };
+    }
     if (!agentCaused) {
       this.blockStory(story.id, 'environment', error);
       return { ok: false, error };
