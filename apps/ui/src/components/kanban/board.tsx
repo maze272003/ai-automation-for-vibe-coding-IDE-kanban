@@ -62,21 +62,32 @@ export function Board({ stories, onChanged }: { stories: StoryDTO[]; onChanged: 
     : null;
 
   return (
-    <div data-testid="board" className="flex min-h-0 flex-1 gap-3 overflow-x-auto p-4">
-      {STORY_STATUS.map((status) => (
-        <Column
-          key={status}
-          status={status}
-          stories={byStatus[status]}
-          collapsible={status === 'DONE' || status === 'CANCELLED'}
-          collapsed={collapsed[status] === true}
-          highlight={dragging !== null && dragVerdict(toDragStory(dragging), status).allowed}
-          onToggle={() => setCollapsed((c) => ({ ...c, [status]: !c[status] }))}
-          onDropStory={onDropStory}
-          onMove={(story, to) => void move(story, to)}
-          onOpenTerminal={(story) => setTerminalStory(story)}
-        />
-      ))}
+    <div className="relative flex min-h-0 flex-1">
+      {/* The board scrolls horizontally; each column owns its own vertical scroll. */}
+      <div
+        data-testid="board"
+        className="flex min-h-0 min-w-0 flex-1 gap-2.5 overflow-x-auto p-4 [scrollbar-color:var(--border-strong)_transparent]"
+      >
+        {STORY_STATUS.map((status) => (
+          <Column
+            key={status}
+            status={status}
+            stories={byStatus[status]}
+            collapsible={status === 'DONE' || status === 'CANCELLED'}
+            collapsed={collapsed[status] === true}
+            highlight={dragging !== null && dragVerdict(toDragStory(dragging), status).allowed}
+            onToggle={() => setCollapsed((c) => ({ ...c, [status]: !c[status] }))}
+            onDropStory={onDropStory}
+            onMove={(story, to) => void move(story, to)}
+            onOpenTerminal={(story) => setTerminalStory(story)}
+          />
+        ))}
+      </div>
+      {/* Edge fade: signals that more columns exist to the right. */}
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-y-0 right-0 w-24 bg-gradient-to-l from-background to-transparent"
+      />
       <ConfirmDialog
         message={confirm?.message ?? null}
         onAnswer={(ok) => {
