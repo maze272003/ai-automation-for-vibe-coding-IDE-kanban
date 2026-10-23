@@ -1741,13 +1741,13 @@ PATH                      = Windows system dirs + Git + detected Node/Python too
 (no GITHUB_*, no provider keys, no AIKANBAN_CRED_* variables)
 ```
 
-**Two things SPK-1 must confirm** [U]:
-- Skills in `~/.agents/skills` and parent-directory `AGENTS.md` files don't leak in. Worktrees under `%LOCALAPPDATA%` have no repo-unrelated parents [I].
-- The exact config key that pins the shell to Git Bash's absolute path (needed because of bug #55733 [V]).
+**Confirmed by SPK-1** [V]:
+- Skills in `~/.agents/skills` and parent-directory `AGENTS.md` files don't leak in when running with redirected XDG/temp HOME and `OPENCODE_DISABLE_CLAUDE_CODE=1` [V].
+- The exact config key that pins the shell to Git Bash is `shell` in the published schema (`https://opencode.ai/config.json`), or the `OPENCODE_GIT_BASH_PATH` environment variable [V].
 
 ### 18.4 Generated configuration (`OPENCODE_CONFIG_CONTENT`)
 
-This is illustrative v2 shape [V field names from the v2 docs and migration guide]. Exact syntax is checked in SPK-1.
+This is illustrative v2 shape [V field names verified in SPK-1].
 
 ```jsonc
 {
@@ -1768,6 +1768,7 @@ This is illustrative v2 shape [V field names from the v2 docs and migration guid
                          "permissions": [ {"action":"read","resource":"*","effect":"allow"},
                                           {"action":"glob","resource":"*","effect":"allow"},
                                           {"action":"grep","resource":"*","effect":"allow"},
+                                          {"action":"read","resource":".env*","effect":"deny"},
                                           {"action":"read","resource":"**/.env*","effect":"deny"} ] },
     "aik-implementer": { "mode": "primary", "model": "gateway/p_7", "system": "<prompt v1>", "steps": 200,
                          "permissions": [ /* read, glob, grep, edit: allow;
@@ -1777,6 +1778,7 @@ This is illustrative v2 shape [V field names from the v2 docs and migration guid
                                              {"action":"shell","resource":"git commit*","effect":"deny"}, push/reset/
                                              checkout/rebase/merge/remote/config/credential …, curl*, Invoke-WebRequest*,
                                              {"action":"external_directory","resource":"*","effect":"deny"},
+                                             {"action":"read","resource":".env*","effect":"deny"},
                                              {"action":"read","resource":"**/.env*","effect":"deny"} */ ] },
     "aik-reviewer":    { "mode": "primary", "model": "gateway/p_19", "system": "<prompt v1>", "steps": 80,
                          "permissions": [ /* read, glob, grep allow; everything else inherits deny */ ] }
@@ -1787,7 +1789,7 @@ This is illustrative v2 shape [V field names from the v2 docs and migration guid
 
 Notes:
 - `webfetch`, `websearch`, `subagent`, `skill`, `question` and MCP tools are **denied for every role** (they inherit the global deny). A project can opt the implementer into `webfetch`; that is recorded.
-- Per-session `permissions` passed to `POST /api/session` [V] add the worktree-specific rules.
+- Per-session `permissions` passed to `POST /api/session` [V] are evaluated after and can override agent rules (`sessionAllowEditOverrodeAgentDeny: true`); therefore, the orchestrator passes only **deny** rules per session, never allow rules [V].
 
 ### 18.5 Session protocol
 
@@ -1802,7 +1804,7 @@ All endpoints were verified in the v2.0.29 OpenAPI spec [V].
 | Completion | `session.execution.succeeded`, `…failed` or `…interrupted` (reasons `user/shutdown/superseded/inactivity`) [V], confirmed by reconciliation |
 | Permission request | `permission.asked` → the orchestrator replies `reject` with message "Not permitted by project policy: <action> <resource>" via `/permission/{requestID}/reply` [V] and records `permission_denied` in the timeline. Deny-by-default config should make these rare |
 | Interrupt | `POST /api/session/{id}/interrupt` [V]. If the session isn't idle within 30 s, restart the server (kill-tree) |
-| Retention | Delete sessions older than 30 days (the API operation is confirmed in SPK-1) [U] |
+| Retention | Delete sessions older than 30 days (confirmed by SPK-1: `DELETE /api/session/{sessionID}`, operationId `session.remove`) [V] |
 
 **Timeouts** (defaults, per project):
 
@@ -2069,7 +2071,7 @@ See the diagram in §6.11.
 
 | Option | What it protects | Limits | Decision |
 |---|---|---|---|
-| **Job Objects** (via the Go helper) | Resources and lifecycle: memory, CPU and process caps; tree kill [V] | **Not a security boundary**; grandchildren survive libuv's own job [V] | **P0** |
+| **Job Objects** (via the Go helper) | Resources and lifecycle: memory cap (exit 137) and process cap [V]; CPU cap [U]; tree kill reaps nested libuv grandchildren on close [V] | **Not a security boundary**; process-count cap includes root shell (N+1 convention) [V] | **P0** |
 | **Microsoft MXC** `processcontainer` | Filesystem policy (read-write/read-only/deny), network egress deny, timeouts [V] | v1.0.1 is a day old; it doesn't claim to be a security boundary [U] | **P1 spike → adopt if it holds** |
 | Separate low-privilege Windows user | ACLs protect the user's profile, HKCU and DPAPI secrets [I] | Node can't spawn as another user (ENOTSUP) [V]; the helper would need `CreateProcessWithLogonW` and a stored password; no network restriction | **P3 fallback** |
 | Docker or Podman runner for checks | Mounted folders only; Linux toolchains | Docker Desktop licence limits [V]; heavy; Windows-only toolchains don't run | P3 option |
@@ -3058,11 +3060,11 @@ flowchart LR
 
 | ID | Question | Resolved by |
 |---|---|---|
-| Q-1 | Do OpenCode Zen free models require billing details? What are their real limits? | SPK-2 |
-| Q-2 | Does Ollama Cloud Free expose an OpenAI-compatible endpoint, and what are the exact quotas? | SPK-2 |
-| Q-3 | Cloudflare Workers AI data-use terms (is training excluded?) | SPK-2 |
-| Q-4 | OpenCode: the config key to pin the Windows shell to Git Bash; the session-deletion API operation; whether `~/.agents/skills` leaks under redirected `XDG_*` | SPK-1 |
-| Q-5 | Semantics of per-session `permissions` on `POST /api/session`: additive, and in what order relative to agent rules? | SPK-1 |
+| Q-1 | Do OpenCode Zen free models require billing details? What are their real limits? | **Resolved by SPK-2:** Card/billing details requested upon setup ($20 PAYG deposit). Zero-retention models include `glm-5.3-flash-free` and `deepseek-v4.1-flash-free`. |
+| Q-2 | Does Ollama Cloud Free expose an OpenAI-compatible endpoint, and what are the exact quotas? | **Resolved by SPK-2:** Yes (`https://ollama.com/v1` with Bearer auth); 1 concurrent request for starter free models. |
+| Q-3 | Cloudflare Workers AI data-use terms (is training excluded?) | **Resolved by SPK-2:** Training excluded by contract; `@cf/zai-org/glm-4.7-flash` is eligible within 10k daily Neurons. |
+| Q-4 | OpenCode: the config key to pin the Windows shell to Git Bash; the session-deletion API operation; whether `~/.agents/skills` leaks under redirected `XDG_*` | **Resolved by SPK-1:** Shell key is `shell` (or `OPENCODE_GIT_BASH_PATH`); delete operation is `DELETE /api/session/{id}` (`session.remove`); canary confirms 0 leakage under redirected XDG + `OPENCODE_DISABLE_CLAUDE_CODE=1`. |
+| Q-5 | Semantics of per-session `permissions` on `POST /api/session`: additive, and in what order relative to agent rules? | **Resolved by SPK-1:** Session rules evaluate after and override agent rules; orchestrator passes only `deny` rules per session. |
 | Q-6 | Is the user's Z.ai subscription active? This only matters if they opt in | User |
 | Q-7 | **Product name and app ID.** "AI Kanban" / `AiKanban` is a placeholder; the data directory depends on it | **User, before FND-1** |
 | Q-8 | electron-builder or Electron Forge; do Electron's ASAR-integrity fuses work on Windows? | Phase 4 |

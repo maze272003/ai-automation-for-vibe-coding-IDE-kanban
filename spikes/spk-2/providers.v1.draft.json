@@ -1,0 +1,74 @@
+{
+  "catalogVersion": 1,
+  "termsCheckedAt": "2026-10-18",
+  "providers": [
+    {
+      "presetKey": "opencode-zen",
+      "name": "OpenCode Zen",
+      "kind": "openai_compatible",
+      "baseUrl": "https://opencode.ai/inference/openai/v1",
+      "costClass": "free_limited",
+      "dataUse": "no_training",
+      "termsUrl": "https://opencode.ai/docs/zen/#privacy",
+      "cardRequired": true,
+      "models": [
+        {
+          "modelId": "glm-5.3-flash-free",
+          "family": "glm",
+          "contextLimit": 131072,
+          "outputLimit": 8192,
+          "dataUse": "no_training",
+          "probe": "spikes/spk-2/out/mock-validation.json"
+        },
+        {
+          "modelId": "deepseek-v4.1-flash-free",
+          "family": "deepseek",
+          "contextLimit": 65536,
+          "outputLimit": 8192,
+          "dataUse": "no_training",
+          "probe": "spikes/spk-2/out/mock-validation.json"
+        }
+      ]
+    },
+    {
+      "presetKey": "cloudflare",
+      "name": "Cloudflare Workers AI",
+      "kind": "openai_compatible",
+      "baseUrl": "https://api.cloudflare.com/client/v4/accounts/<ACCOUNT_ID>/ai/v1",
+      "costClass": "free_limited",
+      "dataUse": "no_training",
+      "termsUrl": "https://developers.cloudflare.com/workers-ai/platform/pricing/",
+      "cardRequired": false,
+      "models": [
+        {
+          "modelId": "@cf/zai-org/glm-4.7-flash",
+          "family": "glm",
+          "contextLimit": 131072,
+          "outputLimit": 8192,
+          "dataUse": "no_training",
+          "probe": "spikes/spk-2/out/mock-validation.json"
+        }
+      ]
+    },
+    {
+      "presetKey": "openrouter",
+      "name": "OpenRouter Free",
+      "kind": "openai_compatible",
+      "baseUrl": "https://openrouter.ai/api/v1",
+      "costClass": "free_limited",
+      "dataUse": "no_training",
+      "termsUrl": "https://openrouter.ai/docs/api-reference/limits",
+      "cardRequired": false,
+      "models": [
+        {
+          "modelId": "openrouter/free",
+          "family": "auto",
+          "contextLimit": 65536,
+          "outputLimit": 8192,
+          "dataUse": "no_training",
+          "probe": "spikes/spk-2/out/mock-validation.json"
+        }
+      ]
+    }
+  ]
+}

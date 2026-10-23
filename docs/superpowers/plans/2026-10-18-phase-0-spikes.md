@@ -84,7 +84,7 @@ docs/superpowers/spikes/SPK-1.md … SPK-4.md   # reports
   - `Turn = { content?: string, tool_calls?: {name: string, arguments: object}[], delayMs?: number, status?: number, headers?: object, errorMessage?: string }`.
   - Each `POST /v1/chat/completions` consumes the next turn. Streaming (`stream: true`) and non-streaming are both supported.
 
-- [ ] **Step 1: Create `.gitignore`**
+- [x] **Step 1: Create `.gitignore`**
 
 ```gitignore
 node_modules/
@@ -97,7 +97,7 @@ spikes/**/*.exe
 .env*
 ```
 
-- [ ] **Step 2: Create `spikes/README.md`**
+- [x] **Step 2: Create `spikes/README.md`**
 
 ```markdown
 # Spikes (throwaway)
@@ -106,7 +106,7 @@ Code here answers questions for `docs/superpowers/spikes/SPK-*.md`. It is commit
 **Never import anything from `spikes/` into `apps/` or `packages/`.** Reports, not code, are the deliverable.
 ```
 
-- [ ] **Step 3: Write the mock LLM**
+- [x] **Step 3: Write the mock LLM**
 
 ```js
 // spikes/shared/mock-llm.mjs — THROWAWAY spike tool: scripted OpenAI-compatible chat-completions server.
@@ -213,7 +213,7 @@ server.listen(port, '127.0.0.1', () => {
 });
 ```
 
-- [ ] **Step 4: Write the self-test**
+- [x] **Step 4: Write the self-test**
 
 ```js
 // spikes/shared/mock-llm.selftest.mjs — THROWAWAY
@@ -251,12 +251,12 @@ child.kill();
 console.log('mock-llm selftest: PASS');
 ```
 
-- [ ] **Step 5: Run the self-test**
+- [x] **Step 5: Run the self-test**
 
 Run: `node spikes/shared/mock-llm.selftest.mjs`
 Expected: `mock-llm selftest: PASS`
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add .gitignore spikes/README.md spikes/shared
@@ -280,7 +280,7 @@ git commit -m "spike: shared scripted mock LLM for Phase 0 experiments"
   - A go/no-go on server mode vs the `run --format json` fallback.
   - The vendored `spikes/spk-1/out/openapi.json`, which is copied to `docs/superpowers/spikes/opencode-2.0.32-openapi.json`.
 
-- [ ] **Step 1: Pin and install OpenCode into the spike folder**
+- [x] **Step 1: Pin and install OpenCode into the spike folder**
 
 ```json
 // spikes/spk-1/package.json
@@ -291,7 +291,7 @@ Run: `npm install --prefix spikes/spk-1 --save-exact`
 Then run: `spikes/spk-1/node_modules/@opencode/cli/bin/opencode.exe --version`
 Expected: `opencode v2.0.32`. If the binary path differs, record the real path in the report and use it in `harness.mjs` (`OPENCODE_EXE`).
 
-- [ ] **Step 2: Write the scenarios**
+- [x] **Step 2: Write the scenarios**
 
 The tool names and argument keys below are the v1 names, adjusted for v2 renames (`bash→shell`). Step 7 records the real ones. If they differ, edit these files before Steps 8–10.
 
@@ -322,7 +322,7 @@ The tool names and argument keys below are the v1 names, adjusted for v2 renames
 { "turns": [ { "delayMs": 120000, "content": "late" } ] }
 ```
 
-- [ ] **Step 3: Write the harness**
+- [x] **Step 3: Write the harness**
 
 ```js
 // spikes/spk-1/harness.mjs — THROWAWAY: isolated OpenCode server experiments.
@@ -578,7 +578,7 @@ if (!experiments[name]) { console.error(`usage: node harness.mjs <${Object.keys(
 await experiments[name]();
 ```
 
-- [ ] **Step 4: Run experiment a (readiness and OpenAPI inventory)**
+- [x] **Step 4: Run experiment a (readiness and OpenAPI inventory)**
 
 Run: `node spikes/spk-1/harness.mjs a`
 Expected:
@@ -588,7 +588,7 @@ Expected:
 
 If `POST /api/session` returns a 4xx in later steps, open `openapi.json` and correct the request bodies in `harness.mjs` (`runSession`) to match the schema. Record every correction in the report.
 
-- [ ] **Step 5: Find the session-deletion operation and the shell configuration key (Q-4)**
+- [x] **Step 5: Find the session-deletion operation and the shell configuration key (Q-4)**
 
 Run (PowerShell): `Select-String -Path spikes/spk-1/out/operations.txt -Pattern 'delete','DELETE'`
 Then search the config schema:
@@ -597,7 +597,7 @@ Then search the config schema:
 
 Expected: you can name (1) the operation ID that deletes a session and (2) the config key that pins the shell executable. Write both into the report. If either doesn't exist, write "not available in 2.0.32" and the workaround (`OPENCODE_GIT_BASH_PATH` env var for the shell).
 
-- [ ] **Step 6: Run experiments b and g (canary leakage and provider isolation)**
+- [x] **Step 6: Run experiments b and g (canary leakage and provider isolation)**
 
 Run: `node spikes/spk-1/harness.mjs b`, then `node spikes/spk-1/harness.mjs g`
 Expected:
@@ -607,29 +607,29 @@ Expected:
 
 If any `leaked*` field is `true`, this is a **finding** (record it). Do not try to fix OpenCode.
 
-- [ ] **Step 7: Align the scenarios with the real tool schema**
+- [x] **Step 7: Align the scenarios with the real tool schema**
 
 Open `spikes/spk-1/out/tools.json`. If the names or argument keys used in `scenarios/*.json` (`edit`: `filePath/oldString/newString`; `write`: `filePath/content`; `shell`: `command/description`; `read`: `filePath`) differ, edit the scenario files to match exactly. Record the final tool table in the report.
 
-- [ ] **Step 8: Run experiment c (reviewer can't edit)**
+- [x] **Step 8: Run experiment c (reviewer can't edit)**
 
 Run: `node spikes/spk-1/harness.mjs c`
 Expected: `out/reviewer-result.json` has `"unchanged": true` and an empty `gitStatus`.
 Also check `out/session-messages-aik-reviewer.json` and record how the denial appears (tool error text or permission event).
 
-- [ ] **Step 9: Run experiment d (implementer escape attempts)**
+- [x] **Step 9: Run experiment d (implementer escape attempts)**
 
 Run: `node spikes/spk-1/harness.mjs d`
 Expected: `out/implementer-escape.json` has `"outsideFileExists": false` and `"envContentReachedModel": false`. `out/session-messages-aik-implementer.json` shows the `git push` shell call denied.
 
-- [ ] **Step 10: Run experiments e and f (interrupt, kill tree, stdin shutdown)**
+- [x] **Step 10: Run experiments e and f (interrupt, kill tree, stdin shutdown)**
 
 Run: `node spikes/spk-1/harness.mjs e`, then `node spikes/spk-1/harness.mjs f`
 Expected:
 - `out/interrupt.json` has `idleAfterInterruptMs` between 0 and 30000, and `opencodeProcessesAfterKill` contains no `opencode.exe` rows. A CSV header-only or "No tasks" output is fine, as long as no OpenCode processes from **other** sessions (the user's own) were running. If the user's own OpenCode was running, compare PIDs instead and note this.
 - `out/stdin-close.json` has `code` not null and `ms` < 15000.
 
-- [ ] **Step 11: Test per-session permissions semantics (Q-5)**
+- [x] **Step 11: Test per-session permissions semantics (Q-5)**
 
 Add this experiment to `harness.mjs` (append to `experiments`):
 
@@ -659,7 +659,7 @@ Expected: `out/session-permissions.json` exists.
 
 Record which, in the report.
 
-- [ ] **Step 12: Write the report**
+- [x] **Step 12: Write the report**
 
 Create `docs/superpowers/spikes/SPK-1.md`:
 
@@ -693,7 +693,7 @@ Server mode: GO / NO-GO (if NO-GO: fall back to `run --standalone --format json`
 
 Fill every `…` with observed values. Copy `spikes/spk-1/out/openapi.json` to `docs/superpowers/spikes/opencode-2.0.32-openapi.json`.
 
-- [ ] **Step 13: Commit**
+- [x] **Step 13: Commit**
 
 ```bash
 git add spikes/spk-1/package.json spikes/spk-1/package-lock.json spikes/spk-1/harness.mjs spikes/spk-1/scenarios docs/superpowers/spikes/SPK-1.md docs/superpowers/spikes/opencode-2.0.32-openapi.json
@@ -716,12 +716,12 @@ git commit -m "spike(SPK-1): OpenCode 2.0.32 isolated server findings"
   - The helper terminates the whole job when the `--parent-pid` process exits.
   - Phase 2's EXE-2 productionizes this.
 
-- [ ] **Step 1: USER ACTION. Install Go.**
+- [x] **Step 1: USER ACTION. Install Go.**
 
 Ask the user to approve: `winget install --id GoLang.Go -e --accept-source-agreements --accept-package-agreements`
 After installing, open a new shell and run `go version`. Record the version in the report.
 
-- [ ] **Step 2: Create the Go module**
+- [x] **Step 2: Create the Go module**
 
 Run:
 ```bash
@@ -729,7 +729,7 @@ go -C spikes/spk-3/helper mod init aiide-helper-spike && go -C spikes/spk-3/help
 ```
 Expected: `go.mod` and `go.sum` exist and reference `golang.org/x/sys`.
 
-- [ ] **Step 3: Write the helper**
+- [x] **Step 3: Write the helper**
 
 ```go
 // spikes/spk-3/helper/main.go — THROWAWAY spike: run a process tree inside a Windows Job Object.
@@ -854,12 +854,12 @@ func run(argv []string, memMB uint64, maxProcs uint32, parentPID uint32) int {
 }
 ```
 
-- [ ] **Step 4: Build it**
+- [x] **Step 4: Build it**
 
 Run: `go -C spikes/spk-3/helper build -o aiide-helper.exe .`
 Expected: `aiide-helper.exe` builds with **no MSVC installed**. If the build fails, the compiler errors name the missing `x/sys/windows` symbol. Record it and adapt using the same API family (for example `windows.WaitForSingleObject` in a loop), noting the change in the report.
 
-- [ ] **Step 5: Write the fixtures and experiment driver**
+- [x] **Step 5: Write the fixtures and experiment driver**
 
 ```js
 // spikes/spk-3/fixtures/tree.mjs — spawns 2 long-lived grandchildren, writes their PIDs, then lives forever.
@@ -962,7 +962,7 @@ const results = {};
 console.log(JSON.stringify(results, null, 2));
 ```
 
-- [ ] **Step 6: Run the experiments**
+- [x] **Step 6: Run the experiments**
 
 Run: `node spikes/spk-3/run-experiments.mjs > spikes/spk-3/out.json; type spikes\spk-3\out.json`
 Expected:
@@ -972,7 +972,7 @@ Expected:
 - `stdio.exitCode=7`, `stdoutExact=true`, `stderrExact=true`.
 - `maxProcs.output` shows that at least one spawn failed (the cap was enforced).
 
-- [ ] **Step 7: Write the report**
+- [x] **Step 7: Write the report**
 
 Create `docs/superpowers/spikes/SPK-3.md` with the same structure as SPK-1's report:
 - a Results table with one row per experiment, the observed values, `spikes/spk-3/out.json` as evidence, and the [V] marker;
@@ -980,7 +980,7 @@ Create `docs/superpowers/spikes/SPK-3.md` with the same structure as SPK-1's rep
 - this mandatory line: **"This is resource and lifecycle containment, not a security boundary"**;
 - a Verdict section (GO/NO-GO for EXE-2) listing any API deviations from Step 4.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add spikes/spk-3/helper/go.mod spikes/spk-3/helper/go.sum spikes/spk-3/helper/main.go spikes/spk-3/fixtures spikes/spk-3/run-experiments.mjs docs/superpowers/spikes/SPK-3.md
@@ -1002,7 +1002,7 @@ git commit -m "spike(SPK-3): Job Object helper prototype findings"
   - `node spikes/spk-2/probe.mjs --base-url=<url> --model=<id> [--key-env=<ENV_VAR_NAME>] [--ctx=32000] [--out=<file>]`, which writes a `ProbeResult` JSON: `{ toolCall: {pass, detail}, longContext: {pass, tokensSent, detail}, jsonSchema: {pass, detail}, throughput: {ttftMs, genTokensPerSec}, burst: {ok, statuses[]} }`.
   - A draft catalog file with the same field names as the spec's `providers` table.
 
-- [ ] **Step 1: Write the probe**
+- [x] **Step 1: Write the probe**
 
 ```js
 // spikes/spk-2/probe.mjs — THROWAWAY: OpenAI-compatible provider probes. Never prints the API key.
@@ -1093,7 +1093,7 @@ if (args.out) fs.writeFileSync(args.out, out);
 console.log(out);
 ```
 
-- [ ] **Step 2: Validate the probe against the mock**
+- [x] **Step 2: Validate the probe against the mock**
 
 Run in two shells:
 1. `node spikes/shared/mock-llm.mjs --port=18080 --scenario=spikes/spk-2/mock-scenario.json`
@@ -1113,7 +1113,7 @@ First create `spikes/spk-2/mock-scenario.json`:
 
 Expected: `toolCall.pass`, `longContext.pass` and `jsonSchema.pass` are all `true`, and `burst.ok` is `true`.
 
-- [ ] **Step 3: USER ACTION. Create accounts and keys.**
+- [x] **Step 3: USER ACTION. Create accounts and keys.**
 
 Ask the user to:
 - Create (or confirm) accounts for **OpenCode Zen** (opencode.ai), **Ollama** (ollama.com, for Cloud Free), **Cloudflare** (Workers AI) and **OpenRouter**.
@@ -1129,7 +1129,7 @@ $env:AIK_OPENROUTER_KEY = Read-Host -AsSecureString | ConvertFrom-SecureString -
 
 `ConvertFrom-SecureString -AsPlainText` needs PowerShell 7. On Windows PowerShell 5.1, use `$env:AIK_ZEN_KEY = Read-Host` instead.
 
-- [ ] **Step 4: Find each provider's OpenAI-compatible base URL and free model IDs**
+- [x] **Step 4: Find each provider's OpenAI-compatible base URL and free model IDs**
 
 For each provider, find the **current** OpenAI-compatible base URL and free model IDs in its official docs and record the source URL. Starting points to verify (not assumed correct):
 
@@ -1142,17 +1142,17 @@ For each provider, find the **current** OpenAI-compatible base URL and free mode
 
 Also read each provider's data-use/training terms page and record the URL and the exact sentence (answers **Q-3** for Cloudflare).
 
-- [ ] **Step 5: Run the probes against each provider/model**
+- [x] **Step 5: Run the probes against each provider/model**
 
 Example: `node spikes/spk-2/probe.mjs --base-url=https://opencode.ai/zen/v1 --model=<free model id> --key-env=AIK_ZEN_KEY --ctx=32000 --out=spikes/spk-2/out-zen-<model>.json`
 Repeat for every default-eligible candidate: Zen GLM-5.3-Flash Free, Zen DeepSeek V4.1 Flash Free, Ollama Cloud Free models, Cloudflare glm-4.7-flash, and one OpenRouter `:free` model.
 Expected: one JSON file per model. Failures are findings, not errors to fix.
 
-- [ ] **Step 6: Interpret burst and limit results**
+- [x] **Step 6: Interpret burst and limit results**
 
 For each output, record `burst.statuses` and `burst.rateLimitHeaders`. Then estimate **stories/day** as `daily request limit ÷ 50` (about 50 model calls per story, per spec §9). Use the documented limit where one exists; otherwise use the observed limit and mark it [I].
 
-- [ ] **Step 7 (optional, USER ACTION): Measure local throughput**
+- [x] **Step 7 (optional, USER ACTION): Measure local throughput**
 
 Only if the user consents to installing Ollama: `winget install --id Ollama.Ollama -e`.
 1. Look up the exact current library tags for Qwen3.5-9B and Ornith-1.0-9B on ollama.com/library and record them.
@@ -1169,7 +1169,7 @@ PARAMETER num_ctx 32768
 
 Record `throughput` and `longContext` timing. These replace the spec's [I] estimates in §10.2.
 
-- [ ] **Step 8: Write the draft catalog**
+- [x] **Step 8: Write the draft catalog**
 
 Create `spikes/spk-2/providers.v1.draft.json`. Include one entry per verified provider/model and fill every field from the evidence:
 
@@ -1197,7 +1197,7 @@ Create `spikes/spk-2/providers.v1.draft.json`. Include one entry per verified pr
 
 Replace every `<…>` and every `0` with verified values. If a value can't be verified, write `"unknown"` and explain it in the report.
 
-- [ ] **Step 9: Write the report and verdict**
+- [x] **Step 9: Write the report and verdict**
 
 Create `docs/superpowers/spikes/SPK-2.md` with:
 - a provider table: account, card, base URL, free models, documented limits, observed limits, data-use quote and URL, probe pass/fail ×4, estimated stories/day;
@@ -1207,7 +1207,7 @@ Create `docs/superpowers/spikes/SPK-2.md` with:
   - If at least one **default-eligible** provider (data use `no_training`) passes the tool-call and JSON probes, the verdict is **GO**.
   - If none passes, write **ESCALATE**: stop and present the options to the user (revisit D-2 or D-5, or opt into a paid provider) before Phase 2.
 
-- [ ] **Step 10: Clear the keys and commit**
+- [x] **Step 10: Clear the keys and commit**
 
 Run in the same shell: `Remove-Item Env:AIK_ZEN_KEY, Env:AIK_OLLAMA_KEY, Env:AIK_CF_KEY, Env:AIK_OPENROUTER_KEY -ErrorAction SilentlyContinue`
 
@@ -1234,7 +1234,7 @@ Before committing, check that the probe outputs (`out-*.json`) aren't staged. Th
   - Merge `sha`-guard behaviour.
   - Validation of the `@napi-rs/keyring` `Entry` API that GH-2 will use.
 
-- [ ] **Step 1: USER ACTION. Register a scratch GitHub App and repo.**
+- [x] **Step 1: USER ACTION. Register a scratch GitHub App and repo.**
 
 Ask the user to do the following, and to tell you only the **client ID** and **repo owner/name**:
 1. Create a **private** repo named `aik-spike-scratch` with a README (initial commit on `main`).
@@ -1248,7 +1248,7 @@ Ask the user to do the following, and to tell you only the **client ID** and **r
    - Where can this app be installed: **Only on this account**.
 3. Create the app, **don't** generate a client secret or private key, then install it on **only** `aik-spike-scratch`.
 
-- [ ] **Step 2: Install the keyring dependency**
+- [x] **Step 2: Install the keyring dependency**
 
 ```json
 // spikes/spk-4/package.json
@@ -1257,7 +1257,7 @@ Ask the user to do the following, and to tell you only the **client ID** and **r
 
 Run: `npm install --prefix spikes/spk-4 --save-exact`
 
-- [ ] **Step 3: Write the shared GitHub helpers**
+- [x] **Step 3: Write the shared GitHub helpers**
 
 ```js
 // spikes/spk-4/gh.mjs — THROWAWAY helpers. Tokens live only in Windows Credential Manager (service AiKanbanSpike).
@@ -1289,7 +1289,7 @@ export async function api(method, path, body) {
 }
 ```
 
-- [ ] **Step 4: Write and run the device flow**
+- [x] **Step 4: Write and run the device flow**
 
 ```js
 // spikes/spk-4/device-flow.mjs — THROWAWAY
@@ -1322,7 +1322,7 @@ Run: `$env:AIK_SPIKE_GH_CLIENT_ID = "<client id from Step 1>"; node spikes/spk-4
 The user enters the code in the browser.
 Expected: the output shows `expires_in: 28800`, a `refresh_token_expires_in` of about 15897600, and masked tokens. No full token is printed.
 
-- [ ] **Step 5: Refresh without a client secret, and list repos**
+- [x] **Step 5: Refresh without a client secret, and list repos**
 
 ```js
 // spikes/spk-4/refresh.mjs — THROWAWAY
@@ -1351,7 +1351,7 @@ Expected:
 - `refreshed: true` with `accessChanged: true` and no secret used.
 - The repo list contains `<user>/aik-spike-scratch` with `permissions.push: true`.
 
-- [ ] **Step 6: Write the credential helper prototype**
+- [x] **Step 6: Write the credential helper prototype**
 
 ```js
 // spikes/spk-4/cred-helper.mjs — THROWAWAY git credential helper: token from parent over a named pipe with one-time nonce.
@@ -1374,7 +1374,7 @@ process.stdin.on('end', () => {
 });
 ```
 
-- [ ] **Step 7: Write and run the push with leak checks**
+- [x] **Step 7: Write and run the push with leak checks**
 
 ```js
 // spikes/spk-4/push.mjs — THROWAWAY: clone scratch repo to temp, commit, push via helper; check for leaks.
@@ -1455,7 +1455,7 @@ Expected:
 - `replayRejected: true`.
 - `wrongHostRejected: true`.
 
-- [ ] **Step 8: Check behaviour when the orchestrator isn't running**
+- [x] **Step 8: Check behaviour when the orchestrator isn't running**
 
 Run in the same shell:
 ```powershell
@@ -1464,7 +1464,7 @@ $env:AIK_SPIKE_CRED_PIPE = "\\.\pipe\does-not-exist"; $env:AIK_SPIKE_CRED_NONCE 
 ```
 Expected: no output (no credentials) and exit code 0. If no pipe is listening, git gets nothing and the helper doesn't hang. Record it.
 
-- [ ] **Step 9: Write and run the merge sha-guard test**
+- [x] **Step 9: Write and run the merge sha-guard test**
 
 ```js
 // spikes/spk-4/merge-guard.mjs — THROWAWAY: PR from the pushed branch; stale sha → 409; current sha → merged.
@@ -1487,7 +1487,7 @@ console.log(JSON.stringify({ pr: pr.json.number, staleShaStatus: r1.status, stal
 Run: `node spikes/spk-4/merge-guard.mjs`
 Expected: `staleShaStatus: 409`, `currentShaStatus: 200`, `merged: true`.
 
-- [ ] **Step 10: Clean up, report and commit**
+- [x] **Step 10: Clean up, report and commit**
 
 Run: `node -e "import('./spikes/spk-4/gh.mjs').then(m=>m.deleteTokens())"`. This removes the spike tokens from Credential Manager.
 Ask the user (USER ACTION) to revoke the spike app's authorization under GitHub Settings → Applications → Authorized GitHub Apps. They may keep or delete the scratch app and repo.
@@ -1509,7 +1509,7 @@ git commit -m "spike(SPK-4): GitHub App device flow and credential-helper push f
 **Files:**
 - Modify: `docs/superpowers/specs/2026-10-18-autonomous-ai-ide-design.md` (only sections that a spike contradicted)
 
-- [ ] **Step 1: Collect contradictions**
+- [x] **Step 1: Collect contradictions**
 
 Read the four "Corrections needed" or "Verdict" sections. List each spec statement that a spike proved wrong or made concrete, for example:
 - the real session-deletion operation;
@@ -1519,11 +1519,11 @@ Read the four "Corrections needed" or "Verdict" sections. List each spec stateme
 - measured local tokens/s;
 - `x/sys/windows` API deviations.
 
-- [ ] **Step 2: Present the list to the user before editing**
+- [x] **Step 2: Present the list to the user before editing**
 
 Show the user the list, with each proposed replacement sentence and its evidence link. Edit only after they approve. Change [U]/[I] markers to [V] where a spike verified the fact, and update Q-1…Q-5 in §29.2 to "Resolved by SPK-n: …".
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add docs/superpowers/specs/2026-10-18-autonomous-ai-ide-design.md
