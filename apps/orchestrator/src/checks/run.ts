@@ -4,7 +4,6 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import type { IsolationRunner } from '../isolation/index.ts';
-import { getIsolationRunner } from '../isolation/index.ts';
 
 export type CommandStatus = 'passed' | 'failed' | 'timed_out' | 'error' | 'unsupported';
 

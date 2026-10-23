@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Date** | 2026-10-23 |
-| **Status** | Approved by user; ready for implementation planning |
+| **Status** | Implemented & Verified: SPK-6 completed (NO-GO for unprivileged toolchain ACLs); Path B (`JobObjectIsolationRunner`) adopted |
 | **Scope** | Phase 4 decomposition & Sub-Project 4.1: REL-1 Microsoft MXC isolation spike (SPK-6) and conditional orchestrator integration |
 | **Parent Spec** | `docs/superpowers/specs/2026-10-18-autonomous-ai-ide-design.md` §21.4, §25.2, §26.1 (REL-1…REL-8) |
 
@@ -135,3 +135,19 @@ export interface IsolationRunner {
 3. If GO: `IsolationRunner` is implemented, tested with 100% passing tests, and wired into the orchestrator.
 4. If NO-GO: Fallback `JobObjectIsolationRunner` is formalized with clean test coverage, and design spec §21.4 is amended with the empirical findings.
 5. Verification gates pass cleanly: `npm run check:pins && npm run lint && npm run typecheck && npm test`.
+
+---
+
+## 6. Resolution & Empirical Findings
+
+The SPK-6 automated escape and feasibility probe suite executed on 2026-10-23 (see full evidence in [`docs/superpowers/spikes/SPK-6.md`](file:///c:/Users/USER/Documents/data/ai-kanban-automation/docs/superpowers/spikes/SPK-6.md)):
+- **Unprivileged Container Creation:** [V] Standard user tokens successfully initialize `processcontainer` (`isSupported === true`).
+- **Filesystem Deny Paths:** [V] Attempts to read `%USERPROFILE%\.ssh`, `%USERPROFILE%\.config\opencode`, and parent directories via directory traversal are blocked with `Access is denied`.
+- **Credential Manager Isolation:** [V] Inside the container, `cmdkey /list` returns `* NONE *`, isolating host secrets.
+- **Unprivileged Toolchain Viability:** [V] Developer toolchains (`node.exe`, `git.exe`, `npm`) fail at launch with exit code **`-1073741502` (`0xC0000142 STATUS_DLL_INIT_FAILED`)** due to missing `ALL APPLICATION PACKAGES` NTFS ACLs on `C:\Program Files\nodejs\` and `C:\Program Files\Git\`. Granting these permissions requires Administrator privileges, violating the core unprivileged constraint.
+
+### Architectural Decision:
+- **Verdict:** NO-GO for direct unprivileged MXC toolchain containment.
+- **Path B Adopted:** `JobObjectIsolationRunner` implemented in [`apps/orchestrator/src/isolation/`](file:///c:/Users/USER/Documents/data/ai-kanban-automation/apps/orchestrator/src/isolation) wrapping the verified Go Job Object helper with process-tree cleanup (`KILL_ON_JOB_CLOSE`), memory caps (code 137), process caps, environment scrubbing, and temporary scratch directory redirection.
+- **Roadmap:** Story `ADV-2` (dedicated secondary low-privilege Windows user sandbox via `CreateProcessWithLogonW`) is promoted for future multi-user privilege boundaries.
+

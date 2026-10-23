@@ -36,7 +36,7 @@
 **Interfaces:**
 - Produces: Isolated spike directory `spikes/spk-6/` with `@microsoft/mxc-sdk@1.0.1` installed and verified without affecting root dependencies.
 
-- [ ] **Step 1: Write `spikes/spk-6/package.json`**
+- [x] **Step 1: Write `spikes/spk-6/package.json`**
 
 ```json
 {
@@ -49,21 +49,21 @@
 }
 ```
 
-- [ ] **Step 2: Ensure `.gitignore` covers spike node_modules and output**
+- [x] **Step 2: Ensure `.gitignore` covers spike node_modules and output**
 
 Verify `.gitignore` contains `spikes/**/node_modules/` and `spikes/**/out/`. If not present, add them.
 
-- [ ] **Step 3: Install the spike package**
+- [x] **Step 3: Install the spike package**
 
 Run: `npm install --prefix spikes/spk-6 --save-exact`
 Expected: `spikes/spk-6/node_modules/@microsoft/mxc-sdk` exists and `package-lock.json` is generated.
 
-- [ ] **Step 4: Verify package import**
+- [x] **Step 4: Verify package import**
 
 Run: `node -e "import('@microsoft/mxc-sdk').then(m => console.log('MXC SDK load: OK')).catch(e => console.error(e))"` with `NODE_PATH=spikes/spk-6/node_modules` (or cwd `spikes/spk-6`).
 Expected: prints `MXC SDK load: OK` or exact Win32 FFI initialization error.
 
-- [ ] **Step 5: Commit scaffolding**
+- [x] **Step 5: Commit scaffolding**
 
 ```bash
 git add spikes/spk-6/package.json spikes/spk-6/package-lock.json .gitignore
@@ -81,7 +81,7 @@ git commit -m "spike(SPK-6): scaffold MXC isolation probe package"
 - Consumes: `@microsoft/mxc-sdk`
 - Produces: `node spikes/spk-6/probe.mjs [--out=spikes/spk-6/out/results.json]`, outputting a structured JSON summary of all 6 probe test cases.
 
-- [ ] **Step 1: Write `spikes/spk-6/probe.mjs`**
+- [x] **Step 1: Write `spikes/spk-6/probe.mjs`**
 
 Write the complete probe script implementing:
 - Probe 1: Unprivileged container creation check.
@@ -91,12 +91,12 @@ Write the complete probe script implementing:
 - Probe 5: Toolchain validation (`git --version`, `node -v` run cleanly inside container).
 - Probe 6: Cold/warm latency and memory benchmarking.
 
-- [ ] **Step 2: Verify probe script syntax**
+- [x] **Step 2: Verify probe script syntax**
 
 Run: `node --check spikes/spk-6/probe.mjs`
 Expected: exits with code 0 (clean syntax).
 
-- [ ] **Step 3: Commit probe script**
+- [x] **Step 3: Commit probe script**
 
 ```bash
 git add spikes/spk-6/probe.mjs
@@ -114,12 +114,12 @@ git commit -m "spike(SPK-6): implement automated escape and feasibility probe ha
 - Consumes: Execution results from `node spikes/spk-6/probe.mjs`.
 - Produces: Comprehensive markdown report with evidence tables, [V] markers, and explicit **GO** or **NO-GO** verdict.
 
-- [ ] **Step 1: Run the probe harness**
+- [x] **Step 1: Run the probe harness**
 
 Run: `node spikes/spk-6/probe.mjs`
 Expected: Output prints results for Probes 1 through 6, displaying PASS/FAIL and observed latency/memory.
 
-- [ ] **Step 2: Write `docs/superpowers/spikes/SPK-6.md`**
+- [x] **Step 2: Write `docs/superpowers/spikes/SPK-6.md`**
 
 Structure:
 - Date, Executor, OS build (Windows 11 build 26200.9711), SDK version (`@microsoft/mxc-sdk@1.0.1`).
@@ -127,7 +127,7 @@ Structure:
 - Analysis: does MXC require admin rights on this system? Do escape checks hold?
 - Architectural Verdict: **GO** (integrate MXC into orchestrator) or **NO-GO** (fall back to hardened Job Objects + promote ADV-2).
 
-- [ ] **Step 3: Commit report**
+- [x] **Step 3: Commit report**
 
 ```bash
 git add docs/superpowers/spikes/SPK-6.md
@@ -148,29 +148,29 @@ git commit -m "docs(spikes): record SPK-6 MXC isolation probe findings and verdi
 **Interfaces:**
 - Produces: `getIsolationRunner(options)` returning an implementation of `IsolationRunner`.
 
-- [ ] **Step 1: Write unit tests in `apps/orchestrator/test/isolation-runner.test.ts`**
+- [x] **Step 1: Write unit tests in `apps/orchestrator/test/isolation-runner.test.ts`**
   - Test command execution in a temporary worktree.
   - Test stdio capture and exit code propagation.
   - Test timeout termination.
   - Test environment scrubbing.
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `npx vitest run apps/orchestrator/test/isolation-runner.test.ts`
 Expected: FAIL (modules not found).
 
-- [ ] **Step 3: Implement `runner.ts`, `job-object.ts`, and `index.ts`**
+- [x] **Step 3: Implement `runner.ts`, `job-object.ts`, and `index.ts`**
   - Define `IsolationRunner`, `ProcessResult`, and `IsolationOptions`.
   - Implement `JobObjectIsolationRunner` wrapping `aiide-helper.exe` with redirected scratch environments.
   - Implement `MxcIsolationRunner` (if SPK-6 verdict is GO).
   - Implement factory in `index.ts` selecting the verified runner.
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `npx vitest run apps/orchestrator/test/isolation-runner.test.ts`
 Expected: PASS.
 
-- [ ] **Step 5: Commit `IsolationRunner`**
+- [x] **Step 5: Commit `IsolationRunner`**
 
 ```bash
 git add apps/orchestrator/src/isolation apps/orchestrator/test/isolation-runner.test.ts
@@ -190,19 +190,19 @@ git commit -m "feat(orchestrator): implement IsolationRunner abstraction"
 - Consumes: `getIsolationRunner` from `apps/orchestrator/src/isolation/index.ts`.
 - Ensures: All check runs and agent commands execute through the isolated runner.
 
-- [ ] **Step 1: Update `apps/orchestrator/src/checks/run.ts`**
+- [x] **Step 1: Update `apps/orchestrator/src/checks/run.ts`**
   - Replace direct process spawning with `isolationRunner.run()`.
   - Ensure scrubbed environment and worktree directory are passed.
 
-- [ ] **Step 2: Update `apps/orchestrator/test/verification.test.ts`**
+- [x] **Step 2: Update `apps/orchestrator/test/verification.test.ts`**
   - Verify that mandatory checks execute through the runner and produce expected exit codes and output logs.
 
-- [ ] **Step 3: Run verification tests**
+- [x] **Step 3: Run verification tests**
 
 Run: `npx vitest run apps/orchestrator/test/verification.test.ts`
 Expected: PASS.
 
-- [ ] **Step 4: Commit integration changes**
+- [x] **Step 4: Commit integration changes**
 
 ```bash
 git add apps/orchestrator/src/checks/run.ts apps/orchestrator/src/git/worktree.ts apps/orchestrator/test/verification.test.ts
@@ -216,17 +216,17 @@ git commit -m "feat(orchestrator): wire check execution through IsolationRunner"
 **Files:**
 - Modify: `docs/superpowers/specs/2026-10-23-phase-4-reliability-isolation-design.md`
 
-- [ ] **Step 1: Update design spec with verdict and implementation outcomes**
+- [x] **Step 1: Update design spec with verdict and implementation outcomes**
   - Record the resolved SPK-6 verdict in §4 and §5.
 
-- [ ] **Step 2: Run monorepo full verification suite**
+- [x] **Step 2: Run monorepo full verification suite**
   - Run: `npm run check:pins`
   - Run: `npm run lint`
   - Run: `npm run typecheck`
   - Run: `npm test`
   - Expected: All checks pass cleanly with 0 errors.
 
-- [ ] **Step 3: Commit final pass**
+- [x] **Step 3: Commit final pass**
 
 ```bash
 git add docs/superpowers/specs/2026-10-23-phase-4-reliability-isolation-design.md
