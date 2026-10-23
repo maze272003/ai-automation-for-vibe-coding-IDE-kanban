@@ -1,0 +1,8 @@
+{
+  "name": "aik-spk-6",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@microsoft/mxc-sdk": "1.0.1"
+  }
+}
