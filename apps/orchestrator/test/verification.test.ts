@@ -51,6 +51,7 @@ describe('VerificationRunner evidence rules', () => {
     execFileSync('git', ['-c', 'user.name=aik', '-c', 'user.email=aik@localhost', 'commit', '-m', `feat: ${storyKey}`], { cwd: worktreePath });
     return {
       worktreePath,
+      baseSha: execFileSync('git', ['rev-parse', 'HEAD~1'], { cwd: worktreePath, encoding: 'utf8' }).trim(),
       candidateSha: execFileSync('git', ['rev-parse', 'HEAD'], { cwd: worktreePath, encoding: 'utf8' }).trim(),
       candidateTree: execFileSync('git', ['rev-parse', 'HEAD^{tree}'], { cwd: worktreePath, encoding: 'utf8' }).trim(),
     };
@@ -281,6 +282,81 @@ describe('VerificationRunner evidence rules', () => {
         .all(),
     ).toHaveLength(0);
     expect(dbHolder.db.select().from(userStories).where(eq(userStories.id, story.id)).get()?.status).toBe('AWAITING_MERGE');
+  });
+
+  test('fails verification when a candidate introduces a lockfile with threshold-exceeding vulnerabilities (REL-3)', async () => {
+    const repoPath = makeTempRepo({ name: 'verif-vuln-repo' });
+    const project = seedProject(dbHolder.db, {
+      repoPath,
+      settings: {
+        ...defaultProjectSettings(),
+        secretsOnlyVerification: true,
+        vulnerabilityScan: { enabled: true, threshold: 'high' },
+      },
+    });
+
+    const candidate = await candidateFor(
+      repoPath,
+      'VRF-11',
+      'package-lock.json',
+      '{"name": "insecure-candidate", "lockfileVersion": 3}',
+    );
+
+    const story = seedStory(dbHolder.db, project.id, {
+      key: 'VRF-11',
+      baseSha: candidate.baseSha,
+      candidateSha: candidate.candidateSha,
+      candidateTree: candidate.candidateTree,
+      status: 'TESTING',
+    });
+
+    const mockOsvScanner = async () => ({
+      stdout: JSON.stringify({
+        results: [
+          {
+            packages: [
+              {
+                package: { name: 'vuln-dep', version: '1.0.0' },
+                vulnerabilities: [
+                  {
+                    id: 'GHSA-vuln-1234',
+                    summary: 'Critical vulnerability in vuln-dep',
+                    database_specific: { severity: 'CRITICAL' },
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      }),
+      stderr: '',
+      exitCode: 1,
+    });
+
+    const v = new VerificationRunner({
+      db: dbHolder.db,
+      workflow,
+      bus,
+      worktreeManager,
+      logsDir: makeTempDir('aikanban-verif-logs-vuln-'),
+      vulnerabilityScanner: mockOsvScanner,
+    });
+
+    const result = await v.verifyStory(story.id);
+    expect(result.ok).toBe(false);
+    expect(result.status).toBe('failed');
+
+    const checks = dbHolder.db
+      .select()
+      .from(verificationChecks)
+      .where(eq(verificationChecks.verificationRunId, result.verificationRunId!))
+      .all();
+
+    const vulnCheck = checks.find((c) => c.checkKey === 'vulnerabilities');
+    expect(vulnCheck).toBeDefined();
+    expect(vulnCheck?.status).toBe('failed');
+    expect(vulnCheck?.outputTail).toContain('GHSA-vuln-1234');
+    expect(vulnCheck?.outputTail).toContain('critical');
   });
 });
 

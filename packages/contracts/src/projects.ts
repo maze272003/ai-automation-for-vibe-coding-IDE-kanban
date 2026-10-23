@@ -53,6 +53,15 @@ export const ProjectSettings = z.object({
       maxProcesses: z.number().int().min(4).default(64),
     })
     .prefault({}),
+  vulnerabilityScan: z
+    .object({
+      enabled: z.boolean().default(true),
+      threshold: z.enum(['low', 'medium', 'high', 'critical']).default('high'),
+      scannerPath: z.string().optional(),
+      scannerSha256: z.string().optional(),
+    })
+    .prefault({})
+    .optional(),
 });
 export type ProjectSettings = z.infer<typeof ProjectSettings>;
 export const defaultProjectSettings = (): ProjectSettings => ProjectSettings.parse({});

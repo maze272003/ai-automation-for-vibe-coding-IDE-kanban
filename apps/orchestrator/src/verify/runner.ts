@@ -8,6 +8,7 @@ import type { EventBus } from '../events/bus.ts';
 import { git } from '../git/git.ts';
 import type { WorktreeManager } from '../git/worktree.ts';
 import { runCheckCommand, type CommandStatus, type SpawnedCheckProcess } from '../checks/run.ts';
+import { runVulnerabilityScan } from '../security/vulnerability.ts';
 import { describeHits, scanWorktree } from '../secrets/scan.ts';
 import { systemClock, type Clock } from '../time.ts';
 import type { RunInterruptRegistry } from '../agents/interrupts.ts';
@@ -36,6 +37,7 @@ export interface VerificationRunnerDeps {
   redact?: (text: string) => string;
   /** When provided, checks running for a story are registered as interruptible work (EXE-13). */
   interrupts?: RunInterruptRegistry;
+  vulnerabilityScanner?: (lockfiles: string[], cwd: string) => Promise<{ stdout: string; stderr: string; exitCode: number }>;
 }
 
 function checkStatus(result: CommandStatus): 'passed' | 'failed' | 'error' | 'timed_out' | 'unsupported' {
@@ -63,6 +65,10 @@ export class VerificationRunner {
   private readonly now: Clock;
   private readonly redact: (text: string) => string;
   private readonly interrupts?: RunInterruptRegistry;
+  private readonly vulnerabilityScanner?: (
+    lockfiles: string[],
+    cwd: string,
+  ) => Promise<{ stdout: string; stderr: string; exitCode: number }>;
 
   constructor(deps: VerificationRunnerDeps) {
     this.db = deps.db;
@@ -73,6 +79,7 @@ export class VerificationRunner {
     this.now = deps.now ?? systemClock;
     this.redact = deps.redact ?? ((s) => s);
     this.interrupts = deps.interrupts;
+    this.vulnerabilityScanner = deps.vulnerabilityScanner;
   }
 
   async verifyStory(input: VerifyStoryInput | number): Promise<VerifyStoryResult> {
@@ -125,7 +132,14 @@ export class VerificationRunner {
 
     let allMandatoryPassed: boolean;
     try {
-      allMandatoryPassed = await this.runChecks(story.id, run.id, settings, worktreePath);
+      allMandatoryPassed = await this.runChecks(
+        story.id,
+        run.id,
+        settings,
+        worktreePath,
+        story.baseSha,
+        story.candidateSha,
+      );
     } catch (err) {
       this.markRunError(run.id);
       return { ok: false, status: 'error', verificationRunId: run.id, error: err instanceof Error ? err.message : String(err) };
@@ -250,7 +264,14 @@ export class VerificationRunner {
 
       let passed = false;
       try {
-        passed = await this.runChecks(input.storyId, run.id, settings, worktreePath);
+        passed = await this.runChecks(
+          input.storyId,
+          run.id,
+          settings,
+          worktreePath,
+          story.baseSha,
+          input.mergedSha,
+        );
       } catch (err) {
         this.db
           .update(verificationRuns)
@@ -319,6 +340,8 @@ export class VerificationRunner {
     verificationRunId: number,
     settings: ProjectSettings,
     worktreePath: string,
+    baseSha?: string | null,
+    candidateSha?: string | null,
   ): Promise<boolean> {
     let allMandatoryPassed = true;
 
@@ -363,6 +386,44 @@ export class VerificationRunner {
           endedAt: new Date(this.now()),
         })
         .run();
+
+      // Vulnerability scanning (REL-3) runs when dependency lockfiles change
+      if (settings.vulnerabilityScan?.enabled) {
+        const vulnStarted = new Date(this.now());
+        const vulnResult = await runVulnerabilityScan({
+          cwd: worktreePath,
+          baseSha,
+          candidateSha,
+          settings: settings.vulnerabilityScan,
+          scanner: this.vulnerabilityScanner,
+        });
+
+        if (vulnResult.needed) {
+          const status =
+            vulnResult.status === 'passed'
+              ? 'passed'
+              : vulnResult.status === 'error'
+                ? 'error'
+                : 'failed';
+          if (status !== 'passed') allMandatoryPassed = false;
+          this.db
+            .insert(verificationChecks)
+            .values({
+              verificationRunId,
+              checkKey: 'vulnerabilities',
+              mandatory: true,
+              command: 'internal:vulnerability-scan',
+              cwd: worktreePath,
+              status,
+              exitCode: vulnResult.exitCode ?? (status === 'passed' ? 0 : 1),
+              outputTail: this.redact(vulnResult.summary),
+              logPath: null,
+              startedAt: vulnStarted,
+              endedAt: new Date(this.now()),
+            })
+            .run();
+        }
+      }
 
       for (const check of settings.checks) {
         if (this.interrupts?.isStopRequested(storyId)) {
