@@ -10,6 +10,13 @@
 
 **Design spec:** `docs/superpowers/specs/2026-10-24-delete-project-and-git-view-design.md` — read it first. Mockup reference (user-approved): variant A, two columns (Source Control left, History right) + branch dropdown.
 
+## Execution outcome
+
+Executed **subagent-driven on `main`**, one subagent per task with review between tasks; every task ran the repo gate (lint, typecheck, touched tests) before its file-scoped commit.
+
+- **Tasks 1–11: done and committed** (commit range `41e70ed..560f32d`). All review findings were resolved in-task. Factual corrections of this plan's own code blocks are folded in below as *Execution note* callouts (Tasks 1, 2, 4, 9, 11).
+- **Task 12 (docs, repo-wide gates): done** — repo-wide gate green (`npm run check:pins && npm run lint && npm run typecheck && npm test`, 816 backend tests / 90 files); e2e 44/45 with the feature's git-tab specs 2/2 — the single failure is a pre-existing `board.spec.ts` flake (timeouts waiting for a freshly created card's "Move to…" button; a retried run passed that test and flaked a sibling with the same signature). README "Project lifecycle" added. The board flake and other minor notes are carried forward to the final whole-branch review.
+
 ## Global Constraints
 
 - Node ≥ 24.17.0; Git for Windows ≥ 2.38. Windows-only platform.
@@ -53,7 +60,7 @@ apps/orchestrator/test/view-service.test.ts                       (create)
 apps/orchestrator/test/git-view-routes.test.ts                    (create)
 apps/orchestrator/test/project-delete.test.ts                     (create)
 apps/orchestrator/test/helpers/temp.ts                            (modify: appendFile helper + repomAke)
-e2e/git-tab.spec.ts                                               (create)
+e2e/tests/git-tab.spec.ts                                          (create)
 README.md                                                         (modify: feature notes)
 ```
 
@@ -138,9 +145,9 @@ export type BranchListDTO = z.infer<typeof BranchListDTO>;
 const PathList = z.array(z.string().min(1).max(2000)).min(1).max(500);
 
 export const GitStageRequest = z.union([
-  z.object({ paths: PathList }),
-  z.object({ all: z.literal(true) }),
-]).strict();
+  z.strictObject({ paths: PathList }),
+  z.strictObject({ all: z.literal(true) }),
+]);
 export type GitStageRequest = z.infer<typeof GitStageRequest>;
 
 /** `paths` commits those files directly (stage-then-commit); otherwise commits what is staged. */
@@ -156,6 +163,8 @@ export type GitBranchCheckoutRequest = z.infer<typeof GitBranchCheckoutRequest>;
 export const GitBranchCreateRequest = z.object({ name: z.string().min(1).max(200), from: z.string().max(200).optional() }).strict();
 export type GitBranchCreateRequest = z.infer<typeof GitBranchCreateRequest>;
 ```
+
+> Execution note: as landed, the `GitStageRequest` union members are `z.strictObject(...)` — zod 4.6.7 has no `z.union().strict()`. The hybrid stage-payload rejection test (`all` + `paths` → `400 VALIDATION_FAILED`) landed with Task 7 rather than here.
 
 - [ ] **Step 3: Export it — add one line to `packages/contracts/src/index.ts`**
 
@@ -251,21 +260,23 @@ import type { AikDb } from '@aik/db';
 
 /** True while a queued/running agent run, a running verification or a running merge belongs to the project. */
 export function projectBusyReason(db: AikDb, projectId: number): string | null {
-  const run = db.$client
-    .prepare(`SELECT u.key FROM user_stories u JOIN agent_runs r ON r.story_id = u.id WHERE u.project_id = ? AND r.status IN ('queued', 'running') LIMIT 1`)
-    .get(projectId) as { key: string } | undefined;
-  if (run) return `Story ${run.key} has an agent run in progress — Git actions and delete pause until it finishes`;
-  const verify = db.$client
-    .prepare(`SELECT u.key FROM user_stories u JOIN verification_runs v ON v.story_id = u.id WHERE u.project_id = ? AND v.status = 'running' LIMIT 1`)
-    .get(projectId) as { key: string } | undefined;
-  if (verify) return `Story ${verify.key} is in verification — Git actions and delete pause until it finishes`;
   const merge = db.$client
     .prepare(`SELECT u.key FROM user_stories u JOIN merges m ON m.story_id = u.id WHERE u.project_id = ? AND m.status = 'running' LIMIT 1`)
     .get(projectId) as { key: string } | undefined;
   if (merge) return `Story ${merge.key} is merging right now — Git actions and delete pause until it finishes`;
+  const run = db.$client
+    .prepare(`SELECT u.key, r.status FROM user_stories u JOIN agent_runs r ON r.story_id = u.id WHERE u.project_id = ? AND r.status IN ('queued', 'running') LIMIT 1`)
+    .get(projectId) as { key: string; status: string } | undefined;
+  if (run) return `Story ${run.key} has a ${run.status} agent run in progress — Git actions and delete pause until it finishes`;
+  const verify = db.$client
+    .prepare(`SELECT u.key FROM user_stories u JOIN verification_runs v ON v.story_id = u.id WHERE u.project_id = ? AND v.status = 'running' LIMIT 1`)
+    .get(projectId) as { key: string } | undefined;
+  if (verify) return `Story ${verify.key} is in verification — Git actions and delete pause until it finishes`;
   return null;
 }
 ```
+
+> Execution note: the landed busy reason interpolates the run's `status` (`Story ${key} has a ${status} agent run in progress`) and the check order is **merge → agent run → verification**; the original block's wording/order contradicted the Task 2 tests above.
 
 - [ ] **Step 4: Run to verify it passes**
 
@@ -444,28 +455,33 @@ const tracked = (d: string) => {
 const gitIn = (cwd: string, ...args: string[]) =>
   execFileSync('git', ['-c', 'user.name=aik-test', '-c', 'user.email=aik-test@localhost', ...args], { cwd, encoding: 'utf8' });
 
-function setup(opts: { repo?: string } = {}) {
+async function setup(opts: { repo?: string } = {}) {
   const t = createTestDb();
   const repo = tracked(opts.repo ?? makeTempRepo({ name: 'wmk' }));
   const projects = new ProjectService({ db: t.db, now: systemClock });
   const svc = new GitViewService({ db: t.db, now: systemClock, projects });
-  const project = projects.create({ name: 'We Made Kits', key: 'WMK', repoPath: repo });
+  const project = await projects.create({ name: 'We Made Kits', key: 'WMK', repoPath: repo });
   return { t, repo, svc, project };
 }
 
 describe('GitViewService.status', () => {
   it('reports a clean tree', async () => {
-    const { svc, project } = setup();
+    const { svc, project } = await setup();
     const s = await svc.status(project.id);
     expect(s).toMatchObject({ projectId: project.id, branch: 'main', upstream: null, ahead: null, behind: null, staged: [], changes: [], mergeState: 'none', agentBusy: false });
     expect((s.headSha ?? '').length).toBe(40);
   });
 
   it('splits staged and unstaged lists and detects untracked files', async () => {
-    const { repo, svc, project } = setup();
+    const { repo, svc, project } = await setup();
+    // Untracked files report `?? dirty.ts`, so the x=' '/y='M' expectation below needs the file
+    // tracked first, then modified; untracked detection stays covered by the stray file.
+    fs.writeFileSync(path.join(repo, 'dirty.ts'), 'y');
+    gitIn(repo, 'add', '.');
+    gitIn(repo, 'commit', '-q', '-m', 'tmp');
     fs.writeFileSync(path.join(repo, 'staged.ts'), 'x');
     gitIn(repo, 'add', 'staged.ts');
-    fs.writeFileSync(path.join(repo, 'dirty.ts'), 'y');
+    fs.writeFileSync(path.join(repo, 'dirty.ts'), 'y2');
     fs.writeFileSync(path.join(repo, 'stray.bin'), 'z');
     const s = await svc.status(project.id);
     expect(s.staged.map((f) => f.path)).toEqual(['staged.ts']);
@@ -478,7 +494,7 @@ describe('GitViewService.status', () => {
 
 describe('GitViewService.log + commitFiles', () => {
   it('lists recent commits newest first and expands a commit\'s files', async () => {
-    const { repo, svc, project } = setup();
+    const { repo, svc, project } = await setup();
     fs.writeFileSync(path.join(repo, 'two.txt'), '1');
     gitIn(repo, 'add', 'two.txt');
     gitIn(repo, 'commit', '-q', '-m', 'feat: second');
@@ -492,8 +508,8 @@ describe('GitViewService.log + commitFiles', () => {
 
 describe('GitViewService.branches', () => {
   it('lists local + remote branches and the current one', async () => {
-    const { repo } = makeTempRemoteAndClone(); // the clone's default branch is `trunk`
-    const { svc, project } = setup({ repo: tracked(repo) });
+    const { clone: repo } = makeTempRemoteAndClone(tracked); // the clone's default branch is `trunk`
+    const { svc, project } = await setup({ repo: tracked(repo) });
     gitIn(repo, 'switch', '-qc', 'feature/wing');
     gitIn(repo, 'switch', 'trunk');
     const b = await svc.branches(project.id);
@@ -681,7 +697,7 @@ export class GitViewService {
 - [ ] **Step 4: Run to verify it passes**
 
 Run: `npx vitest run apps/orchestrator/test/view-service.test.ts`
-Expected: PASS (5 tests)
+Expected: PASS — the 4 tests shown above, plus the tests added during execution fixes (root-commit file expansion, unknown-sha 404, and the Task 5/6 mutation suites appended to the same file).
 
 - [ ] **Step 5: Lint, typecheck, commit**
 
@@ -1970,8 +1986,10 @@ function purgeIn(tx: PurgeTx, projectId: number): { stories: number } {
   const stories = storyIds.length;
   const IN = storyIds.length > 0 ? `(${storyIds.map((r) => String(r.id)).join(', ')})` : '(SELECT id FROM user_stories WHERE project_id = 0)';
   const S = `story_id IN ${IN}`;
+  // Runs FIRST inside the transaction: user_stories FKs to plans/agent_runs are
+  // `ON DELETE no action`, so the active back-references must be nulled before any DELETE.
+  tx.run(sql`UPDATE user_stories SET active_plan_id = NULL, active_run_id = NULL WHERE project_id = ${projectId}`);
   const stmts: string[] = [
-    `UPDATE model_usage SET asset_run_id = NULL WHERE asset_run_id IN (SELECT id FROM agent_runs WHERE ${S})`,
     `DELETE FROM model_usage WHERE agent_run_id IN (SELECT id FROM agent_runs WHERE ${S})`,
     `DELETE FROM plans WHERE ${S}`, // clarifications cascade via plans.story_id
     `DELETE FROM review_ac_results WHERE review_id IN (SELECT id FROM reviews WHERE ${S}) OR acceptance_criterion_id IN (SELECT id FROM acceptance_criteria WHERE ${S})`,
@@ -1984,7 +2002,7 @@ function purgeIn(tx: PurgeTx, projectId: number): { stories: number } {
     `DELETE FROM pull_requests WHERE ${S}`,
     `DELETE FROM durable_jobs WHERE ${S}`,
     `DELETE FROM story_events WHERE ${S}`,
-    `DELETE FROM story_dependencies WHERE ${S} OR depends_on_story_id ${IN}`, // both FK stems
+    `DELETE FROM story_dependencies WHERE ${S} OR depends_on_story_id IN ${IN}`, // both FK stems
     `DELETE FROM agent_runs WHERE ${S}`, // after plans/reviews/model_usage are cleared
     `DELETE FROM workspaces WHERE ${S}`, // after agent_runs
     `DELETE FROM outbox_events WHERE ${S}`,
@@ -2002,6 +2020,8 @@ function purgeIn(tx: PurgeTx, projectId: number): { stories: number } {
   return { stories };
 }
 ```
+
+> Execution notes (as landed): `model_usage.asset_run_id` does not exist in the schema — the `UPDATE model_usage SET asset_run_id = NULL` statement from the original block is dropped (the `DELETE FROM model_usage` below already clears the `agent_run_id` FK stem). The `user_stories` back-reference UPDATE runs FIRST inside the transaction. Production wiring also matters: `apps/orchestrator/src/app.ts` constructs `WorktreeManager({ rootDir: paths.worktrees, db })` and passes `worktreePurge: (input) => worktreeManager.purgeForProject(input)` into `ProjectService` — the original plan left that assignment unassigned.
 
 - [ ] **Step 4: Add `WorktreeManager.purgeForProject` — modify `apps/orchestrator/src/git/worktree.ts`**
 
@@ -2278,20 +2298,20 @@ git commit -m "feat(ui): project delete with sanctioned two-step confirmation di
 ### Task 11: E2E — Git tab smoke and delete flow
 
 **Files:**
-- Test: `e2e/git-tab.spec.ts` (create)
+- Test: `e2e/tests/git-tab.spec.ts` (create) — playwright's `testDir` is `./tests`, so the spec lives under `e2e/tests/`, not `e2e/`.
 
 **Interfaces:**
-- Consumes: `launchApp`, `waitReady`, `apiCall`, `makeTempRepo`, `makeTempDir` from `e2e/fixtures.ts`; the built app (run `npm run build` first).
+- Consumes: `launchApp`, `waitReady`, `apiCall`, `makeTempRepo`, `makeTempDir` from `e2e/fixtures.ts`; the built app (run `npm run build` first). Note `e2e/fixtures.ts` already re-exports `makeTempRepo`/`makeTempDir` from `apps/orchestrator/test/helpers/temp.ts`.
 - Produces: confidence that stage→commit→delete works through the real bridge, and that the folder survives deletion.
 
-- [ ] **Step 1: Write `e2e/git-tab.spec.ts`**
+- [ ] **Step 1: Write `e2e/tests/git-tab.spec.ts`**
 
 ```ts
-// e2e/git-tab.spec.ts
+// e2e/tests/git-tab.spec.ts
 import fs from 'node:fs';
 import path from 'node:path';
 import { expect, test } from '@playwright/test';
-import { apiCall, launchApp, makeTempDir, makeTempRepo, waitReady } from './fixtures.ts';
+import { apiCall, launchApp, makeTempDir, makeTempRepo, waitReady } from '../fixtures.ts';
 
 test('git tab: stage, commit, then delete detaches without touching the folder', async () => {
   const repo = makeTempRepo({ name: 'wmk-e2e' });
@@ -2358,7 +2378,7 @@ Expected: PASS (2 tests). Debug rule: if the app shows orchestrator 'starting', 
 - [ ] **Step 3: Commit**
 
 ```bash
-git add e2e/git-tab.spec.ts
+git add e2e/tests/git-tab.spec.ts
 git commit -m "test(e2e): Git tab stage/commit and sanctioned project delete"
 ```
 
@@ -2369,7 +2389,7 @@ git commit -m "test(e2e): Git tab stage/commit and sanctioned project delete"
 **Files:**
 - Modify: `README.md` (feature bullets)
 
-- [ ] **Step 1: README — under the commands table add a "Project lifecycle" short section**
+- [x] **Step 1: README — under the commands table add a "Project lifecycle" short section**
 
 ```markdown
 ## Project lifecycle
@@ -2382,21 +2402,21 @@ git commit -m "test(e2e): Git tab stage/commit and sanctioned project delete"
   app-owned worktrees (`%LOCALAPPDATA%\AiKanban\wt`); your folder on disk and `.git` are never touched.
 ```
 
-- [ ] **Step 2: Repo-wide verification gate (AGENTS.md)**
+- [x] **Step 2: Repo-wide verification gate (AGENTS.md)**
 
 ```bash
 npm run check:pins && npm run lint && npm run typecheck && npm test
 ```
 Expected: all PASS. Run `npm run build && npm run e2e` once if time allows (e2e needs the build).
 
-- [ ] **Step 3: Commit the docs**
+- [x] **Step 3: Commit the docs**
 
 ```bash
-git add README.md
+git add README.md docs/superpowers/plans/2026-10-24-delete-project-and-git-view.md
 git commit -m "docs: project lifecycle — add, git tab, delete"
 ```
 
-- [ ] **Step 4: Mark the plan complete**
+- [x] **Step 4: Mark the plan complete**
 
 Update `docs/superpowers/plans/` execution-status notes following the repo convention used by prior plans (grep `docs: mark the .* plan complete` in git history for the pattern used before, e.g. commit `ea9f6b2`).
 
