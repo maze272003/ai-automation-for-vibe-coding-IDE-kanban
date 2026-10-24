@@ -3,14 +3,16 @@ import { BoardPage } from './routes/board.tsx';
 import { DashboardPage } from './routes/dashboard.tsx';
 import { RootLayout } from './routes/root.tsx';
 import { SettingsPage } from './routes/settings.tsx';
+import { UsagePage } from './routes/usage.tsx';
 
 const rootRoute = createRootRoute({ component: RootLayout });
 const dashboardRoute = createRoute({ getParentRoute: () => rootRoute, path: '/', component: DashboardPage });
 const boardRoute = createRoute({ getParentRoute: () => rootRoute, path: '/projects/$projectId', component: BoardPage });
+const usageRoute = createRoute({ getParentRoute: () => rootRoute, path: '/usage', component: UsagePage });
 const settingsRoute = createRoute({ getParentRoute: () => rootRoute, path: '/settings', component: SettingsPage });
 
 export const router = createRouter({
-  routeTree: rootRoute.addChildren([dashboardRoute, boardRoute, settingsRoute]),
+  routeTree: rootRoute.addChildren([dashboardRoute, boardRoute, usageRoute, settingsRoute]),
   history: createHashHistory(),
 });
 
