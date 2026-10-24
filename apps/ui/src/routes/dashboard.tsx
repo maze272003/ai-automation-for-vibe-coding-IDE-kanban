@@ -6,6 +6,7 @@ import { TopBar } from '../components/shell/top-bar.tsx';
 import { Badge } from '../components/ui/badge.tsx';
 import { Button } from '../components/ui/button.tsx';
 import { Card } from '../components/ui/card.tsx';
+import { Dialog } from '../components/ui/dialog.tsx';
 import { TextField } from '../components/ui/field.tsx';
 import { ApiRequestError, api } from '../lib/api.ts';
 import { cn } from '../lib/cn.ts';
@@ -82,8 +83,66 @@ function CreateProjectForm({ onCreated }: { onCreated: () => Promise<void> }) {
   );
 }
 
+/**
+ * Detach-only delete, two steps: step 1 explains exactly what happens and what
+ * is never touched; step 2 requires typing the project KEY. The parent owns
+ * `stage: 'none' | 'explain' | 'confirm'` so both stacked dialogs share state.
+ */
+function DeleteProjectDialog({ project, stage, setStage, onDeleted }: {
+  project: ProjectDTO;
+  stage: 'explain' | 'confirm' | 'none';
+  setStage: (s: 'none' | 'explain' | 'confirm') => void;
+  onDeleted: () => Promise<void>;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [typed, setTyped] = useState('');
+
+  const callDelete = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      await api.del(`/projects/${project.id}`);
+      setStage('none');
+      await onDeleted();
+    } catch (err) {
+      setError(err instanceof ApiRequestError ? err.reason : String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <>
+      <Dialog open={stage === 'explain'} title="Delete project from AI Kanban?" onClose={() => setStage('none')}>
+        <p className="text-sm text-muted" data-testid="project-delete-step1">
+          Removes <span className="font-semibold text-foreground">{project.key} · {project.name}</span> from AI Kanban — with its stories and any app-generated worktrees.{' '}
+          <span className="text-foreground">Your folder on disk and its git history are never touched:</span>{' '}
+          <span className="font-mono">{project.repoPath}</span>
+        </p>
+        {error && <p role="alert" className="mt-3 text-sm text-danger-foreground">{error}</p>}
+        <div className="mt-4 flex justify-end gap-2">
+          <Button onClick={() => setStage('none')}>Keep project</Button>
+          <Button variant="danger" disabled={busy} onClick={() => setStage('confirm')}>Continue…</Button>
+        </div>
+      </Dialog>
+      <Dialog open={stage === 'confirm'} title={`Type ${project.key} to confirm`} onClose={() => setStage('none')}>
+        <p className="text-sm text-muted" data-testid="project-delete-step2">This cannot be undone. The stories move out of AI Kanban together with the project.</p>
+        <input data-testid="project-delete-key-input" aria-label={`Type ${project.key} to confirm`} className="mt-3 w-full rounded-control border border-border bg-black/25 px-2.5 py-2 text-sm" value={typed} onChange={(e) => setTyped(e.target.value.toUpperCase())} />
+        {error && <p role="alert" className="mt-3 text-sm text-danger-foreground">{error}</p>}
+        <div className="mt-4 flex justify-end gap-2">
+          <Button onClick={() => setStage('none')}>Cancel</Button>
+          <Button variant="danger" disabled={busy || typed !== project.key} data-testid="project-delete-confirm" onClick={() => void callDelete()}>Delete project</Button>
+        </div>
+      </Dialog>
+    </>
+  );
+}
+
 export function DashboardPage() {
   const [projects, setProjects] = useState<ProjectDTO[]>([]);
+  const [deleteStageProject, setDeleteStageProject] = useState<ProjectDTO | null>(null);
+  const [deleteStage, setDeleteStage] = useState<'none' | 'explain' | 'confirm'>('none');
   const [activeTab, setActiveTab] = useState<'local' | 'github'>('local');
   const [isGitHubConnected, setIsGitHubConnected] = useState(false);
   const system = useSystemState();
@@ -189,6 +248,20 @@ export function DashboardPage() {
                         <Badge tone="muted">{p.baseBranch}</Badge>
                         {p.status === 'unavailable' ? <Badge tone="warn">unavailable</Badge> : <Badge tone="ok">ready</Badge>}
                       </div>
+                      <div className="mt-2 flex items-center justify-end">
+                        <button
+                          type="button"
+                          data-testid="project-card-actions"
+                          aria-label={`Project actions for ${p.key}`}
+                          className="rounded-control px-2 py-1 text-sm font-bold text-muted-2 hover:bg-surface-2 hover:text-foreground"
+                          onClick={() => {
+                            setDeleteStageProject(p);
+                            setDeleteStage('explain');
+                          }}
+                        >
+                          ⋯
+                        </button>
+                      </div>
                     </Card>
                   ))
                 )}
@@ -198,6 +271,14 @@ export function DashboardPage() {
             </>
           ) : (
             <RepositoryBrowser onProjectCreated={load} />
+          )}
+          {deleteStageProject && (
+            <DeleteProjectDialog
+              project={deleteStageProject}
+              stage={deleteStage}
+              setStage={setDeleteStage}
+              onDeleted={load}
+            />
           )}
         </div>
       </div>
