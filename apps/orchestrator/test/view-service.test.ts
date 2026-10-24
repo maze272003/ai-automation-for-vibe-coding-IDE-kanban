@@ -194,6 +194,25 @@ describe('GitViewService.stage/unstage/commit/discard', () => {
     expect(fs.readFileSync(path.join(repo, 'tracked.txt'), 'utf8')).toBe('# test\n');
   });
 
+  it('discards an untracked directory recursively (porcelain dir/ entry)', async () => {
+    const { repo, svc, project } = await setup();
+    fs.mkdirSync(path.join(repo, 'sub'));
+    fs.writeFileSync(path.join(repo, 'sub', 'inner.txt'), 'i');
+    let s = await svc.status(project.id);
+    expect(s.changes.map((f) => f.path)).toContain('sub/'); // porcelain reports the directory entry
+    s = await svc.discard(project.id, { paths: ['sub/'] });
+    expect(fs.existsSync(path.join(repo, 'sub'))).toBe(false);
+    expect(s.changes.map((f) => f.path)).toEqual([]);
+  });
+
+  it('rejects discard of a nonexistent path with VALIDATION_FAILED (no raw ENOENT)', async () => {
+    const { svc, project } = await setup();
+    await expect(svc.discard(project.id, { paths: ['missing.txt'] })).rejects.toMatchObject({
+      code: 'VALIDATION_FAILED',
+      message: 'Path not found in repo: missing.txt',
+    });
+  });
+
   it('refuses mutations while merge state is active', async () => {
     const { repo, svc, project } = await setup();
     // force MERGE_HEAD-like condition without a real merge: git merge with divergent branches

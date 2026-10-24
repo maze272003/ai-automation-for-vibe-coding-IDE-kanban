@@ -177,8 +177,17 @@ export class GitViewService {
 
   private resolveInRepo(project: Project, rel: string): string {
     const abs = path.resolve(project.repoPath, rel);
-    const real = fs.realpathSync.native(abs);
-    if (!(real === fs.realpathSync.native(project.repoPath) || real.startsWith(fs.realpathSync.native(project.repoPath) + path.sep))) {
+    // A caller-supplied path that does not exist makes `realpathSync` throw a raw ENOENT — map it to
+    // the same contract error the containment rejection below uses (§ interface: caller errors are
+    // ApiHttpError, never unmapped native failures).
+    let real: string;
+    try {
+      real = fs.realpathSync.native(abs);
+    } catch {
+      throw new ApiHttpError(400, 'VALIDATION_FAILED', `Path not found in repo: ${rel}`);
+    }
+    const root = fs.realpathSync.native(project.repoPath);
+    if (!(real === root || real.startsWith(root + path.sep))) {
       throw new ApiHttpError(400, 'VALIDATION_FAILED', `Path escapes the repository: ${rel}`);
     }
     return real;
@@ -244,7 +253,9 @@ export class GitViewService {
       else tracked.push(p);
     }
     if (untracked.length > 0) {
-      for (const p of untracked) fs.rmSync(this.resolveInRepo(project, p), { force: true });
+      // Untracked porcelain directories (`?? dir/`) must be removed recursively; `force` matches the
+      // prior single-file rm shape.
+      for (const p of untracked) fs.rmSync(this.resolveInRepo(project, p), { recursive: true, force: true });
     }
     if (tracked.length > 0) {
       try {
