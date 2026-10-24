@@ -10,6 +10,7 @@ import { AgentRunner } from './agents/runner.ts';
 import { OpenCodeRuntime } from './agents/runtime.ts';
 import { registerEventRoutes } from './api/routes/events.ts';
 import { registerGitHubRoutes } from './api/routes/github.ts';
+import { registerGitViewRoutes } from './api/routes/git-view.ts';
 import { registerHealthRoutes } from './api/routes/health.ts';
 import { registerMaintenanceRoutes } from './api/routes/maintenance.ts';
 import { registerMetricsRoutes } from './api/routes/metrics.ts';
@@ -32,10 +33,12 @@ import { GitHubRepositoryService } from './github/repository-service.ts';
 import { GitHubAuthService } from './github/service.ts';
 import { GitHubSyncService } from './github/sync-service.ts';
 import { LocalMerger } from './git/merger.ts';
+import { GitViewService } from './git/view-service.ts';
 import { WorktreeManager } from './git/worktree.ts';
 import { JobQueue } from './jobs/queue.ts';
 import { createLogger } from './logging/logger.ts';
 import { ProjectService } from './projects/service.ts';
+import { projectBusyReason } from './projects/busy.ts';
 import { ProviderService } from './providers/service.ts';
 import { createProviderVault } from './providers/vault.ts';
 import { createRedactor } from './secrets/redactor.ts';
@@ -174,6 +177,20 @@ export async function startOrchestrator(opts: OrchestratorOptions): Promise<Runn
     redact: redactor.redact,
   });
 
+  const gitView = new GitViewService({
+    db,
+    projects,
+    busy: (projectId) => projectBusyReason(db, projectId),
+    accessToken: async () => {
+      try {
+        const auth = await github.getValidAccessToken();
+        return auth?.token ?? null;
+      } catch {
+        return null;
+      }
+    },
+  });
+
   const stories = new StoryService({
     db,
     workflow,
@@ -225,6 +242,7 @@ export async function startOrchestrator(opts: OrchestratorOptions): Promise<Runn
   const app = createApiServer({ token: opts.token, getPort: () => port, logger });
   registerHealthRoutes(app, { db, versions: { ...opts.versions, node: process.versions.node }, dataDir: opts.dataDir });
   registerProjectRoutes(app, { db, now: systemClock, projects });
+  registerGitViewRoutes(app, { db, now: systemClock, gitView });
   // Root-relative `/providers` + `/settings/default-model` routes; only wired in managed mode.
   if (providerService) {
     registerProviderRoutes(app, { db, now: systemClock, providers: providerService });
