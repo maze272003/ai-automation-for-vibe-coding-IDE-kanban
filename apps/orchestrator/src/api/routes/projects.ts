@@ -19,4 +19,8 @@ export function registerProjectRoutes(app: FastifyInstance, deps: { db: AikDb; n
     status: 200,
     body: deps.projects.patch(parse(IdParams, req.params).id, parse(PatchProjectRequest, req.body)),
   }));
+  mutation(app, deps, 'DELETE', '/projects/:id', async (req) => {
+    const id = parse(IdParams, req.params).id;
+    return { status: 200, body: await deps.projects.delete(id) };
+  });
 }

@@ -7,6 +7,8 @@ import path from 'node:path';
 import { ApiHttpError } from '../api/errors.ts';
 import { git, stripCredentials } from '../git/git.ts';
 import { systemClock, type Clock } from '../time.ts';
+import { projectBusyReason } from './busy.ts';
+import { purgeProjectData } from './purge-repo.ts';
 
 type ProjectRow = typeof projects.$inferSelect;
 
@@ -25,13 +27,22 @@ async function detectBaseBranch(root: string): Promise<string> {
   return current || 'main';
 }
 
+export interface ProjectServiceDeps {
+  db: AikDb;
+  now?: Clock;
+  worktreePurge?: (input: { projectId: number; repoPath: string }) => Promise<string[]>;
+  purgeLog?: (line: string) => void;
+}
+
 export class ProjectService {
   private readonly db: AikDb;
   private readonly now: Clock;
+  private readonly deps: ProjectServiceDeps;
 
-  constructor(deps: { db: AikDb; now?: Clock }) {
+  constructor(deps: ProjectServiceDeps) {
     this.db = deps.db;
     this.now = deps.now ?? systemClock;
+    this.deps = deps;
   }
 
   list(): ProjectDTO[] {
@@ -83,6 +94,26 @@ export class ProjectService {
       .returning()
       .get();
     return toDTO(row!);
+  }
+
+  async delete(id: number): Promise<{ ok: true; stories: number; discardedWorktrees: string[] }> {
+    const project = this.get(id); // 404 unknown
+    const reason = projectBusyReason(this.db, id);
+    if (reason) throw new ApiHttpError(409, 'PROJECT_BUSY', reason);
+    let discardedWorktrees: string[] = [];
+    if (this.deps.worktreePurge) {
+      try {
+        discardedWorktrees = await this.deps.worktreePurge({ projectId: id, repoPath: project.repoPath });
+      } catch (err) {
+        const detail = err instanceof Error ? err.message : String(err);
+        throw new ApiHttpError(500, 'PROJECT_PURGE_FAILED', `Could not remove app-generated worktrees: ${detail}`, { retryable: true });
+      }
+    }
+    const result = purgeProjectData(this.db, id);
+    this.deps.purgeLog?.(
+      `${new Date(this.now()).toISOString()} purge project=${project.key} id=${id} stories=${result.stories} worktrees=${discardedWorktrees.length} ok=true`,
+    );
+    return { ok: true, stories: result.stories, discardedWorktrees };
   }
 
   async refreshAvailability(): Promise<void> {

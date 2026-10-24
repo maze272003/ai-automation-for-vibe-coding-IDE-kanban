@@ -1,5 +1,5 @@
 // apps/orchestrator/src/git/worktree.ts
-import { workspaces, type AikDb } from '@aik/db';
+import { userStories, workspaces, type AikDb } from '@aik/db';
 import { and, eq, ne } from 'drizzle-orm';
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
@@ -264,6 +264,34 @@ export class WorktreeManager {
     }
     this.markRemoved(worktreePath);
     return { removed: true };
+  }
+
+  /** Purges every non-removed app worktree row for a project's stories (sanctioned by PM-1 §4.3). */
+  async purgeForProject(input: { projectId: number; repoPath: string }): Promise<string[]> {
+    if (!this.db) return [];
+    const rows = this.db
+      .select({ id: workspaces.id, path: workspaces.path })
+      .from(workspaces)
+      .innerJoin(userStories, eq(workspaces.storyId, userStories.id))
+      .where(and(eq(userStories.projectId, input.projectId), ne(workspaces.status, 'removed')))
+      .all();
+    const discarded: string[] = [];
+    for (const row of rows) {
+      const p = this.contained(path.isAbsolute(row.path) ? path.relative(this.rootDir, row.path) : row.path);
+      try {
+        execFileSync('git', ['worktree', 'remove', '--force', p], { cwd: input.repoPath, encoding: 'utf8' });
+      } catch {
+        fs.rmSync(p, { recursive: true, force: true });
+      }
+      try {
+        execFileSync('git', ['worktree', 'prune'], { cwd: input.repoPath, encoding: 'utf8' });
+      } catch {
+        // ignore
+      }
+      this.db.update(workspaces).set({ status: 'removed', removedAt: new Date(this.now()) }).where(eq(workspaces.id, row.id)).run();
+      discarded.push(p);
+    }
+    return discarded;
   }
 
   private head(cwd: string): string | null {
