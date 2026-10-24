@@ -193,6 +193,19 @@ export class GitViewService {
     return real;
   }
 
+  /**
+   * Existence-free safety check for paths Git itself listed in the fresh status: those are
+   * repo-relative by construction (a tracked deletion ` D` does not even exist on disk, so the
+   * realpath check in {@link resolveInRepo} would wrongly reject it). Still reject empty,
+   * absolute, backdrive, or `..`-segment forms before they reach git/fs.
+   */
+  private assertListedPathSafe(rel: string): void {
+    if (rel === '') throw new ApiHttpError(400, 'VALIDATION_FAILED', 'Path must not be empty');
+    if (path.isAbsolute(rel) || /^[a-zA-Z]:/.test(rel) || rel.split(/[\\/]/).includes('..')) {
+      throw new ApiHttpError(400, 'VALIDATION_FAILED', `Path escapes the repository: ${rel}`);
+    }
+  }
+
   private async add(project: Project, paths: string[], flags: string[] = []): Promise<void> {
     try {
       await git(['add', ...flags, '--', ...paths], { cwd: project.repoPath });
@@ -244,8 +257,14 @@ export class GitViewService {
     const st = await this.status(projectId);
     const untracked: string[] = [];
     const tracked: string[] = [];
+    // Paths listed in the fresh status (staged/changes) are Git-verified repo-relative and are
+    // accepted without on-disk existence — a tracked worktree deletion (` D`) does not exist on
+    // disk, so `resolveInRepo`'s realpath check would wrongly reject it. Anything not listed keeps
+    // the existence-based containment check ('Path not found in repo' when unresolvable).
+    const listed = new Set([...st.staged, ...st.changes].map((f) => f.path));
     for (const p of body.paths) {
-      this.resolveInRepo(project, p);
+      if (listed.has(p)) this.assertListedPathSafe(p);
+      else this.resolveInRepo(project, p);
       // Brief deviation: `GitStatusDTO` has no `files` — the brief's duplicated `st.files.find(...)`
       // was meant as the staged/unstaged pair (`staged` | `changes`), matching its Note 1.
       const entry = st.staged.find((f) => f.path === p) ?? st.changes.find((f) => f.path === p);

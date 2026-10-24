@@ -213,6 +213,23 @@ describe('GitViewService.stage/unstage/commit/discard', () => {
     });
   });
 
+  it('recovers a tracked worktree deletion the status already lists ( D, no on-disk existence)', async () => {
+    const { repo, svc, project } = await setup();
+    // Same autocrlf pin as the restore test above: Windows checkout must keep the exact LF content.
+    gitIn(repo, 'config', 'core.autocrlf', 'false');
+    fs.writeFileSync(path.join(repo, 'gone.txt'), 'keep me\n');
+    gitIn(repo, 'add', 'gone.txt');
+    gitIn(repo, 'commit', '-q', '-m', 'track gone');
+    fs.rmSync(path.join(repo, 'gone.txt'));
+    let s = await svc.status(project.id);
+    expect(s.changes.find((f) => f.path === 'gone.txt')).toMatchObject({ x: ' ', y: 'D' });
+    // The deleted file is not on disk, so the realpath check would reject it — discard must run
+    // git restore instead because the path comes from the status listing.
+    s = await svc.discard(project.id, { paths: ['gone.txt'] });
+    expect(fs.readFileSync(path.join(repo, 'gone.txt'), 'utf8')).toBe('keep me\n');
+    expect(s.changes.map((f) => f.path)).toEqual([]);
+  });
+
   it('refuses mutations while merge state is active', async () => {
     const { repo, svc, project } = await setup();
     // force MERGE_HEAD-like condition without a real merge: git merge with divergent branches
