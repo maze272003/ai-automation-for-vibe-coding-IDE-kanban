@@ -151,3 +151,20 @@ The SPK-6 automated escape and feasibility probe suite executed on 2026-10-23 (s
 - **Path B Adopted:** `JobObjectIsolationRunner` implemented in [`apps/orchestrator/src/isolation/`](file:///c:/Users/USER/Documents/data/ai-kanban-automation/apps/orchestrator/src/isolation) wrapping the verified Go Job Object helper with process-tree cleanup (`KILL_ON_JOB_CLOSE`), memory caps (code 137), process caps, environment scrubbing, and temporary scratch directory redirection.
 - **Roadmap:** Story `ADV-2` (dedicated secondary low-privilege Windows user sandbox via `CreateProcessWithLogonW`) is promoted for future multi-user privilege boundaries.
 
+---
+
+## 7. Phase 4 Complete Implementation Summary (REL-1 through REL-8)
+
+All 8 Reliability and Isolation stories comprising Phase 4 have been implemented and verified:
+
+| Story | Feature | Implementation Artefacts | Verification & Invariants |
+|---|---|---|---|
+| **REL-1** | Job Object Process Tree Termination | [`apps/orchestrator/src/isolation/`](file:///c:/Users/USER/Documents/data/ai-kanban-automation/apps/orchestrator/src/isolation), `aiide-helper.exe` | Zero unprivileged escapes, `KILL_ON_JOB_CLOSE` terminates entire process hierarchy, 137 memory exit code. |
+| **REL-2** | Secret Leakage Prevention & Scanning | [`apps/orchestrator/src/secrets/`](file:///c:/Users/USER/Documents/data/ai-kanban-automation/apps/orchestrator/src/secrets) (`redactor.ts`, `scan.ts`) | All persisted and streamed outputs pass through redactor; staged diffs scanned with `scanText`. |
+| **REL-3** | Model Gateway Isolation & Ephemeral Auth | [`apps/orchestrator/src/gateway/`](file:///c:/Users/USER/Documents/data/ai-kanban-automation/apps/orchestrator/src/gateway), [`vault.ts`](file:///c:/Users/USER/Documents/data/ai-kanban-automation/apps/orchestrator/src/providers/vault.ts) | Loopback-only proxy with per-run memory token; provider secrets injected at egress and never exposed to agent. |
+| **REL-4** | Clean-Room Detached Verification | [`apps/orchestrator/src/verify/cleanroom.ts`](file:///c:/Users/USER/Documents/data/ai-kanban-automation/apps/orchestrator/src/verify/cleanroom.ts), [`runner.ts`](file:///c:/Users/USER/Documents/data/ai-kanban-automation/apps/orchestrator/src/verify/runner.ts) | Independent detached worktree with clean dependency install (`npm ci`); prevents `node_modules` drift. |
+| **REL-5** | Usage & Quota Dashboard | [`apps/orchestrator/src/metrics/`](file:///c:/Users/USER/Documents/data/ai-kanban-automation/apps/orchestrator/src/metrics), [`apps/ui/src/components/UsageDashboard.tsx`](file:///c:/Users/USER/Documents/data/ai-kanban-automation/apps/ui/src/components/UsageDashboard.tsx) | Aggregated token usage, latency, provider quota countdowns, model breakdown table; zero prompt leakage. |
+| **REL-6** | Unsigned NSIS Installer & Electron Fuses | [`apps/desktop/package.json`](file:///c:/Users/USER/Documents/data/ai-kanban-automation/apps/desktop/package.json), [`apps/desktop/scripts/apply-fuses.ts`](file:///c:/Users/USER/Documents/data/ai-kanban-automation/apps/desktop/scripts/apply-fuses.ts) | Unprivileged per-user NSIS installer (`perMachine: false`), data preserved (`%LOCALAPPDATA%\AiKanban`), hardened fuses. |
+| **REL-7** | Retention Pruning & Diagnostics Export | [`apps/orchestrator/src/maintenance/`](file:///c:/Users/USER/Documents/data/ai-kanban-automation/apps/orchestrator/src/maintenance) (`retention.ts`, `diagnostics.ts`) | Prunes expired jobs, outbox events, and workspaces; strictly preserves immutable audit tables (`reviews`, `merges`, etc.). |
+| **REL-8** | OpenCode Upgrade Contract-Suite Gate | [`scripts/opencode-upgrade-gate.ts`](file:///c:/Users/USER/Documents/data/ai-kanban-automation/scripts/opencode-upgrade-gate.ts), `packages/contracts/resources/` | Validates OpenAPI schema compatibility, tests contracts suite, enforces baseline operation inventory. |
+
