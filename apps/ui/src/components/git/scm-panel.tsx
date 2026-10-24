@@ -59,20 +59,26 @@ export interface ScmPanelProps {
 
 export function ScmPanel({ status, branches, busy, onStage, onUnstage, onCommit, onDiscard, onCheckout, onCreate, onPush, onPull, syncBusy }: ScmPanelProps) {
   const [message, setMessage] = useState('');
+  const [committing, setCommitting] = useState(false);
   const noRemote = status.upstream === null;
   const dirtySwitch = status.staged.length + status.changes.length > 0;
   const locked = status.agentBusy || syncBusy || status.mergeState !== 'none';
-  const canCommit = !locked && !busy && status.staged.length > 0 && message.trim() !== '';
+  const canCommit = !locked && !busy && !committing && status.staged.length > 0 && message.trim() !== '';
 
-  // Await the commit before clearing so a failed commit keeps the typed message.
+  // Await the commit before clearing so a failed commit keeps the typed message,
+  // and hold `committing` through the POST so a double-click or Ctrl+Enter can't
+  // fire a second commit while the first is in flight.
   const commit = async () => {
     const m = message.trim();
-    if (m === '') return;
+    if (m === '' || committing) return;
+    setCommitting(true);
     try {
       await onCommit(m);
       setMessage('');
     } catch {
       // Parent surfaces the failure via its error state; keep the text.
+    } finally {
+      setCommitting(false);
     }
   };
 
