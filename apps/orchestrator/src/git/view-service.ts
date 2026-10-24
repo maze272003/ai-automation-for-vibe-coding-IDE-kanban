@@ -137,7 +137,12 @@ export class GitViewService {
 
   async commitFiles(projectId: number, sha: string): Promise<CommitFilesDTO> {
     const project = this.project(projectId);
-    const out = await this.raw(project, ['diff-tree', '--no-commit-id', '--name-status', '-r', sha]).catch(() => '');
+    // Unknown sha → 404 NOT_FOUND per the brief's declared interface: verify the sha resolves to a
+    // commit first (`--verify --quiet` exits non-zero with no output when it does not).
+    const commit = await this.raw(project, ['rev-parse', '--verify', '--quiet', `${sha}^{commit}`]).catch(() => '');
+    if (commit.trim() === '') throw new ApiHttpError(404, 'NOT_FOUND', 'Commit not found.');
+    // --root: the root commit has no parent, so plain `-r` prints nothing for it.
+    const out = await this.raw(project, ['diff-tree', '--root', '--no-commit-id', '--name-status', '-r', sha]);
     const files = out
       .split('\n')
       .filter((l) => l.trim() !== '')

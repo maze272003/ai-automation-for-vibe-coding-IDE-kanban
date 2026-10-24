@@ -21,8 +21,9 @@ const gitIn = (cwd: string, ...args: string[]) => {
   return execFileSync('git', ['-c', 'user.name=aik-test', '-c', 'user.email=aik-test@localhost', ...args], { cwd, encoding: 'utf8' }).trim();
 };
 
-export function makeTempRepo(opts: { name?: string } = {}): string {
+export function makeTempRepo(opts: { name?: string; track?: (dir: string) => void } = {}): string {
   const parent = makeTempDir('aikanban-test-repo-');
+  opts.track?.(parent);
   const dir = path.join(parent, opts.name ?? 'repo');
   fs.mkdirSync(dir);
   gitIn(dir, 'init', '-q', '-b', 'main');
@@ -32,13 +33,18 @@ export function makeTempRepo(opts: { name?: string } = {}): string {
   return dir;
 }
 
-/** A bare "remote" whose default branch is `trunk`, plus a clone of it. */
-export function makeTempRemoteAndClone(): { remote: string; clone: string } {
-  const seed = makeTempRepo();
+/** A bare "remote" whose default branch is `trunk`, plus a clone of it. `track` (optional) receives
+ *  every temp root created here (seed repo parent, remote parent, clone parent) for test cleanup. */
+export function makeTempRemoteAndClone(track?: (dir: string) => void): { remote: string; clone: string } {
+  const seed = makeTempRepo({ track });
   gitIn(seed, 'branch', '-m', 'trunk');
-  const remote = path.join(makeTempDir('aikanban-test-remote-'), 'remote.git');
+  const remoteRoot = makeTempDir('aikanban-test-remote-');
+  track?.(remoteRoot);
+  const remote = path.join(remoteRoot, 'remote.git');
+  const cloneRoot = makeTempDir('aikanban-test-clone-');
+  track?.(cloneRoot);
+  const clone = path.join(cloneRoot, 'clone');
   execFileSync('git', ['clone', '-q', '--bare', seed, remote]);
-  const clone = path.join(makeTempDir('aikanban-test-clone-'), 'clone');
   execFileSync('git', ['clone', '-q', remote, clone]);
   return { remote, clone };
 }

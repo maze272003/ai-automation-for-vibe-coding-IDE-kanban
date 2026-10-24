@@ -72,14 +72,29 @@ describe('GitViewService.log + commitFiles', () => {
     const files = await svc.commitFiles(project.id, log.commits[0]!.sha);
     expect(files.files).toEqual([{ path: 'two.txt', change: 'A' }]);
   });
+
+  it('expands the root commit\'s file list (--root)', async () => {
+    const { svc, project } = await setup();
+    const log = await svc.log(project.id);
+    const root = log.commits[log.commits.length - 1]!;
+    expect(root.parents).toEqual([]);
+    const files = await svc.commitFiles(project.id, root.sha);
+    expect(files.files).toEqual([{ path: 'README.md', change: 'A' }]);
+  });
+
+  it('rejects an unknown sha with 404 NOT_FOUND', async () => {
+    const { svc, project } = await setup();
+    await expect(svc.commitFiles(project.id, 'a'.repeat(40))).rejects.toMatchObject({ statusCode: 404, code: 'NOT_FOUND' });
+  });
 });
 
 describe('GitViewService.branches', () => {
   it('lists local + remote branches and the current one', async () => {
     // Brief deviation: makeTempRemoteAndClone returns { remote, clone } — the brief's original
     // `const { repo } = ...` left repo undefined, so the switch commands ran in the real working
-    // repository. Destructure the clone so everything stays inside the OS temp dir.
-    const { clone: repo } = makeTempRemoteAndClone(); // the clone's default branch is `trunk`
+    // repository. Destructure the clone so everything stays inside the OS temp dir, and pass a
+    // track callback so the helper's separate seed/remote/clone temp roots are cleaned up too.
+    const { clone: repo } = makeTempRemoteAndClone(tracked); // the clone's default branch is `trunk`
     const { svc, project } = await setup({ repo: tracked(repo) });
     gitIn(repo, 'switch', '-qc', 'feature/wing');
     gitIn(repo, 'switch', 'trunk');
