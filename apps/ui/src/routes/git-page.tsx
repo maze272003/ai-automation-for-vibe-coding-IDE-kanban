@@ -71,11 +71,14 @@ export function GitPage() {
             onCommit={async (message) => {
               setActionError(null);
               try {
+                setBusy(true);
                 await gitActions.commit(id, { message });
                 await Promise.all([refetch(), refetchBranches()]);
               } catch (err) {
                 setActionError(err instanceof ApiRequestError ? err.reason : String(err));
                 throw err; // SCP commit keeps the typed message when this rejects.
+              } finally {
+                setBusy(false);
               }
             }}
             onDiscard={(p) => setDiscarding(p)}
