@@ -7,5 +7,34 @@
     "@aik/contracts": "0.0.0",
     "@aik/db": "0.0.0",
     "zod": "4.6.7"
+  },
+  "build": {
+    "appId": "com.aikanban.desktop",
+    "productName": "AI Kanban",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "assets/opencode-runtime",
+        "to": "opencode-runtime",
+        "filter": ["**/*"]
+      }
+    ],
+    "win": {
+      "target": "nsis",
+      "executableName": "AI-Kanban"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "deleteAppDataOnUninstall": false
+    }
   }
 }

@@ -17,6 +17,7 @@
     "build:shell": "node apps/desktop/scripts/build.mjs --no-ui",
     "start": "electron apps/desktop/dist",
     "dev": "node apps/desktop/scripts/dev.mjs",
+    "package:verify": "node --experimental-strip-types scripts/verify-packaging.ts",
     "e2e": "playwright test -c e2e/playwright.config.ts"
   },
   "devDependencies": {
