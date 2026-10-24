@@ -12,6 +12,8 @@ const RULES: Rule[] = [
   { re: /\bgithub_pat_[A-Za-z0-9_]{22,}\b/g, replace: () => '[REDACTED:github-token]' },
   { re: /\bsk-(?:proj-|ant-[a-z0-9]+-)?[A-Za-z0-9_-]{20,}\b/g, replace: () => '[REDACTED:api-key]' },
   { re: /\bAIza[0-9A-Za-z_-]{35}\b/g, replace: () => '[REDACTED:api-key]' },
+  { re: /\bAKIA[0-9A-Z]{16}\b/g, replace: () => '[REDACTED:aws-key]' },
+  { re: /\bxox[baprs]-[A-Za-z0-9-]{10,}\b/g, replace: () => '[REDACTED:slack-token]' },
   {
     re: /((?:proxy-)?authorization["']?\s*[:=]\s*["']?)(?:(?:bearer|basic|token)\s+)?[^\s"',;}]+/gi,
     replace: (_m, prefix) => `${prefix}[REDACTED]`,
