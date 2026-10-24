@@ -274,6 +274,7 @@ export function DashboardPage() {
           )}
           {deleteStageProject && (
             <DeleteProjectDialog
+              key={deleteStageProject.id}
               project={deleteStageProject}
               stage={deleteStage}
               setStage={setDeleteStage}

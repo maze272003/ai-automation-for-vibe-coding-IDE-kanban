@@ -64,5 +64,10 @@ export type GitDiscardRequest = z.infer<typeof GitDiscardRequest>;
 export const GitBranchCheckoutRequest = z.object({ name: z.string().min(1).max(200) }).strict();
 export type GitBranchCheckoutRequest = z.infer<typeof GitBranchCheckoutRequest>;
 
-export const GitBranchCreateRequest = z.object({ name: z.string().min(1).max(200), from: z.string().max(200).optional() }).strict();
+export const GitBranchCreateRequest = z.object({
+  name: z.string().min(1).max(200),
+  // A leading dash would make git parse the start point as an option, so reject it at the route
+  // (400 VALIDATION_FAILED) instead of letting a malformed `git switch -c name -evil` run.
+  from: z.string().max(200).refine((s) => !s.startsWith('-'), 'Start point must not begin with a dash').optional(),
+}).strict();
 export type GitBranchCreateRequest = z.infer<typeof GitBranchCreateRequest>;

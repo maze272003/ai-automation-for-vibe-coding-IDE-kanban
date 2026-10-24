@@ -374,8 +374,13 @@ export class GitViewService {
     if (exists) throw new ApiHttpError(400, 'BRANCH_INVALID', `Branch "${body.name}" already exists.`);
     // Branching from a different start point must not stomp a dirty tree:
     // branching from the current HEAD never touches the working tree, so the dirty
-    // check only applies when `from` points elsewhere.
-    if (body.from) await this.ensureDirty(project, `Creating a branch from ${body.from}`);
+    // check only applies when `from` points elsewhere. An unresolvable start point
+    // must surface as 400 BRANCH_INVALID, not a raw `git switch` failure (500).
+    if (body.from) {
+      const start = await this.raw(project, ['rev-parse', '--verify', '--quiet', `${body.from}^{commit}`]).catch(() => '');
+      if (start.trim() === '') throw new ApiHttpError(400, 'BRANCH_INVALID', `No commit found at start point "${body.from}".`);
+      await this.ensureDirty(project, `Creating a branch from ${body.from}`);
+    }
     try {
       await git(['switch', '-c', body.name, ...(body.from ? [body.from] : [])], { cwd: project.repoPath });
     } catch (err) {

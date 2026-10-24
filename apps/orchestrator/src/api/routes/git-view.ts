@@ -13,12 +13,12 @@ import { z } from 'zod';
 export function registerGitViewRoutes(app: FastifyInstance, deps: { db: AikDb; now: Clock; gitView: GitViewService }): void {
   const idOf = (req: { params: unknown }) => parse(IdParams, req.params).id;
   const ShaParams = z.object({ id: z.coerce.number().int().positive(), sha: z.string().regex(/^[0-9a-f]{40}$/) });
+  // The service caps the log at 200 commits; a non-numeric limit must be a 400, not a NaN that
+  // reaches git as `--max-count=NaN` and explodes into a 500.
+  const LogQuery = z.object({ limit: z.coerce.number().int().min(1).max(200).optional() });
 
   app.get('/projects/:id/git/status', async (req) => deps.gitView.status(idOf(req)));
-  app.get('/projects/:id/git/log', async (req) => {
-    const q = req.query as { limit?: string };
-    return deps.gitView.log(idOf(req), q.limit ? Number(q.limit) : 50);
-  });
+  app.get('/projects/:id/git/log', async (req) => deps.gitView.log(idOf(req), parse(LogQuery, req.query).limit ?? 50));
   app.get('/projects/:id/git/commits/:sha/files', async (req) => {
     const p = parse(ShaParams, req.params);
     return deps.gitView.commitFiles(p.id, p.sha);

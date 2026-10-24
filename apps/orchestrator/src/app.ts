@@ -1,6 +1,7 @@
 // apps/orchestrator/src/app.ts
 import { openDatabase } from '@aik/db';
 import fs from 'node:fs';
+import path from 'node:path';
 import type { AddressInfo } from 'node:net';
 import { ImplementerAgent } from './agents/implementer.ts';
 import { RunInterruptRegistry } from './agents/interrupts.ts';
@@ -124,6 +125,10 @@ export async function startOrchestrator(opts: OrchestratorOptions): Promise<Runn
   const projects = new ProjectService({
     db,
     worktreePurge: (input) => worktreeManager.purgeForProject(input),
+    // Spec §4.3: every sanctioned purge leaves an audit line in logs/audit-purge.log. The line
+    // carries counts/keys only (built in ProjectService.delete), never secrets; the logs dir is
+    // created at startup above, so the synchronous append always has a target.
+    purgeLog: (line) => fs.appendFileSync(path.join(paths.logs, 'audit-purge.log'), `${line}\n`),
   });
   // Provider stack (spec PK-1..PK-4), gated on the per-run gateway token: managed mode only.
   // Ordering matters — the vault feeds the service, the service feeds the routes, the

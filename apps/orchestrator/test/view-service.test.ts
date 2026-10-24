@@ -329,4 +329,15 @@ describe('GitViewService branches: checkout/create', () => {
     fs.writeFileSync(path.join(repo, 'dirty.txt'), 'd');
     await expect(svc.checkout(project.id, { name: 'elsewhere' })).rejects.toMatchObject({ code: 'WORKING_TREE_DIRTY' });
   });
+
+  it('creates from an explicit start point, but rejects an unknown one with 400 BRANCH_INVALID', async () => {
+    const { svc, project } = await setup();
+    const fromMain = await svc.createBranch(project.id, { name: 'story/wing', from: 'main' });
+    expect(fromMain.branch).toBe('story/wing');
+    // an unresolvable start point must surface as 400, not a raw `git switch` 500
+    await expect(svc.createBranch(project.id, { name: 'story/gone', from: 'no-such-ref' })).rejects.toMatchObject({
+      statusCode: 400,
+      code: 'BRANCH_INVALID',
+    });
+  });
 });

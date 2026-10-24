@@ -14,8 +14,13 @@ export class GitError extends Error {
 
 /** Runs git with interactive prompts and credential helpers disabled (spec §13.4). */
 export function git(args: string[], opts: { cwd: string; timeoutMs?: number; input?: string }): Promise<string> {
+  // LC_ALL/LANGUAGE pin git's messages to English: the DIVERGED and IDENTITY_MISSING guards
+  // match stderr text, which a localized git install would break. The rest of process.env
+  // stays intact — only these keys are merged in.
   const env: NodeJS.ProcessEnv = {
     ...process.env,
+    LC_ALL: 'C',
+    LANGUAGE: 'C',
     GIT_TERMINAL_PROMPT: '0',
     GCM_INTERACTIVE: 'never',
     GIT_CONFIG_COUNT: '1',
@@ -68,6 +73,10 @@ export async function gitWithCredentials(
 
   const env: NodeJS.ProcessEnv = {
     ...process.env,
+    // Same locale pin as git(): stderr-text guards (DIVERGED, IDENTITY_MISSING) rely on
+    // English messages regardless of the machine's git language settings.
+    LC_ALL: 'C',
+    LANGUAGE: 'C',
     GIT_TERMINAL_PROMPT: '0',
     GCM_INTERACTIVE: 'never',
     GIT_CONFIG_COUNT: '2',

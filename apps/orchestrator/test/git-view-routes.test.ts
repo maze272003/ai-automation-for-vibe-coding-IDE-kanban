@@ -64,4 +64,28 @@ describe('git view routes', () => {
     expect(hybrid.statusCode).toBe(400);
     expect(hybrid.json().error.code).toBe('VALIDATION_FAILED');
   });
+
+  it('rejects a dashed branch-create start point with VALIDATION_FAILED', async () => {
+    const { inject } = await buildTestApp();
+    const repo = makeTempRepo({ name: 'dashed-from' });
+    tempDirs.push(path.dirname(repo));
+    const created = await inject('POST', '/projects', { name: 'D', key: 'DSH', repoPath: repo });
+    expect(created.statusCode).toBe(201);
+    const id = JSON.parse(created.body).id as number;
+    const res = await inject('POST', `/projects/${id}/git/branches/create`, { name: 'evil', from: '-evil' });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error.code).toBe('VALIDATION_FAILED');
+  });
+
+  it('rejects a non-numeric log limit with VALIDATION_FAILED', async () => {
+    const { inject } = await buildTestApp();
+    const repo = makeTempRepo({ name: 'bad-limit' });
+    tempDirs.push(path.dirname(repo));
+    const created = await inject('POST', '/projects', { name: 'L', key: 'LIM', repoPath: repo });
+    expect(created.statusCode).toBe(201);
+    const id = JSON.parse(created.body).id as number;
+    const res = await inject('GET', `/projects/${id}/git/log?limit=abc`);
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error.code).toBe('VALIDATION_FAILED');
+  });
 });
