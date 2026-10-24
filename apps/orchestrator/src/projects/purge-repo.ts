@@ -33,6 +33,14 @@ function purgeIn(tx: PurgeTx, projectId: number): { stories: number } {
   // are read through the query builder instead of a raw better-sqlite3 statement.
   const storyIds = tx.select({ id: userStories.id }).from(userStories).where(eq(userStories.projectId, projectId)).all();
   const stories = storyIds.length;
+  // Null the story→plans/agent_runs back-references before any DELETE. Both FKs are
+  // ON DELETE no action, so SQLite aborts the plans/agent_runs DELETEs below while the
+  // pointers exist (foreign_keys = ON, packages/db/src/open.ts). This is pointer nulling,
+  // not a story-status change: the AGENTS.md WorkflowService rule binds user_stories.status
+  // only, and review adjudicated this as the correct fix. Sweep of the schema: active_plan_id
+  // and active_run_id are the only user_stories columns FK-ing to tables deleted in this
+  // transaction (project_id → projects is deleted after user_stories and is NOT NULL).
+  tx.run(sql`UPDATE user_stories SET active_plan_id = NULL, active_run_id = NULL WHERE project_id = ${projectId}`);
   const IN = storyIds.length > 0 ? `(${storyIds.map((r) => String(r.id)).join(', ')})` : '(SELECT id FROM user_stories WHERE project_id = 0)';
   const S = `story_id IN ${IN}`;
   const stmts: string[] = [

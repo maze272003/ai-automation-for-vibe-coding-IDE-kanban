@@ -117,8 +117,14 @@ export async function startOrchestrator(opts: OrchestratorOptions): Promise<Runn
     if (!r.ok) logger.warn({ jobId: job.jobId, storyId: job.storyId, code: r.code }, 'could not block story for interrupted job');
   }
 
-  const projects = new ProjectService({ db });
+  // Worktree purge wiring mirrors buildTestApp one-to-one: DELETE /projects/:id discards the
+  // app-generated worktrees via the same manager used for isolation before the DB purge runs
+  // (their workspaces rows go first, so purgeForProject must run before purgeProjectData).
   const worktreeManager = new WorktreeManager({ rootDir: paths.worktrees, db });
+  const projects = new ProjectService({
+    db,
+    worktreePurge: (input) => worktreeManager.purgeForProject(input),
+  });
   // Provider stack (spec PK-1..PK-4), gated on the per-run gateway token: managed mode only.
   // Ordering matters — the vault feeds the service, the service feeds the routes, the
   // default-model lookup feeds the runtime, and the gateway is started once ports are bound.

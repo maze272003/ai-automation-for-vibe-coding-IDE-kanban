@@ -2,12 +2,13 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { agentRuns, storyEvents } from '@aik/db';
+import { agentRuns, plans, storyEvents, userStories } from '@aik/db';
+import { eq } from 'drizzle-orm';
 import { purgeProjectData } from '../src/projects/purge-repo.ts';
 import { WorktreeManager } from '../src/git/worktree.ts';
 import { ProjectService } from '../src/projects/service.ts';
 import { buildTestApp } from './helpers/app.ts';
-import { createTestDb, seedProject, seedStory } from './helpers/db.ts';
+import { createTestDb, forceStory, seedPlan, seedProject, seedStory } from './helpers/db.ts';
 import { makeTempDir, makeTempRepo } from './helpers/temp.ts';
 
 const tempDirs: string[] = [];
@@ -41,6 +42,33 @@ describe('DELETE /projects/:id (sanctioned purge)', () => {
     expect(res.statusCode).toBe(409);
     expect(res.json().error.code).toBe('PROJECT_BUSY');
     expect(res.json().error.message).toContain(s.key);
+  });
+
+  it('purges a story that reached planning (active_plan_id/active_run_id back-references)', async () => {
+    const { inject, t } = await buildTestApp();
+    const repo = makeTempRepo({ name: 'planned' });
+    tempDirs.push(path.dirname(repo));
+    const created = await inject('POST', '/projects', { name: 'X', key: 'PL', repoPath: repo });
+    const id = JSON.parse(created.body).id as number;
+    const s = seedStory(t.db, id);
+    const plan = seedPlan(t.db, s.id);
+    const run = t.db
+      .insert(agentRuns)
+      .values({
+        storyId: s.id, role: 'planner', attempt: 1, promptVersion: 'v1', opencodeVersion: '0',
+        idempotencyKey: 'k-del-2', status: 'succeeded', startedAt: new Date(1_700_000_000_000), endedAt: new Date(1_700_000_001_000),
+      })
+      .returning()
+      .get();
+    // Arrange-only pointer setup (a succeeded run keeps the project non-busy): the story now
+    // back-references plans/agent_runs, which the purge deletes before user_stories.
+    forceStory(t.db, s.id, { activePlanId: plan.id, activeRunId: run.id });
+    const res = await inject('DELETE', `/projects/${id}`);
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ ok: true, stories: 1, discardedWorktrees: [] });
+    expect(t.db.select().from(userStories).where(eq(userStories.projectId, id)).all()).toHaveLength(0);
+    expect(t.db.select().from(plans).where(eq(plans.storyId, s.id)).all()).toHaveLength(0);
+    expect(t.db.select().from(agentRuns).where(eq(agentRuns.storyId, s.id)).all()).toHaveLength(0);
   });
 });
 
