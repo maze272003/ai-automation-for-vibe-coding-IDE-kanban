@@ -1,5 +1,5 @@
 // apps/orchestrator/src/git/view-service.ts
-import { type BranchListDTO, type CommitDTO, type CommitFilesDTO, type CommitLogDTO, type GitDiscardRequest, type GitCommitRequest, type GitStageRequest, type GitStatusDTO } from '@aik/contracts';
+import { type BranchListDTO, type CommitDTO, type CommitFilesDTO, type CommitLogDTO, type GitBranchCheckoutRequest, type GitBranchCreateRequest, type GitDiscardRequest, type GitCommitRequest, type GitStageRequest, type GitStatusDTO } from '@aik/contracts';
 import type { AikDb } from '@aik/db';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -89,12 +89,16 @@ export class GitViewService {
     const staged = parsed.files.filter((f) => f.x !== ' ' && f.x !== '?');
     const changes = parsed.files.filter((f) => f.y !== ' ');
     const mergeState = await this.mergeState(project);
+    // When an upstream exists porcelain omits the `[ahead/behind]` bracket in the in-sync case;
+    // `null` stays reserved for "no upstream", so a sync'd branch reports concrete 0s.
+    const ahead = parsed.upstream ? parsed.ahead ?? 0 : null;
+    const behind = parsed.upstream ? parsed.behind ?? 0 : null;
     return {
       projectId,
       branch: parsed.branch,
       upstream: parsed.upstream,
-      ahead: parsed.ahead,
-      behind: parsed.behind,
+      ahead,
+      behind,
       staged,
       changes,
       mergeState,
@@ -282,6 +286,100 @@ export class GitViewService {
       } catch (err) {
         throw gitErrorToApi(err, 'git restore failed');
       }
+    }
+    return this.status(projectId);
+  }
+
+  /** Pull/checkout are blocked while the working tree holds uncommitted changes. */
+  private async ensureDirty(project: Project, what: string): Promise<void> {
+    const out = await this.raw(project, ['status', '--porcelain=v1', '-z']);
+    if (out.split('\0').some((f) => f.trimEnd() !== '')) {
+      throw new ApiHttpError(409, 'WORKING_TREE_DIRTY', `${what} is blocked while there are uncommitted changes — stage, push or discard them first.`);
+    }
+  }
+
+  private async requireOrigin(project: Project): Promise<void> {
+    try {
+      await git(['remote', 'get-url', 'origin'], { cwd: project.repoPath });
+    } catch {
+      throw new ApiHttpError(409, 'NO_REMOTE', 'This repository has no "origin" remote — add one in your terminal (git remote add origin <url>) to enable sync.');
+    }
+  }
+
+  async push(projectId: number): Promise<GitMutationResult> {
+    const project = await this.assertMutable(projectId);
+    await this.requireOrigin(project);
+    const run = await this.runner(project);
+    try {
+      // `-u` pins the upstream on the first push so later pull is possible without a refspec.
+      await run(['push', '-u', 'origin', 'HEAD'], 120_000);
+    } catch (err) {
+      throw gitErrorToApi(err, 'git push failed');
+    }
+    return this.status(projectId);
+  }
+
+  async pull(projectId: number): Promise<GitMutationResult> {
+    const project = await this.assertMutable(projectId);
+    await this.requireOrigin(project);
+    await this.ensureDirty(project, 'Pull');
+    try {
+      await git(['rev-parse', '-q', '--verify', '@{u}'], { cwd: project.repoPath });
+    } catch {
+      throw new ApiHttpError(409, 'NO_REMOTE', 'The current branch has no upstream — push once (Push sets upstream) or pull a specific branch in the terminal.');
+    }
+    const run = await this.runner(project);
+    try {
+      await run(['pull', '--ff-only', 'origin'], 120_000);
+    } catch (err) {
+      // Brief deviation: the existing runner converts every GitError to ApiHttpError (both its
+      // plain and credential paths embed the stderr in the message), so the brief's
+      // `err instanceof GitError` check could never match here. Detect the fast-forward refusal
+      // from the message text instead — same contract, both runner paths.
+      if (err instanceof ApiHttpError && /not possible to fast-forward/i.test(err.message)) {
+        throw new ApiHttpError(409, 'DIVERGED', 'Pull would need a merge — resolve by rebasing/merging in your terminal, then push or pull again.');
+      }
+      throw err;
+    }
+    return this.status(projectId);
+  }
+
+  async checkout(projectId: number, body: GitBranchCheckoutRequest): Promise<GitMutationResult> {
+    const project = await this.assertMutable(projectId);
+    const exists = await this.raw(project, ['rev-parse', '--verify', '-q', `refs/heads/${body.name}`]).catch(() => '');
+    if (!exists) {
+      const remoteOnly = await this.raw(project, ['branch', '--remotes', '--format=%(refname:short)']).catch(() => '');
+      if (remoteOnly.split('\n').includes(body.name)) {
+        throw new ApiHttpError(400, 'BRANCH_INVALID', `"${body.name}" exists only on the remote — switch to its local twin or create it first.`);
+      }
+      throw new ApiHttpError(400, 'BRANCH_INVALID', `No local branch named "${body.name}".`);
+    }
+    await this.ensureDirty(project, `Switching to ${body.name}`);
+    try {
+      await git(['checkout', body.name], { cwd: project.repoPath });
+    } catch (err) {
+      throw gitErrorToApi(err, 'git checkout failed');
+    }
+    return this.status(projectId);
+  }
+
+  async createBranch(projectId: number, body: GitBranchCreateRequest): Promise<GitMutationResult> {
+    const project = await this.assertMutable(projectId);
+    try {
+      await git(['check-ref-format', '--branch', body.name], { cwd: project.repoPath });
+    } catch {
+      throw new ApiHttpError(400, 'BRANCH_INVALID', `"${body.name}" is not a valid branch name.`);
+    }
+    const exists = await this.raw(project, ['rev-parse', '--verify', '-q', `refs/heads/${body.name}`]).catch(() => '');
+    if (exists) throw new ApiHttpError(400, 'BRANCH_INVALID', `Branch "${body.name}" already exists.`);
+    // Branching from a different start point must not stomp a dirty tree:
+    // branching from the current HEAD never touches the working tree, so the dirty
+    // check only applies when `from` points elsewhere.
+    if (body.from) await this.ensureDirty(project, `Creating a branch from ${body.from}`);
+    try {
+      await git(['switch', '-c', body.name, ...(body.from ? [body.from] : [])], { cwd: project.repoPath });
+    } catch (err) {
+      throw gitErrorToApi(err, 'git switch failed');
     }
     return this.status(projectId);
   }

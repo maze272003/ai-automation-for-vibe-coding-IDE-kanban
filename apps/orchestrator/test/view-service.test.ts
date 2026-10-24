@@ -248,3 +248,85 @@ describe('GitViewService.stage/unstage/commit/discard', () => {
     gitIn(repo, 'merge', '--abort');
   });
 });
+
+// Task 6: push/pull and branch checkout/create, appended after the existing describe sections.
+// `await setup()` is used because ProjectService.create is async (same deviation as above).
+// Both seeded "second user" repos rename their branch to `trunk` after reset (see below).
+
+describe('GitViewService push/pull', () => {
+  it('pushes to a local bare remote, sets upstream; pull fast-forwards', async () => {
+    // Brief deviation: track the helper's seed/remote/clone temp roots too (same as the branches
+    // test above — afterEach can only clean directories registered via `tracked`).
+    const { remote, clone } = makeTempRemoteAndClone(tracked); // the clone's default branch is `trunk`
+    const { svc, project } = await setup({ repo: tracked(clone) });
+    fs.writeFileSync(path.join(clone, 'wing.txt'), 'w');
+    gitIn(clone, 'add', '.');
+    gitIn(clone, 'commit', '-qm', 'wing');
+    const pushed = await svc.push(project.id);
+    expect(pushed.ahead).toBe(0);
+    expect(pushed.upstream).toBe('origin/trunk');
+    // simulate a second user pushing, then pull
+    const seeded = makeTempRepo({ name: 'second-clone', track: tracked });
+    execFileSync('git', ['remote', 'add', 'origin', remote], { cwd: seeded });
+    execFileSync('git', ['fetch', '-q', 'origin'], { cwd: seeded });
+    execFileSync('git', ['reset', '-q', '--hard', 'origin/trunk'], { cwd: seeded });
+    // Brief deviation: makeTempRepo is frozen at `init -b main`, so the brief's `push origin trunk`
+    // below failed with "src refspec trunk does not match any". Rename main to trunk after the
+    // reset (mirroring the helper's bare-remote default) so the brief's push command stays verbatim.
+    execFileSync('git', ['branch', '-m', 'trunk'], { cwd: seeded });
+    fs.writeFileSync(path.join(seeded, 'second.txt'), 's2');
+    execFileSync('git', ['-c', 'user.name=aik-test', '-c', 'user.email=aik-test@localhost', 'add', '.'], { cwd: seeded });
+    execFileSync('git', ['-c', 'user.name=aik-test', '-c', 'user.email=aik-test@localhost', 'commit', '-qm', 'from second'], { cwd: seeded });
+    execFileSync('git', ['push', '-q', 'origin', 'trunk'], { cwd: seeded });
+    const pulled = await svc.pull(project.id);
+    expect(fs.existsSync(path.join(clone, 'second.txt'))).toBe(true);
+    expect(pulled.behind).toBe(0);
+  });
+
+  it('refuses pull with local changes (WORKING_TREE_DIRTY) and divergent history (DIVERGED)', async () => {
+    const { remote, clone } = makeTempRemoteAndClone(tracked);
+    const { repo, svc, project } = await setup({ repo: tracked(clone) });
+    fs.writeFileSync(path.join(repo, 'local-change.txt'), 'x');
+    await expect(svc.pull(project.id)).rejects.toMatchObject({ code: 'WORKING_TREE_DIRTY' });
+    fs.rmSync(path.join(repo, 'local-change.txt'));
+    const seeded = makeTempRepo({ name: 'diverge', track: tracked });
+    execFileSync('git', ['remote', 'add', 'origin', remote], { cwd: seeded });
+    execFileSync('git', ['fetch', '-q', 'origin'], { cwd: seeded });
+    execFileSync('git', ['reset', '-q', '--hard', 'origin/trunk'], { cwd: seeded });
+    execFileSync('git', ['branch', '-m', 'trunk'], { cwd: seeded }); // same Brief deviation as above
+    fs.writeFileSync(path.join(seeded, 'diverge.txt'), 'd');
+    execFileSync('git', ['-c', 'user.name=aik-test', '-c', 'user.email=aik-test@localhost', 'add', '.'], { cwd: seeded });
+    execFileSync('git', ['-c', 'user.name=aik-test', '-c', 'user.email=aik-test@localhost', 'commit', '-qm', 'diverge'], { cwd: seeded });
+    fs.writeFileSync(path.join(repo, 'own.txt'), 'o');
+    gitIn(repo, 'add', '.');
+    gitIn(repo, 'commit', '-qm', 'own');
+    execFileSync('git', ['push', '-q', 'origin', 'trunk'], { cwd: seeded });
+    await expect(svc.pull(project.id)).rejects.toMatchObject({ code: 'DIVERGED' });
+  });
+
+  it('refuses when there is no origin remote', async () => {
+    const { svc, project } = await setup();
+    await expect(svc.push(project.id)).rejects.toMatchObject({ code: 'NO_REMOTE' });
+    await expect(svc.pull(project.id)).rejects.toMatchObject({ code: 'NO_REMOTE' });
+  });
+});
+
+describe('GitViewService branches: checkout/create', () => {
+  it('creates and switches, refuses duplicates, respects check-ref-format', async () => {
+    const { svc, project } = await setup();
+    const created = await svc.createBranch(project.id, { name: 'story/feature' });
+    expect(created.branch).toBe('story/feature');
+    await expect(svc.createBranch(project.id, { name: 'story/feature' })).rejects.toMatchObject({ code: 'BRANCH_INVALID' });
+    await expect(svc.createBranch(project.id, { name: 'bad name..' })).rejects.toMatchObject({ code: 'BRANCH_INVALID' });
+    const back = await svc.checkout(project.id, { name: 'main' });
+    expect(back.branch).toBe('main');
+    await expect(svc.checkout(project.id, { name: 'origin/main' })).rejects.toMatchObject({ code: 'BRANCH_INVALID' });
+  });
+
+  it('refuses checkout with uncommitted changes', async () => {
+    const { repo, svc, project } = await setup();
+    gitIn(repo, 'switch', '-qc', 'elsewhere');
+    fs.writeFileSync(path.join(repo, 'dirty.txt'), 'd');
+    await expect(svc.checkout(project.id, { name: 'elsewhere' })).rejects.toMatchObject({ code: 'WORKING_TREE_DIRTY' });
+  });
+});
