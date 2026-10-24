@@ -11,10 +11,12 @@ import { OpenCodeRuntime } from './agents/runtime.ts';
 import { registerEventRoutes } from './api/routes/events.ts';
 import { registerGitHubRoutes } from './api/routes/github.ts';
 import { registerHealthRoutes } from './api/routes/health.ts';
+import { registerMetricsRoutes } from './api/routes/metrics.ts';
 import { registerProviderRoutes } from './api/routes/providers.ts';
 import { registerProjectRoutes } from './api/routes/projects.ts';
 import { registerStoryRoutes } from './api/routes/stories.ts';
 import { createApiServer } from './api/server.ts';
+import { UsageMetricsService } from './metrics/usage-service.ts';
 import { dataPaths } from './config.ts';
 import { EventBus } from './events/bus.ts';
 import { startGateway } from './gateway/server.ts';
@@ -236,6 +238,8 @@ export async function startOrchestrator(opts: OrchestratorOptions): Promise<Runn
     githubPoller,
     githubMerge,
   });
+  const usageMetrics = new UsageMetricsService({ db });
+  registerMetricsRoutes(app, { metrics: usageMetrics });
   registerEventRoutes(app, { db, bus, heartbeatMs: opts.heartbeatMs });
   await app.listen({ host: '127.0.0.1', port: 0 });
   port = (app.server.address() as AddressInfo).port;
