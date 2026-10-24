@@ -13,6 +13,8 @@ import { describeHits, scanWorktree } from '../secrets/scan.ts';
 import { systemClock, type Clock } from '../time.ts';
 import type { RunInterruptRegistry } from '../agents/interrupts.ts';
 import type { WorkflowService } from '../workflow/service.ts';
+import { installCleanDependencies, type CleanInstallResult } from './cleanroom.ts';
+import type { IsolationRunner } from '../isolation/runner.ts';
 
 export interface VerifyStoryInput {
   storyId: number;
@@ -38,6 +40,8 @@ export interface VerificationRunnerDeps {
   /** When provided, checks running for a story are registered as interruptible work (EXE-13). */
   interrupts?: RunInterruptRegistry;
   vulnerabilityScanner?: (lockfiles: string[], cwd: string) => Promise<{ stdout: string; stderr: string; exitCode: number }>;
+  cleanInstallRunner?: (worktreePath: string) => Promise<CleanInstallResult>;
+  isolationRunner?: IsolationRunner;
 }
 
 function checkStatus(result: CommandStatus): 'passed' | 'failed' | 'error' | 'timed_out' | 'unsupported' {
@@ -69,6 +73,8 @@ export class VerificationRunner {
     lockfiles: string[],
     cwd: string,
   ) => Promise<{ stdout: string; stderr: string; exitCode: number }>;
+  private readonly cleanInstallRunner?: (worktreePath: string) => Promise<CleanInstallResult>;
+  private readonly isolationRunner?: IsolationRunner;
 
   constructor(deps: VerificationRunnerDeps) {
     this.db = deps.db;
@@ -80,6 +86,8 @@ export class VerificationRunner {
     this.redact = deps.redact ?? ((s) => s);
     this.interrupts = deps.interrupts;
     this.vulnerabilityScanner = deps.vulnerabilityScanner;
+    this.cleanInstallRunner = deps.cleanInstallRunner;
+    this.isolationRunner = deps.isolationRunner;
   }
 
   async verifyStory(input: VerifyStoryInput | number): Promise<VerifyStoryResult> {
@@ -194,6 +202,98 @@ export class VerificationRunner {
     this.bus.notify(1);
 
     if (!allMandatoryPassed) return { ok: false, status: 'failed', passed: false, verificationRunId: run.id };
+
+    // REL-4: Clean-room verification in fresh detached worktree with clean dependencies
+    if (settings.cleanroomVerification) {
+      let cleanroomWorktreePath: string | null = null;
+      let cleanRunId: number | undefined;
+      try {
+        cleanroomWorktreePath = await this.worktreeManager.ensureCleanroomWorktree({
+          repoPath: project.repoPath,
+          storyKey: story.key,
+          candidateSha: story.candidateSha,
+          storyId: story.id,
+        });
+
+        const installRes = this.cleanInstallRunner
+          ? await this.cleanInstallRunner(cleanroomWorktreePath)
+          : await installCleanDependencies(cleanroomWorktreePath, { isolationRunner: this.isolationRunner });
+
+        if (!installRes.ok) {
+          const failedInstallRun = this.db
+            .insert(verificationRuns)
+            .values({
+              storyId: story.id,
+              commitSha: story.candidateSha,
+              trigger: 'cleanroom',
+              status: 'failed',
+              startedAt: new Date(this.now()),
+              endedAt: new Date(this.now()),
+            })
+            .returning()
+            .get();
+          this.bus.notify(1);
+          return {
+            ok: false,
+            status: 'failed',
+            passed: false,
+            verificationRunId: failedInstallRun.id,
+            error: `Clean-room dependency installation failed: ${installRes.stderr || installRes.stdout}`,
+          };
+        }
+
+        const cleanRun = this.db
+          .insert(verificationRuns)
+          .values({
+            storyId: story.id,
+            commitSha: story.candidateSha,
+            trigger: 'cleanroom',
+            status: 'running',
+            startedAt: new Date(this.now()),
+          })
+          .returning()
+          .get();
+        cleanRunId = cleanRun.id;
+
+        const cleanMandatoryPassed = await this.runChecks(
+          story.id,
+          cleanRun.id,
+          settings,
+          cleanroomWorktreePath,
+          story.baseSha,
+          story.candidateSha,
+        );
+
+        const cleanStatus = cleanMandatoryPassed ? 'passed' : 'failed';
+        this.db
+          .update(verificationRuns)
+          .set({ status: cleanStatus, endedAt: new Date(this.now()) })
+          .where(eq(verificationRuns.id, cleanRun.id))
+          .run();
+        this.bus.notify(1);
+
+        if (!cleanMandatoryPassed) {
+          return { ok: false, status: 'failed', passed: false, verificationRunId: cleanRun.id };
+        }
+      } catch (err: unknown) {
+        if (cleanRunId) {
+          this.markRunError(cleanRunId);
+        }
+        return {
+          ok: false,
+          status: 'error',
+          verificationRunId: cleanRunId,
+          error: `Clean-room verification error: ${err instanceof Error ? err.message : String(err)}`,
+        };
+      } finally {
+        if (cleanroomWorktreePath) {
+          await this.worktreeManager.removeCleanroomWorktree({
+            repoPath: project.repoPath,
+            storyKey: story.key,
+          });
+        }
+      }
+    }
 
     const transition = this.workflow.transition({
       storyId: story.id,

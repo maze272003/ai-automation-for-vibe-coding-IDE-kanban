@@ -30,6 +30,8 @@ export const ProjectSettings = z.object({
     .default(['.github/workflows/**', '.opencode/**', 'opencode.json*', '.husky/**', '.gitmodules', '.gitattributes']),
   /** Explicit human acceptance that a repository with no detectable checks is verified by the secrets scan only (EXE-9). */
   secretsOnlyVerification: z.boolean().default(false),
+  /** Re-verify candidate in a fresh detached worktree with clean dependency install (REL-4). */
+  cleanroomVerification: z.boolean().default(false).optional(),
   publish: z.boolean().default(false),
   remoteMerge: z.boolean().default(false),
   requireRemoteChecks: z.boolean().default(true),

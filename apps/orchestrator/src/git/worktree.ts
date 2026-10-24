@@ -201,6 +201,33 @@ export class WorktreeManager {
     this.markRemoved(worktreePath);
   }
 
+  /** Detached worktree for clean-room verification at the candidate SHA (spec REL-4). */
+  async ensureCleanroomWorktree(input: { repoPath: string; storyKey: string; candidateSha: string; storyId: number }): Promise<string> {
+    this.validateStoryKey(input.storyKey);
+    const worktreePath = this.contained(`${input.storyKey}.clean`);
+    if (fs.existsSync(worktreePath)) await this.removeCleanroomWorktree({ repoPath: input.repoPath, storyKey: input.storyKey });
+    execFileSync('git', ['worktree', 'add', '--detach', worktreePath, input.candidateSha], { cwd: input.repoPath, encoding: 'utf8' });
+    this.record('verify', input.storyId, worktreePath, null, input.candidateSha);
+    return worktreePath;
+  }
+
+  async removeCleanroomWorktree(input: { repoPath: string; storyKey: string }): Promise<void> {
+    this.validateStoryKey(input.storyKey);
+    const worktreePath = this.contained(`${input.storyKey}.clean`);
+    if (!fs.existsSync(worktreePath)) return;
+    try {
+      execFileSync('git', ['worktree', 'remove', '--force', worktreePath], { cwd: input.repoPath, encoding: 'utf8' });
+    } catch {
+      fs.rmSync(worktreePath, { recursive: true, force: true });
+    }
+    try {
+      execFileSync('git', ['worktree', 'prune'], { cwd: input.repoPath, encoding: 'utf8' });
+    } catch {
+      // ignore prune errors
+    }
+    this.markRemoved(worktreePath);
+  }
+
   /**
    * Removes a story worktree only when it is clean (spec §13.6). A dirty or uninspectable worktree
    * is preserved for investigation — its workspace row is marked `preserved` — and discarding it is
