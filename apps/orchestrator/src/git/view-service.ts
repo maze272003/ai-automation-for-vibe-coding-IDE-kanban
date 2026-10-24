@@ -1,5 +1,5 @@
 // apps/orchestrator/src/git/view-service.ts
-import { type BranchListDTO, type CommitDTO, type CommitFilesDTO, type CommitLogDTO, type GitStatusDTO } from '@aik/contracts';
+import { type BranchListDTO, type CommitDTO, type CommitFilesDTO, type CommitLogDTO, type GitDiscardRequest, type GitCommitRequest, type GitStageRequest, type GitStatusDTO } from '@aik/contracts';
 import type { AikDb } from '@aik/db';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -12,6 +12,7 @@ import { parsePorcelainStatus } from './status-parse.ts';
 type Project = ReturnType<ProjectService['get']>;
 
 export type GitMutationResult = GitStatusDTO;
+const busyErr = (reason: string) => new ApiHttpError(409, 'PROJECT_BUSY', reason);
 
 function gitErrorToApi(err: unknown, fallbackMessage: string): ApiHttpError {
   if (!(err instanceof GitError)) throw err;
@@ -161,5 +162,97 @@ export class GitViewService {
       this.raw(project, ['rev-parse', '--abbrev-ref', 'HEAD']),
     ]);
     return { projectId, current: current || null, local: local.split('\n').filter(Boolean), remote: remote.split('\n').filter(Boolean) };
+  }
+
+  /** Shared pre-mutation guard: busy project + active merge pause everything except reads. */
+  private async assertMutable(projectId: number): Promise<Project> {
+    const project = this.project(projectId);
+    const reason = this.busy(projectId);
+    if (reason) throw busyErr(reason);
+    if ((await this.mergeState(project)) !== 'none') {
+      throw new ApiHttpError(409, 'MERGE_IN_PROGRESS', 'A merge/rebase is in progress in this repository — resolve it in your terminal, then commit there.');
+    }
+    return project;
+  }
+
+  private resolveInRepo(project: Project, rel: string): string {
+    const abs = path.resolve(project.repoPath, rel);
+    const real = fs.realpathSync.native(abs);
+    if (!(real === fs.realpathSync.native(project.repoPath) || real.startsWith(fs.realpathSync.native(project.repoPath) + path.sep))) {
+      throw new ApiHttpError(400, 'VALIDATION_FAILED', `Path escapes the repository: ${rel}`);
+    }
+    return real;
+  }
+
+  private async add(project: Project, paths: string[], flags: string[] = []): Promise<void> {
+    try {
+      await git(['add', ...flags, '--', ...paths], { cwd: project.repoPath });
+    } catch (err) {
+      throw gitErrorToApi(err, 'git add failed');
+    }
+  }
+
+  async stage(projectId: number, body: GitStageRequest): Promise<GitMutationResult> {
+    const project = await this.assertMutable(projectId);
+    // Brief deviation: `GitStageRequest` is a union (`paths` | `all`), so `body.all` needs an `in`
+    // guard; and the brief's `['.', '-A']` after `--` fails ('-A' becomes a pathspec there), so the
+    // `-A` flag goes before `--`.
+    if ('all' in body) await this.add(project, ['.'], ['-A']);
+    else await this.add(project, body.paths);
+    return this.status(projectId);
+  }
+
+  async unstage(projectId: number, body: GitStageRequest): Promise<GitMutationResult> {
+    const project = await this.assertMutable(projectId);
+    try {
+      // `in` guard: `body.paths` only exists on one branch of the `GitStageRequest` union.
+      if ('paths' in body) await git(['reset', '-q', 'HEAD', '--', ...body.paths], { cwd: project.repoPath });
+      else await git(['reset', '-q', 'HEAD'], { cwd: project.repoPath });
+    } catch (err) {
+      throw gitErrorToApi(err, 'git reset failed');
+    }
+    return this.status(projectId);
+  }
+
+  async commit(projectId: number, body: GitCommitRequest): Promise<GitMutationResult> {
+    const project = await this.assertMutable(projectId);
+    if (body.paths) await this.add(project, body.paths);
+    const st = await this.status(projectId);
+    if (st.staged.length === 0) throw new ApiHttpError(400, 'VALIDATION_FAILED', 'Nothing staged to commit');
+    try {
+      await git(['commit', '-q', '--no-status', '-F', '-'], { cwd: project.repoPath, input: `${body.message}\n` });
+    } catch (err) {
+      if (err instanceof GitError && /identity|user\.name|user\.email/i.test(err.stderr ?? '')) {
+        throw new ApiHttpError(400, 'IDENTITY_MISSING', 'This repository has no Git identity. Set user.name and user.email in the repo (or globally) and retry.');
+      }
+      throw gitErrorToApi(err, 'git commit failed');
+    }
+    return this.status(projectId);
+  }
+
+  async discard(projectId: number, body: GitDiscardRequest): Promise<GitMutationResult> {
+    const project = await this.assertMutable(projectId);
+    const st = await this.status(projectId);
+    const untracked: string[] = [];
+    const tracked: string[] = [];
+    for (const p of body.paths) {
+      this.resolveInRepo(project, p);
+      // Brief deviation: `GitStatusDTO` has no `files` — the brief's duplicated `st.files.find(...)`
+      // was meant as the staged/unstaged pair (`staged` | `changes`), matching its Note 1.
+      const entry = st.staged.find((f) => f.path === p) ?? st.changes.find((f) => f.path === p);
+      if (entry && entry.x === '?' && entry.y === '?') untracked.push(p);
+      else tracked.push(p);
+    }
+    if (untracked.length > 0) {
+      for (const p of untracked) fs.rmSync(this.resolveInRepo(project, p), { force: true });
+    }
+    if (tracked.length > 0) {
+      try {
+        await git(['restore', '--', ...tracked], { cwd: project.repoPath });
+      } catch (err) {
+        throw gitErrorToApi(err, 'git restore failed');
+      }
+    }
+    return this.status(projectId);
   }
 }

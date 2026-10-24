@@ -104,3 +104,111 @@ describe('GitViewService.branches', () => {
     expect(b.remote.some((r) => r.startsWith('origin/'))).toBe(true);
   });
 });
+
+// Task 5: mutation describe block, appended after the existing describe sections per the brief.
+// `await setup()` is used because ProjectService.create is async (same deviation as above).
+
+describe('GitViewService.stage/unstage/commit/discard', () => {
+  it('stages by path and by all, unstages back', async () => {
+    const { repo, svc, project } = await setup();
+    fs.writeFileSync(path.join(repo, 'a.ts'), 'a');
+    fs.writeFileSync(path.join(repo, 'b.ts'), 'b');
+    let s = await svc.stage(project.id, { paths: ['a.ts'] });
+    expect(s.staged.map((f) => f.path)).toEqual(['a.ts']);
+    s = await svc.stage(project.id, { all: true });
+    expect(s.staged.map((f) => f.path).sort()).toEqual(['a.ts', 'b.ts']);
+    s = await svc.unstage(project.id, { paths: ['a.ts'] });
+    expect(s.staged.map((f) => f.path)).toEqual(['b.ts']);
+  });
+
+  it('rejects committing with nothing staged (VALIDATION_FAILED)', async () => {
+    const { svc, project } = await setup();
+    await expect(svc.commit(project.id, { message: 'nothing yet' })).rejects.toMatchObject({ code: 'VALIDATION_FAILED' });
+    expect((await svc.status(project.id)).staged).toEqual([]);
+  });
+
+  it('commits staged work and clears the lists', async () => {
+    const { repo, svc, project } = await setup();
+    fs.writeFileSync(path.join(repo, 'one.ts'), '1');
+    await svc.stage(project.id, { all: true });
+    const s = await svc.commit(project.id, { message: 'first work' });
+    expect(s.staged).toEqual([]);
+    const log = await svc.log(project.id);
+    expect(log.commits[0]!.subject).toBe('first work');
+  });
+
+  it('commits given paths directly (stage-then-commit)', async () => {
+    const { repo, svc, project } = await setup();
+    fs.writeFileSync(path.join(repo, 'direct.ts'), 'd');
+    fs.writeFileSync(path.join(repo, 'left.ts'), 'l');
+    const s = await svc.commit(project.id, { message: 'only direct', paths: ['direct.ts'] });
+    expect(s.changes.map((f) => f.path)).toEqual(['left.ts']);
+    expect(s.staged).toEqual([]);
+    const log = await svc.log(project.id);
+    expect(log.commits[0]!.subject).toBe('only direct');
+  });
+
+  it('fails with IDENTITY_MISSING when the repo has no user config', async () => {
+    const { repo, svc, project } = await setup();
+    fs.writeFileSync(path.join(repo, 'x.ts'), 'x');
+    // Brief deviation (hermetic arrange): the brief's bare `config --unset user.name` exits 5 when
+    // the repo has no local user.* key — execFileSync would throw — and a dev machine's global
+    // identity would still satisfy the commit. Seed the local identity, unset it, and hide
+    // global/system config for the git children the service spawns so the failure comes only from
+    // the repo having no user config.
+    const savedGlobal = process.env.GIT_CONFIG_GLOBAL;
+    const savedSystem = process.env.GIT_CONFIG_SYSTEM;
+    process.env.GIT_CONFIG_GLOBAL = '/dev/null';
+    process.env.GIT_CONFIG_SYSTEM = '/dev/null';
+    try {
+      gitIn(repo, 'config', 'user.name', 'aik-test');
+      gitIn(repo, 'config', 'user.email', 'aik-test@localhost');
+      gitIn(repo, 'config', '--unset', 'user.name');
+      gitIn(repo, 'config', '--unset', 'user.email');
+      await svc.stage(project.id, { all: true });
+      await expect(svc.commit(project.id, { message: 'anon' })).rejects.toMatchObject({ code: 'IDENTITY_MISSING' });
+    } finally {
+      if (savedGlobal === undefined) delete process.env.GIT_CONFIG_GLOBAL;
+      else process.env.GIT_CONFIG_GLOBAL = savedGlobal;
+      if (savedSystem === undefined) delete process.env.GIT_CONFIG_SYSTEM;
+      else process.env.GIT_CONFIG_SYSTEM = savedSystem;
+    }
+  });
+
+  it('discards tracked (restore) and deletes untracked — after containment check', async () => {
+    const { repo, svc, project } = await setup();
+    // Brief deviation: makeTempRepo seeds only README.md, so `tracked.txt` is untracked as written
+    // and `discard` would delete it — the brief's own final expectation (content back to `# test\n`)
+    // would then hit a missing file. Track it first, then modify it so it lands as a tracked change.
+    // Also pin core.autocrlf=false: Windows checkout (`git restore`) would otherwise rewrite the
+    // file with CRLF, breaking the exact `# test\n` content assertion.
+    gitIn(repo, 'config', 'core.autocrlf', 'false');
+    fs.writeFileSync(path.join(repo, 'tracked.txt'), '# test\n');
+    gitIn(repo, 'add', 'tracked.txt');
+    gitIn(repo, 'commit', '-q', '-m', 'track it');
+    fs.writeFileSync(path.join(repo, 'tracked.txt'), 'v2');
+    fs.writeFileSync(path.join(repo, 'untracked.txt'), 'v1');
+    await svc.discard(project.id, { paths: ['untracked.txt'] });
+    expect(fs.existsSync(path.join(repo, 'untracked.txt'))).toBe(false);
+    await svc.discard(project.id, { paths: ['tracked.txt'] });
+    expect(fs.readFileSync(path.join(repo, 'tracked.txt'), 'utf8')).toBe('# test\n');
+  });
+
+  it('refuses mutations while merge state is active', async () => {
+    const { repo, svc, project } = await setup();
+    // force MERGE_HEAD-like condition without a real merge: git merge with divergent branches
+    gitIn(repo, 'switch', '-qc', 'side');
+    fs.writeFileSync(path.join(repo, 'side.txt'), 's');
+    gitIn(repo, 'add', '.');
+    gitIn(repo, 'commit', '-qm', 'side');
+    gitIn(repo, 'switch', 'main');
+    fs.writeFileSync(path.join(repo, 'main.txt'), 'm');
+    gitIn(repo, 'add', '.');
+    gitIn(repo, 'commit', '-qm', 'main');
+    gitIn(repo, 'merge', '--no-commit', 'side');
+    await expect(svc.stage(project.id, { all: true })).rejects.toMatchObject({ code: 'MERGE_IN_PROGRESS' });
+    await expect(svc.commit(project.id, { message: 'nope' })).rejects.toMatchObject({ code: 'MERGE_IN_PROGRESS' });
+    expect(await svc.status(project.id)).toMatchObject({ mergeState: 'merge' });
+    gitIn(repo, 'merge', '--abort');
+  });
+});

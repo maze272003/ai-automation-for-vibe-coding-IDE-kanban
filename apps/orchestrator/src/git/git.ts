@@ -13,7 +13,7 @@ export class GitError extends Error {
 }
 
 /** Runs git with interactive prompts and credential helpers disabled (spec §13.4). */
-export function git(args: string[], opts: { cwd: string; timeoutMs?: number }): Promise<string> {
+export function git(args: string[], opts: { cwd: string; timeoutMs?: number; input?: string }): Promise<string> {
   const env: NodeJS.ProcessEnv = {
     ...process.env,
     GIT_TERMINAL_PROMPT: '0',
@@ -27,6 +27,7 @@ export function git(args: string[], opts: { cwd: string; timeoutMs?: number }): 
       if (err) reject(new GitError(args, err, stderr));
       else resolve(stdout.trimEnd());
     });
+    if (opts.input) child.stdin?.write(opts.input);
     child.stdin?.end();
   });
 }
