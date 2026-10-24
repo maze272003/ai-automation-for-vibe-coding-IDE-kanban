@@ -11,6 +11,7 @@
     "typecheck": "tsc -p tsconfig.json",
     "test": "vitest run",
     "catalog:refresh": "node --experimental-strip-types packages/providers/scripts/refresh-catalog.ts",
+    "gate:opencode": "node --experimental-strip-types scripts/opencode-upgrade-gate.ts",
     "db:generate": "drizzle-kit generate --config packages/db/drizzle.config.ts",
     "build": "npm run build -w @aik/ui && node apps/desktop/scripts/build.mjs",
     "build:shell": "node apps/desktop/scripts/build.mjs --no-ui",
