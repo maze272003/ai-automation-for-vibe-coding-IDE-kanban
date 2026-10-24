@@ -1,6 +1,6 @@
 // apps/ui/src/routes/board.tsx
 import type { ProjectDTO } from '@aik/contracts';
-import { useParams } from '@tanstack/react-router';
+import { Link, useParams } from '@tanstack/react-router';
 import { useEffect, useState } from 'react';
 import { Board } from '../components/kanban/board.tsx';
 import { CreateStoryDialog } from '../components/kanban/create-story-dialog.tsx';
@@ -38,6 +38,17 @@ export function BoardPage() {
   return (
     <div className="flex h-full flex-col">
       <TopBar data-testid="board-toolbar" title={project ? `${project.key} · ${project.name}` : 'Board'}>
+        <div data-testid="project-tabs" className="inline-flex items-center gap-1 rounded-control border border-glass-border bg-surface-2/60 p-1">
+          <span aria-current="page" className="rounded-control bg-accent-soft px-2.5 py-1 text-xs font-semibold text-accent-soft-foreground">Board</span>
+          <Link
+            to="/projects/$projectId/git"
+            params={{ projectId: String(id) }}
+            data-testid="tab-git"
+            className="rounded-control px-2.5 py-1 text-xs font-semibold text-muted transition-colors hover:text-foreground"
+          >
+            Git
+          </Link>
+        </div>
         <Input
           aria-label="Search stories"
           placeholder="Search…"
