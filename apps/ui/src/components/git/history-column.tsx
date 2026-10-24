@@ -1,20 +1,33 @@
 // apps/ui/src/components/git/history-column.tsx
 import type { CommitFilesDTO, CommitLogDTO } from '@aik/contracts';
 import { useState } from 'react';
+import { ApiRequestError } from '../../lib/api.ts';
 
 const short = (dateIso: string) => new Date(dateIso).toLocaleString();
 
 export function HistoryColumn({ log, openFiles }: { log: CommitLogDTO | null; openFiles: (sha: string) => Promise<CommitFilesDTO> }) {
   const [open, setOpen] = useState<Record<string, CommitFilesDTO>>({});
+  const [failed, setFailed] = useState<Record<string, string>>({});
+  const clear = (sha: string) => {
+    setFailed((f) => { if (!(sha in f)) return f; const next = { ...f }; delete next[sha]; return next; });
+  };
   const toggle = async (sha: string) => {
     if (open[sha]) {
       setOpen((o) => { const next = { ...o }; delete next[sha]; return next; });
+      clear(sha);
       return;
     }
     // Optimistic placeholder keeps the row expanded while the file list loads.
     setOpen((o) => ({ ...o, [sha]: { projectId: 0, sha: '', files: [] } }));
-    const files = await openFiles(sha);
-    setOpen((o) => ({ ...o, [sha]: files }));
+    clear(sha);
+    try {
+      const files = await openFiles(sha);
+      setOpen((o) => ({ ...o, [sha]: files }));
+    } catch (err) {
+      // Roll back the optimistic placeholder so no misleading empty row remains.
+      setOpen((o) => { const next = { ...o }; delete next[sha]; return next; });
+      setFailed((f) => ({ ...f, [sha]: err instanceof ApiRequestError ? err.reason : err instanceof Error ? err.message : String(err) }));
+    }
   };
 
   return (
@@ -33,6 +46,11 @@ export function HistoryColumn({ log, openFiles }: { log: CommitLogDTO | null; op
               ))}
               {open[c.sha]!.files.length === 0 && <li className="text-muted-2">root commit / merge — no file list</li>}
             </ul>
+          )}
+          {failed[c.sha] && (
+            <p role="alert" className="mt-2 text-[11px] text-danger-foreground">
+              Could not load files for {c.short}: {failed[c.sha]}
+            </p>
           )}
         </article>
       ))}

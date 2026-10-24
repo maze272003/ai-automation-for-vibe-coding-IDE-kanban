@@ -61,8 +61,20 @@ export function ScmPanel({ status, branches, busy, onStage, onUnstage, onCommit,
   const [message, setMessage] = useState('');
   const noRemote = status.upstream === null;
   const dirtySwitch = status.staged.length + status.changes.length > 0;
-  const locked = status.agentBusy || syncBusy;
+  const locked = status.agentBusy || syncBusy || status.mergeState !== 'none';
   const canCommit = !locked && !busy && status.staged.length > 0 && message.trim() !== '';
+
+  // Await the commit before clearing so a failed commit keeps the typed message.
+  const commit = async () => {
+    const m = message.trim();
+    if (m === '') return;
+    try {
+      await onCommit(m);
+      setMessage('');
+    } catch {
+      // Parent surfaces the failure via its error state; keep the text.
+    }
+  };
 
   return (
     <section className="flex min-h-0 w-80 shrink-0 flex-col gap-2 border-r border-border bg-glass p-3">
@@ -97,16 +109,12 @@ export function ScmPanel({ status, branches, busy, onStage, onUnstage, onCommit,
         value={message}
         onChange={(e) => setMessage(e.target.value)}
         onKeyDown={(e) => {
-          if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && canCommit) void onCommit(message.trim());
+          if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && canCommit) void commit();
         }}
         disabled={locked}
       />
       <div className="flex gap-2">
-        <Button size="sm" variant="primary" data-testid="git-commit" disabled={!canCommit} onClick={() => {
-          const m = message.trim();
-          setMessage('');
-          void onCommit(m);
-        }}>Commit</Button>
+        <Button size="sm" variant="primary" data-testid="git-commit" disabled={!canCommit} onClick={() => void commit()}>Commit</Button>
       </div>
 
       <p className="text-[10px] font-bold uppercase tracking-widest text-muted-2">Staged Changes ({status.staged.length})</p>

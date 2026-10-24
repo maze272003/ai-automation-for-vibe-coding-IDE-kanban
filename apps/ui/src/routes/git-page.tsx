@@ -68,7 +68,16 @@ export function GitPage() {
             syncBusy={false}
             onStage={(paths) => run(() => gitActions.stage(id, paths ? { paths } : { all: true }))}
             onUnstage={(paths) => run(() => gitActions.unstage(id, paths ? { paths } : { all: true }))}
-            onCommit={(message) => { setActionError(null); return run(() => gitActions.commit(id, { message })); }}
+            onCommit={async (message) => {
+              setActionError(null);
+              try {
+                await gitActions.commit(id, { message });
+                await Promise.all([refetch(), refetchBranches()]);
+              } catch (err) {
+                setActionError(err instanceof ApiRequestError ? err.reason : String(err));
+                throw err; // SCP commit keeps the typed message when this rejects.
+              }
+            }}
             onDiscard={(p) => setDiscarding(p)}
             onCheckout={async (name) => { const dirty = status.staged.length + status.changes.length > 0; if (dirty) setSwitchTo(name); else await run(() => gitActions.checkout(id, { name })); }}
             onCreate={(name) => run(() => gitActions.createBranch(id, { name }))}
