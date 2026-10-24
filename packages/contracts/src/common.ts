@@ -5,6 +5,8 @@ export const Sha = z.string().regex(/^[0-9a-f]{40}([0-9a-f]{24})?$/, 'expected a
 export const ERROR_CODES = [
   'VALIDATION_FAILED', 'UNAUTHORIZED', 'FORBIDDEN_ORIGIN', 'NOT_FOUND', 'VERSION_CONFLICT',
   'GUARD_FAILED', 'IDEMPOTENCY_MISMATCH', 'RATE_LIMITED', 'DEPENDENCY_UNAVAILABLE', 'INTERNAL',
+  'PROJECT_BUSY', 'PROJECT_PURGE_FAILED', 'WORKING_TREE_DIRTY', 'DIVERGED', 'NO_REMOTE',
+  'IDENTITY_MISSING', 'NOT_IN_WORKING_TREE', 'MERGE_IN_PROGRESS', 'BRANCH_INVALID',
 ] as const;
 export const ErrorCode = z.enum(ERROR_CODES);
 export type ErrorCode = z.infer<typeof ErrorCode>;
