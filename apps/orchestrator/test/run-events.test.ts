@@ -30,9 +30,9 @@ describe('run-events', () => {
     const rows = readOutbox(t.db);
     expect(rows).toHaveLength(2);
     expect(rows[0]).toMatchObject({ topic: 'run.started', storyId: story.id, provenance: 'system' });
-    expect(rows[0].data).toEqual({ runId: run.id, role: 'implementer', storyKey: 'INV-4', projectKey: 'INV' });
-    expect(rows[1].topic).toBe('run.finished');
-    expect(rows[1].data).toEqual({
+    expect(rows[0]?.data).toEqual({ runId: run.id, role: 'implementer', storyKey: 'INV-4', projectKey: 'INV' });
+    expect(rows[1]?.topic).toBe('run.finished');
+    expect(rows[1]?.data).toEqual({
       runId: run.id, role: 'implementer', storyKey: 'INV-4', projectKey: 'INV', status: 'succeeded',
     });
     t.close();
@@ -57,7 +57,7 @@ describe('run-events', () => {
 
     const rows = readOutbox(t.db);
     expect(rows).toHaveLength(1);
-    expect(rows[0].data).toMatchObject({ status: 'failed', exitReason: 'provider down' });
+    expect(rows[0]?.data).toMatchObject({ status: 'failed', exitReason: 'provider down' });
     t.close();
   });
 });
