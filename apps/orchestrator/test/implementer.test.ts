@@ -10,6 +10,7 @@ import { EventBus } from '../src/events/bus.ts';
 import { WorktreeManager } from '../src/git/worktree.ts';
 import { WorkflowService } from '../src/workflow/service.ts';
 import { createTestDb, forceStory, seedPlan, seedProject, seedStory } from './helpers/db.ts';
+import { readOutbox } from './helpers/outbox.ts';
 import { makeTempDir, makeTempRepo } from './helpers/temp.ts';
 
 describe('ImplementerAgent', () => {
@@ -305,6 +306,57 @@ describe('ImplementerAgent', () => {
     });
     expect(filesInCommit).toContain('feature.ts');
     expect(filesInCommit).not.toContain('.opencode');
+  });
+
+  test('emits run.started and run.finished outbox events', async () => {
+    const repoPath = makeTempRepo({ name: 'impl-outbox-repo' });
+    const project = seedProject(dbHolder.db, { repoPath, baseBranch: 'main' });
+    const story = seedStory(dbHolder.db, project.id, {
+      title: 'Outbox Implement',
+      status: 'READY',
+      planningStatus: 'plan_approved',
+    });
+    seedPlan(dbHolder.db, story.id, { status: 'approved' });
+
+    const mockRuntime: OpenCodeRuntime = {
+      runOneShot: vi.fn().mockImplementation(async (opts: RunOneShotInput) => {
+        fs.writeFileSync(path.join(opts.directory, 'feature.ts'), 'export const x = 1;\n');
+        return { ok: true, text: 'Implemented.' };
+      }),
+    } as unknown as OpenCodeRuntime;
+
+    const agent = new ImplementerAgent({ db: dbHolder.db, workflow, bus, runtime: mockRuntime, worktreeManager });
+    const result = await agent.implementStory({ storyId: story.id });
+    expect(result.ok).toBe(true);
+
+    // The suite shares one DB: keep only this story's run lifecycle rows.
+    const rows = readOutbox(dbHolder.db).filter((r) => r.topic.startsWith('run.') && r.storyId === story.id);
+    expect(rows.map((r) => r.topic)).toEqual(['run.started', 'run.finished']);
+    expect(rows[0].data).toMatchObject({ role: 'implementer', storyKey: story.key });
+    expect(rows[1].data).toMatchObject({ role: 'implementer', status: 'succeeded' });
+  });
+
+  test('emits run.finished failed when the model run fails', async () => {
+    const repoPath = makeTempRepo({ name: 'impl-outbox-fail-repo' });
+    const project = seedProject(dbHolder.db, { repoPath, baseBranch: 'main' });
+    const story = seedStory(dbHolder.db, project.id, {
+      title: 'Outbox Fail Implement',
+      status: 'READY',
+      planningStatus: 'plan_approved',
+    });
+    seedPlan(dbHolder.db, story.id, { status: 'approved' });
+
+    const mockRuntime: OpenCodeRuntime = {
+      runOneShot: vi.fn().mockResolvedValue({ ok: false, error: 'no changes' }),
+    } as unknown as OpenCodeRuntime;
+
+    const agent = new ImplementerAgent({ db: dbHolder.db, workflow, bus, runtime: mockRuntime, worktreeManager });
+    const result = await agent.implementStory({ storyId: story.id });
+    expect(result.ok).toBe(false);
+
+    // The suite shares one DB: keep only this story's run lifecycle rows.
+    const rows = readOutbox(dbHolder.db).filter((r) => r.topic.startsWith('run.') && r.storyId === story.id);
+    expect(rows[1].data).toMatchObject({ role: 'implementer', status: 'failed' });
   });
 });
 
