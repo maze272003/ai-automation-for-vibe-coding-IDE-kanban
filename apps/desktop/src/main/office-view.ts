@@ -9,6 +9,8 @@ import { getOfficeContext, parseOfficeBounds } from './office-context.ts';
 
 export class OfficeViewManager {
   private view: WebContentsView | null = null;
+  /** Origin the current view loaded; a server restart picks a new ephemeral port. */
+  private loadedOrigin: string | null = null;
   private visible = false;
   private bounds: OfficeBounds | null = null;
 
@@ -17,14 +19,21 @@ export class OfficeViewManager {
   private ensureView(): WebContentsView | null {
     const office = getOfficeContext();
     if (!office || this.win.isDestroyed()) return null;
+    const origin = `${office.url}/`;
     if (!this.view) {
       this.view = new WebContentsView({ webPreferences: { sandbox: true, nodeIntegration: false, contextIsolation: true } });
-      const origin = `${office.url}/`;
       this.view.webContents.on('will-navigate', (event, url) => {
         if (!url.startsWith(origin)) event.preventDefault();
       });
       this.win.contentView.addChildView(this.view);
       void this.view.webContents.loadURL(origin);
+      this.loadedOrigin = origin;
+    } else if (this.loadedOrigin !== origin) {
+      // The office server was restarted (e.g. the feature toggled off then on) and its
+      // new instance has a new ephemeral port: reload the existing view to the live
+      // origin instead of leaving it on a dead one.
+      void this.view.webContents.loadURL(origin);
+      this.loadedOrigin = origin;
     }
     return this.view;
   }
@@ -50,6 +59,7 @@ export class OfficeViewManager {
     if (!this.win.isDestroyed()) this.win.contentView.removeChildView(this.view);
     this.view.webContents.close();
     this.view = null;
+    this.loadedOrigin = null;
   }
 }
 

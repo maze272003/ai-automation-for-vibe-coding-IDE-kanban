@@ -128,7 +128,10 @@ function main(): void {
       isTrustedSender: (url) => url.startsWith('app://ui/') || (devUrl !== null && url.startsWith(devUrl)),
       onSettingsChanged: async (next) => {
         if (next.agentOffice) {
-          if (!officeInstalled(paths.dataDir)) installPixelAgents(paths.dataDir, path.join(__dirname, 'pixel-agents-runtime'));
+          if (!officeInstalled(paths.dataDir)) {
+            const installed = installPixelAgents(paths.dataDir, path.join(__dirname, 'pixel-agents-runtime'));
+            if (!installed.ok) console.error(`agent office install failed: ${installed.error}`);
+          }
           const info = officeInstalled(paths.dataDir)
             ? await startOfficeServer({ dataDir: paths.dataDir, assetsDir: path.join(__dirname, 'pixel-agents-runtime') })
             : null;

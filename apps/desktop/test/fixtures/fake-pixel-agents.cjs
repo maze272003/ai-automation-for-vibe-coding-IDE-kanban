@@ -6,6 +6,12 @@ const fs = require('node:fs');
 const http = require('node:http');
 const path = require('node:path');
 
+// The launcher must pass ELECTRON_RUN_AS_NODE=1: in the Electron main process
+// process.execPath is the Electron binary, and without the flag the "CLI" run is a
+// second Electron app that never starts the server (the original no-pixel bug).
+// Requiring it here turns the spawn test into a regression test for that contract.
+if (process.env.ELECTRON_RUN_AS_NODE !== '1') process.exit(2);
+
 const dir = process.env.AIK_OFFICE_REGISTRY_DIR;
 if (!dir) process.exit(2);
 

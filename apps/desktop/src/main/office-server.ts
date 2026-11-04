@@ -40,6 +40,42 @@ export function officeInstalled(dataDir: string): boolean {
   return fs.existsSync(officeCliPath(dataDir));
 }
 
+/**
+ * Best available node binary for the office CLI child. Prefers the system node on PATH —
+ * the same node `installPixelAgents` needs for its `npm ci` — so the office keeps working
+ * in a packaged build even if the repo's fuse policy (REL-6, runAsNode:false) is ever
+ * wired into the release pipeline, since a fused exe ignores ELECTRON_RUN_AS_NODE.
+ * Falls back to `process.execPath` (the Electron binary), which the ELECTRON_RUN_AS_NODE
+ * env flag turns into a plain Node.
+ */
+export function resolveNodeBinary(): string {
+  try {
+    const hits = execFileSync(process.platform === 'win32' ? 'where.exe' : 'which', ['node'], { encoding: 'utf8' })
+      .split(/\r?\n/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+    const hit = hits.find((s) => /^node(\.exe)?$/i.test(path.basename(s)) && fs.existsSync(s));
+    if (hit) return hit;
+  } catch {
+    // node not on PATH — fall through to the Electron binary
+  }
+  return process.execPath;
+}
+
+/**
+ * Env for the office CLI child. `ELECTRON_RUN_AS_NODE=1` is required whenever the spawn
+ * binary is the Electron binary (dev electron.exe / packaged app exe): without it the
+ * spawn is a second Electron app, the CLI never runs, and no agent character ever spawns
+ * (the original no-pixel bug). A genuine node binary ignores the flag.
+ */
+export function officeSpawnEnv(registryDir?: string): NodeJS.ProcessEnv {
+  return {
+    ...process.env,
+    ELECTRON_RUN_AS_NODE: '1',
+    ...(registryDir ? { AIK_OFFICE_REGISTRY_DIR: registryDir } : {}),
+  };
+}
+
 /** Installs/repairs the pinned runtime: npm ci inside the data dir (never the repo). */
 export function installPixelAgents(dataDir: string, assetsDir: string): { ok: true; version: string } | { ok: false; error: string } {
   try {
@@ -93,13 +129,24 @@ function readRegistryEntry(registryDir: string, pid: number): RegistryEntry | nu
 
 let current: { proc: ChildProcess; info: OfficeServerInfo } | null = null;
 let starting: Promise<OfficeServerInfo | null> | null = null;
+// Bumped by every stop (and every fresh start attempt): an in-flight launch that no
+// longer matches the current generation was superseded, so its child is killed and
+// never becomes `current` (a stop during startup must not "resurrect" the server).
+let generation = 0;
 
 export function startOfficeServer(opts: OfficeSpawnOptions): Promise<OfficeServerInfo | null> {
   if (current && current.proc.exitCode === null) return Promise.resolve(current.info);
-  starting ??= launch(opts).then((launched) => {
-    current = launched;
+  if (starting) return starting; // coalesced caller of the same in-flight attempt
+  const gen = ++generation;
+  starting = launch(opts).then((launched) => {
     starting = null;
-    return launched?.info ?? null;
+    if (!launched) return null;
+    if (gen !== generation) {
+      launched.proc.kill(); // stopped/superseded while starting — never adopt it
+      return null;
+    }
+    current = launched;
+    return launched.info;
   });
   return starting;
 }
@@ -107,9 +154,9 @@ export function startOfficeServer(opts: OfficeSpawnOptions): Promise<OfficeServe
 async function launch(opts: OfficeSpawnOptions): Promise<{ proc: ChildProcess; info: OfficeServerInfo } | null> {
   const registryDir = opts.registryDir ?? path.join(os.homedir(), '.pixel-agents', 'servers');
   const command = opts.command ?? officeCliPath(opts.dataDir);
-  const proc = spawn(opts.node ?? process.execPath, [command, '--host', '127.0.0.1', '--no-terminal'], {
+  const proc = spawn(opts.node ?? resolveNodeBinary(), [command, '--host', '127.0.0.1', '--no-terminal'], {
     stdio: 'ignore', // stdout prints the bearer token — never capture it
-    env: { ...process.env, ...(opts.registryDir ? { AIK_OFFICE_REGISTRY_DIR: opts.registryDir } : {}) },
+    env: officeSpawnEnv(opts.registryDir),
   });
   const timeoutMs = opts.spawnTimeoutMs ?? 30_000;
   const deadline = Date.now() + timeoutMs;
@@ -130,6 +177,7 @@ async function launch(opts: OfficeSpawnOptions): Promise<{ proc: ChildProcess; i
         }
         await new Promise((r) => setTimeout(r, 250));
       }
+      proc.kill(); // registry entry but never healthy — don't orphan the CLI process
       return null;
     }
     await new Promise((r) => setTimeout(r, 250));
@@ -139,6 +187,7 @@ async function launch(opts: OfficeSpawnOptions): Promise<{ proc: ChildProcess; i
 }
 
 export function stopOfficeServer(): void {
+  generation += 1; // invalidate any in-flight launch so it cannot adopt its child
   if (current) {
     current.proc.kill();
     current = null;

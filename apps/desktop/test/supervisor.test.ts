@@ -125,4 +125,27 @@ describe('OrchestratorSupervisor', () => {
     sup.restart();
     expect([sup.state, sup.fatal, children.length]).toEqual(['starting', null, 2]);
   });
+
+  it('restart() replaces a live orchestrator so a fresh init message is delivered', async () => {
+    sup.start();
+    last().emit('message', { type: 'ready', port: 5555 });
+    const old = last();
+    sup.restart();
+    // The old child gets a shutdown; the replacement spawns after its exit and
+    // receives the init message again (e.g. a toggled agent-office config).
+    expect(old.sent.at(-1)).toEqual({ type: 'shutdown' });
+    await new Promise((r) => setTimeout(r, 0)); // FakeChild exits on shutdown via microtask
+    expect(children.length).toBe(2);
+    expect(children[1]!.sent[0]).toEqual({ type: 'init', token: 't' });
+    expect(sup.state).toBe('starting');
+  });
+
+  it('coalesces overlapping restart() calls into one replacement', async () => {
+    sup.start();
+    last().emit('message', { type: 'ready', port: 5555 });
+    sup.restart();
+    sup.restart();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(children.length).toBe(2); // not three
+  });
 });

@@ -35,6 +35,7 @@ export class OrchestratorSupervisor extends EventEmitter {
   private crashes: number[] = [];
   private consecutive = 0;
   private stopping = false;
+  private restarting: Promise<void> | null = null;
 
   constructor(opts: SupervisorOptions) {
     super();
@@ -52,12 +53,30 @@ export class OrchestratorSupervisor extends EventEmitter {
     this.spawn();
   }
 
+  /**
+   * Replace the orchestrator with a fresh process so the next init message (e.g. a
+   * toggled agent-office config, a restored backup, a provider change) actually
+   * takes effect: a live child is stopped first (shutdown, bounded, then kill) and
+   * respawned; a dead one respawns directly. Overlapping calls coalesce into a
+   * single replacement — the second caller's state resets still apply.
+   */
   restart(): void {
     this.crashes = [];
     this.consecutive = 0;
     this.fatal = null;
-    this.stopping = false;
-    if (this.child === null) this.spawn();
+    if (this.restarting || this.stopping) return;
+    if (this.child === null) {
+      this.stopping = false;
+      this.spawn();
+      return;
+    }
+    // stop() flips `stopping` so the old child's exit cannot schedule a backoff
+    // respawn next to ours; flip it back before spawning the replacement.
+    this.restarting = this.stop().then(() => {
+      this.restarting = null;
+      this.stopping = false;
+      this.spawn();
+    });
   }
 
   async stop(timeoutMs = 5000): Promise<void> {
