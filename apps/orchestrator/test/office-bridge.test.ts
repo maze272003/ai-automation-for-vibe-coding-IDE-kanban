@@ -3,6 +3,7 @@ import { describe, expect, test } from 'vitest';
 import { appendOutbox } from '../src/events/outbox.ts';
 import { EventBus } from '../src/events/bus.ts';
 import {
+  hookEventsForRunActivity,
   hookEventsForRunFinished,
   hookEventsForRunStarted,
   PixelAgentsBridge,
@@ -93,6 +94,37 @@ describe('hook event translation (pure)', () => {
     expect(hookEventsForRunStarted(null)).toEqual([]);
     expect(hookEventsForRunStarted({ runId: 'x' })).toEqual([]);
     expect(hookEventsForRunFinished('nope')).toEqual([]);
+  });
+});
+
+describe('hookEventsForRunActivity', () => {
+  const base = { runId: 7, role: 'implementer', storyKey: 'INV-7', projectKey: 'INV' };
+
+  test('maps tool events to Claude-shaped PreToolUse/PostToolUse', () => {
+    const events = hookEventsForRunActivity({
+      ...base,
+      events: [
+        { kind: 'tool-start', name: 'read', summary: 'foo.ts' },
+        { kind: 'tool-start', name: 'bash', summary: 'npm test' },
+        { kind: 'tool-start', name: 'Thinking' },
+        { kind: 'tool-end', name: 'bash' },
+      ],
+    });
+    expect(events).toEqual([
+      { session_id: 'aik-run-7', hook_event_name: 'PreToolUse', tool_name: 'Read', tool_input: { file_path: 'foo.ts' } },
+      { session_id: 'aik-run-7', hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command: 'npm test' } },
+      { session_id: 'aik-run-7', hook_event_name: 'PreToolUse', tool_name: 'Thinking', tool_input: {} },
+      { session_id: 'aik-run-7', hook_event_name: 'PostToolUse' },
+    ]);
+  });
+
+  test('unknown tools capitalize; garbage is skipped; bad base data yields nothing', () => {
+    expect(hookEventsForRunActivity({ ...base, events: [{ kind: 'tool-start', name: 'webfetch' }] })).toEqual([
+      { session_id: 'aik-run-7', hook_event_name: 'PreToolUse', tool_name: 'Webfetch', tool_input: {} },
+    ]);
+    expect(hookEventsForRunActivity({ ...base, events: [{ kind: 'tool-start' }, 'junk', { kind: 'wat', name: 'x' }] })).toEqual([]);
+    expect(hookEventsForRunActivity({ events: 'nope' })).toEqual([]);
+    expect(hookEventsForRunActivity({ runId: 'x' })).toEqual([]);
   });
 });
 

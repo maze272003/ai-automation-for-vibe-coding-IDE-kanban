@@ -87,6 +87,32 @@ export function hookEventsForRunFinished(data: unknown): HookEvent[] {
   ];
 }
 
+/** pixel-agents' formatToolStatus renders Read/Edit/Write/Bash/Grep/Glob specially; map ours. */
+const TOOL_NAME_MAP: Record<string, string> = { read: 'Read', edit: 'Edit', write: 'Write', bash: 'Bash', grep: 'Grep', glob: 'Glob' };
+
+/** Live bubbles (spec 2026-11-04-office-agent-activity): tool-start → PreToolUse, tool-end → PostToolUse. */
+export function hookEventsForRunActivity(data: unknown): HookEvent[] {
+  const d = toRunEventData(data);
+  if (!d || typeof data !== 'object' || data === null) return [];
+  const rawEvents = (data as { events?: unknown }).events;
+  if (!Array.isArray(rawEvents)) return [];
+  const out: HookEvent[] = [];
+  for (const raw of rawEvents) {
+    if (typeof raw !== 'object' || raw === null) continue;
+    const ev = raw as { kind?: unknown; name?: unknown; summary?: unknown };
+    if (typeof ev.name !== 'string' || ev.name === '') continue;
+    if (ev.kind === 'tool-start') {
+      const mapped = TOOL_NAME_MAP[ev.name] ?? ev.name.charAt(0).toUpperCase() + ev.name.slice(1);
+      const summary = typeof ev.summary === 'string' && ev.summary !== '' ? ev.summary : undefined;
+      const toolInput = summary === undefined ? {} : ev.name === 'bash' ? { command: summary } : { file_path: summary };
+      out.push({ session_id: sessionIdOf(d.runId), hook_event_name: 'PreToolUse', tool_name: mapped, tool_input: toolInput });
+    } else if (ev.kind === 'tool-end') {
+      out.push({ session_id: sessionIdOf(d.runId), hook_event_name: 'PostToolUse' });
+    }
+  }
+  return out;
+}
+
 export class PixelAgentsBridge {
   private readonly db: AikDb;
   private readonly bus: EventBus;
@@ -207,8 +233,13 @@ export class PixelAgentsBridge {
     try {
       for (const env of readOutboxAfter(this.db, this.cursor)) {
         this.cursor = env.seq;
-        if (env.topic === 'run.started' || env.topic === 'run.finished') {
-          const events = env.topic === 'run.started' ? hookEventsForRunStarted(env.data) : hookEventsForRunFinished(env.data);
+        if (env.topic === 'run.started' || env.topic === 'run.finished' || env.topic === 'run.activity') {
+          const events =
+            env.topic === 'run.started'
+              ? hookEventsForRunStarted(env.data)
+              : env.topic === 'run.finished'
+                ? hookEventsForRunFinished(env.data)
+                : hookEventsForRunActivity(env.data);
           for (const event of events) await this.deliver(event);
         }
       }
