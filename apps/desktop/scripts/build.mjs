@@ -26,6 +26,7 @@ fs.cpSync(path.join(root, 'packages/db/migrations'), path.join(out, 'migrations'
 // git.ts resolves this helper next to itself via __dirname.
 fs.copyFileSync(path.join(root, 'apps/orchestrator/src/git/credential-helper-bin.cjs'), path.join(out, 'credential-helper-bin.cjs'));
 fs.cpSync(path.join(root, 'apps/desktop/assets/opencode-runtime'), path.join(out, 'opencode-runtime'), { recursive: true });
+fs.cpSync(path.join(root, 'apps/desktop/assets/pixel-agents-runtime'), path.join(out, 'pixel-agents-runtime'), { recursive: true });
 if (withUi) {
   const ui = path.join(root, 'apps/ui/dist');
   if (!fs.existsSync(path.join(ui, 'index.html'))) throw new Error('apps/ui/dist is missing — run `npm run build -w @aik/ui` first');

@@ -1,0 +1,7 @@
+{
+  "name": "aik-pixel-agents-runtime",
+  "private": true,
+  "dependencies": {
+    "pixel-agents": "1.5.0"
+  }
+}
