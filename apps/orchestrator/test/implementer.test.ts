@@ -332,8 +332,8 @@ describe('ImplementerAgent', () => {
     // The suite shares one DB: keep only this story's run lifecycle rows.
     const rows = readOutbox(dbHolder.db).filter((r) => r.topic.startsWith('run.') && r.storyId === story.id);
     expect(rows.map((r) => r.topic)).toEqual(['run.started', 'run.finished']);
-    expect(rows[0].data).toMatchObject({ role: 'implementer', storyKey: story.key });
-    expect(rows[1].data).toMatchObject({ role: 'implementer', status: 'succeeded' });
+    expect(rows[0]?.data).toMatchObject({ role: 'implementer', storyKey: story.key });
+    expect(rows[1]?.data).toMatchObject({ role: 'implementer', status: 'succeeded' });
   });
 
   test('emits run.finished failed when the model run fails', async () => {
@@ -356,7 +356,7 @@ describe('ImplementerAgent', () => {
 
     // The suite shares one DB: keep only this story's run lifecycle rows.
     const rows = readOutbox(dbHolder.db).filter((r) => r.topic.startsWith('run.') && r.storyId === story.id);
-    expect(rows[1].data).toMatchObject({ role: 'implementer', status: 'failed' });
+    expect(rows[1]?.data).toMatchObject({ role: 'implementer', status: 'failed' });
   });
 });
 

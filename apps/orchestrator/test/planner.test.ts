@@ -417,8 +417,8 @@ describe('PlannerAgent', () => {
     // The file shares one DB across tests, so scope to this test's story (envelope.storyId).
     const rows = readOutbox(dbHolder.db).filter((r) => r.topic.startsWith('run.') && r.storyId === story.id);
     expect(rows.map((r) => r.topic)).toEqual(['run.started', 'run.finished']);
-    expect(rows[0].data).toMatchObject({ role: 'planner', storyKey: story.key });
-    expect(rows[1].data).toMatchObject({ role: 'planner', status: 'succeeded' });
+    expect(rows[0]?.data).toMatchObject({ role: 'planner', storyKey: story.key });
+    expect(rows[1]?.data).toMatchObject({ role: 'planner', status: 'succeeded' });
   });
 
   test('emits run.finished with status failed when planning fails', async () => {
@@ -434,7 +434,7 @@ describe('PlannerAgent', () => {
     // The file shares one DB across tests, so scope to this test's story (envelope.storyId).
     const rows = readOutbox(dbHolder.db).filter((r) => r.topic.startsWith('run.') && r.storyId === story.id);
     expect(rows.map((r) => r.topic)).toEqual(['run.started', 'run.finished']);
-    expect(rows[1].data).toMatchObject({ status: 'failed', exitReason: 'model exploded' });
+    expect(rows[1]?.data).toMatchObject({ status: 'failed', exitReason: 'model exploded' });
   });
 });
 

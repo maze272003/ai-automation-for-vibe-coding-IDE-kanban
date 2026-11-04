@@ -752,8 +752,8 @@ describe('ReviewerAgent', () => {
     // dbHolder is shared across tests, so isolate this story's run events.
     const rows = readOutbox(dbHolder.db).filter((r) => r.topic.startsWith('run.') && r.storyId === story.id);
     expect(rows.map((r) => r.topic)).toEqual(['run.started', 'run.finished']);
-    expect(rows[0].data).toMatchObject({ role: 'reviewer', storyKey: story.key });
-    expect(rows[1].data).toMatchObject({ role: 'reviewer', status: 'succeeded' });
+    expect(rows[0]?.data).toMatchObject({ role: 'reviewer', storyKey: story.key });
+    expect(rows[1]?.data).toMatchObject({ role: 'reviewer', status: 'succeeded' });
   });
 
   test('emits run.finished failed when the reviewer output is invalid', async () => {
@@ -784,8 +784,8 @@ describe('ReviewerAgent', () => {
     // dbHolder is shared across tests, so isolate this story's run events.
     const rows = readOutbox(dbHolder.db).filter((r) => r.topic.startsWith('run.') && r.storyId === story.id);
     expect(rows.map((r) => r.topic)).toEqual(['run.started', 'run.finished', 'run.started', 'run.finished']);
-    expect(rows[1].data).toMatchObject({ status: 'failed' });
-    expect(rows[3].data).toMatchObject({ status: 'failed' });
+    expect(rows[1]?.data).toMatchObject({ status: 'failed' });
+    expect(rows[3]?.data).toMatchObject({ status: 'failed' });
   });
 });
 
