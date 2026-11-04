@@ -307,7 +307,7 @@ export function SettingsPage() {
   /** The managed/personal decision is shared by the model picker and the Providers card. */
   const changeMode = async (next: OpencodeMode) => {
     if (next === mode) return;
-    const saved = await window.api.setAppSettings({ opencodeMode: next });
+    const saved = await window.api.setAppSettings({ opencodeMode: next, agentOffice: false });
     setMode(saved.opencodeMode);
   };
 

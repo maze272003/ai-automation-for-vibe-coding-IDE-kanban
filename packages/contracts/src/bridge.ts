@@ -44,6 +44,8 @@ export type OpencodeLoginWaitResult = { ok: true } | { ok: false; error: string 
 export type OpencodeMode = 'managed' | 'personal';
 export interface AppSettings {
   opencodeMode: OpencodeMode;
+  /** Show running agents as pixel-art characters in the embedded Pixel Agents office (spec 2026-11-04). Off by default. */
+  agentOffice: boolean;
 }
 
 /** The only API the renderer can reach (exposed by the preload as `window.api`). */

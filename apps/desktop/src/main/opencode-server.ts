@@ -23,19 +23,19 @@ import { opencodeExePath } from './opencode.ts';
 
 // ---- app settings (tiny JSON in the data dir; no secrets) ----
 
-const DEFAULT_SETTINGS: AppSettings = { opencodeMode: 'managed' };
+const DEFAULT_SETTINGS: AppSettings = { opencodeMode: 'managed', agentOffice: false };
 
 export function readAppSettings(dataDir: string): AppSettings {
   try {
     const raw = JSON.parse(fs.readFileSync(path.join(dataDir, 'settings.json'), 'utf8')) as Partial<AppSettings>;
-    return { opencodeMode: raw.opencodeMode === 'personal' ? 'personal' : 'managed' };
+    return { opencodeMode: raw.opencodeMode === 'personal' ? 'personal' : 'managed', agentOffice: raw.agentOffice === true };
   } catch {
     return DEFAULT_SETTINGS;
   }
 }
 
 export function writeAppSettings(dataDir: string, settings: AppSettings): AppSettings {
-  const next: AppSettings = { opencodeMode: settings.opencodeMode === 'personal' ? 'personal' : 'managed' };
+  const next: AppSettings = { opencodeMode: settings.opencodeMode === 'personal' ? 'personal' : 'managed', agentOffice: settings.agentOffice === true };
   fs.mkdirSync(dataDir, { recursive: true });
   fs.writeFileSync(path.join(dataDir, 'settings.json'), JSON.stringify(next, null, 2));
   return next;

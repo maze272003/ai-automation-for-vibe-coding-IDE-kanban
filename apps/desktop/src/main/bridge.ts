@@ -1,4 +1,4 @@
-import type { BridgeResponse, SystemState } from '@aik/contracts';
+import type { AppSettings, BridgeResponse, SystemState } from '@aik/contracts';
 import { listBackups, restoreBackup } from '@aik/db/backup';
 import { BrowserWindow, dialog, ipcMain, shell, type IpcMainInvokeEvent } from 'electron';
 import { spawn } from 'node:child_process';
@@ -18,6 +18,8 @@ export interface BridgeDeps {
   paths: DesktopPaths;
   opencodeAssetsDir: string;
   isTrustedSender: (url: string) => boolean;
+  /** Fires when a settings write flipped agentOffice (office start/stop + orchestrator restart, spec 2026-11-04). */
+  onSettingsChanged?: (next: AppSettings) => void;
 }
 
 const unavailable = (message: string): BridgeResponse => ({
@@ -134,9 +136,17 @@ export function registerBridge(deps: BridgeDeps): void {
 
   ipcMain.handle('aik:app-settings-set', (event, raw: unknown) => {
     assertTrusted(event, deps);
-    const parsed = z.object({ opencodeMode: z.enum(['managed', 'personal']) }).parse(raw);
+    const previous = readAppSettings(deps.paths.dataDir);
+    const parsed = z
+      .object({ opencodeMode: z.enum(['managed', 'personal']), agentOffice: z.boolean().optional() })
+      .parse(raw);
+    const next = writeAppSettings(deps.paths.dataDir, {
+      opencodeMode: parsed.opencodeMode,
+      agentOffice: parsed.agentOffice ?? previous.agentOffice,
+    });
     stopOpencodeServer(); // the next call starts a server in the new mode
-    return writeAppSettings(deps.paths.dataDir, parsed);
+    if (previous.agentOffice !== next.agentOffice) deps.onSettingsChanged?.(next);
+    return next;
   });
 
   ipcMain.handle('aik:opencode-chat', async (event, raw: unknown) => {
