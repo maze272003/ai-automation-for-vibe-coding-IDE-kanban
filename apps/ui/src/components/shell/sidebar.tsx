@@ -37,6 +37,9 @@ export function Sidebar({ projects, orchestratorState, dataDir }: SidebarProps) 
         <Link to="/usage" className={navItem}>
           Usage
         </Link>
+        <Link to="/office" className={navItem}>
+          Office
+        </Link>
         <Link to="/settings" className={navItem}>
           Settings
         </Link>
