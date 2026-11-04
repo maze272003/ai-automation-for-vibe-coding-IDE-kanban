@@ -89,7 +89,7 @@ export class PlannerAgent {
       })
       .returning()
       .get();
-    emitRunStarted(this.db, new Date(this.now()), run.id);
+    const startSeq = emitRunStarted(this.db, new Date(this.now()), run.id);
 
     // Attach active run to story so the UI Kanban card immediately shows the working terminal badge
     this.db
@@ -208,7 +208,7 @@ Output only the JSON code block.`;
           this.bus.notify(1);
         },
         onActivity: (events) => {
-          const seq = appendRunActivity(this.db, new Date(this.now()), run.id, events, this.redact);
+          const seq = appendRunActivity(this.db, new Date(this.now()), run.id, events, this.redact, undefined, startSeq ?? 0);
           if (seq !== null) this.bus.notify(seq);
         },
       });

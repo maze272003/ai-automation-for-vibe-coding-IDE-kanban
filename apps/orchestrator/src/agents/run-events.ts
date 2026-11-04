@@ -3,7 +3,7 @@
 // The payload carries story/project context so consumers (the office bridge) need no extra joins.
 import type { Role } from '@aik/contracts';
 import { agentRuns, outboxEvents, projects, userStories, type AikDbOrTx } from '@aik/db';
-import { and, eq, sql } from 'drizzle-orm';
+import { and, eq, gt, sql } from 'drizzle-orm';
 import { appendOutbox } from '../events/outbox.ts';
 import type { RunActivityEvent } from './run-activity.ts';
 
@@ -32,10 +32,11 @@ export function runEventInfo(db: AikDbOrTx, runId: number): RunEventInfo | null 
   return row ? { runId: row.runId, storyId: row.storyId, storyKey: row.storyKey, projectKey: row.projectKey, role: row.role } : null;
 }
 
-export function emitRunStarted(db: AikDbOrTx, now: Date, runId: number): void {
+/** Emits run.started and returns the new outbox seq (callers bound the activity-cap count to it); null when the run is unknown. */
+export function emitRunStarted(db: AikDbOrTx, now: Date, runId: number): number | null {
   const info = runEventInfo(db, runId);
-  if (!info) return;
-  appendOutbox(db, {
+  if (!info) return null;
+  return appendOutbox(db, {
     topic: 'run.started',
     storyId: info.storyId,
     provenance: 'system',
@@ -64,7 +65,17 @@ export function emitRunFinished(db: AikDbOrTx, now: Date, runId: number, status:
 /** Max `run.activity` rows per run (spec 2026-11-04-office-agent-activity); drops silently after. */
 export const RUN_ACTIVITY_ROW_CAP = 300;
 
-/** One outbox row per activity batch: `{runId, role, storyKey, projectKey, events}`; summaries redacted. Null = no-op. */
+/** Max characters of a redacted activity summary. */
+const SUMMARY_MAX = 120;
+
+/** Applied after redaction, so a secret straddling the boundary is redacted whole before truncating. */
+export function truncateSummary(text: string): string {
+  return text.length > SUMMARY_MAX ? `${text.slice(0, SUMMARY_MAX)}…` : text;
+}
+
+/** One outbox row per activity batch: `{runId, role, storyKey, projectKey, events}`; summaries redacted, then truncated.
+ * `afterSeq` (the run's run.started seq) bounds the cap count to the run's own rows via the outbox PK,
+ * so SQLite range-scans only what was written since the run started instead of the whole 30-day outbox. */
 export function appendRunActivity(
   db: AikDbOrTx,
   now: Date,
@@ -72,6 +83,7 @@ export function appendRunActivity(
   events: RunActivityEvent[],
   redact: (text: string) => string = (s) => s,
   rowCap: number = RUN_ACTIVITY_ROW_CAP,
+  afterSeq?: number,
 ): number | null {
   if (events.length === 0) return null;
   const info = runEventInfo(db, runId);
@@ -79,7 +91,11 @@ export function appendRunActivity(
   const count = db
     .select({ n: sql<number>`count(*)` })
     .from(outboxEvents)
-    .where(and(eq(outboxEvents.topic, 'run.activity'), sql`json_extract(${outboxEvents.payload}, '$.data.runId') = ${runId}`))
+    .where(and(
+      eq(outboxEvents.topic, 'run.activity'),
+      sql`json_extract(${outboxEvents.payload}, '$.data.runId') = ${runId}`,
+      ...(afterSeq !== undefined ? [gt(outboxEvents.seq, afterSeq)] : []),
+    ))
     .get();
   if ((count?.n ?? 0) >= rowCap) return null;
   return appendOutbox(
@@ -93,7 +109,7 @@ export function appendRunActivity(
         role: info.role,
         storyKey: info.storyKey,
         projectKey: info.projectKey,
-        events: events.map((e) => ({ kind: e.kind, name: e.name, ...(e.summary !== undefined ? { summary: redact(e.summary) } : {}) })),
+        events: events.map((e) => ({ kind: e.kind, name: e.name, ...(e.summary !== undefined ? { summary: truncateSummary(redact(e.summary)) } : {}) })),
       },
     },
     now,

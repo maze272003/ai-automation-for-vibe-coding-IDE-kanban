@@ -16,8 +16,6 @@ export interface ActivityDiffState {
   reasoningSeen: number;
 }
 
-const SUMMARY_MAX = 120;
-
 export function createActivityDiffState(): ActivityDiffState {
   return { seen: new Set(), thinking: false, reasoningSeen: 0 };
 }
@@ -25,13 +23,12 @@ export function createActivityDiffState(): ActivityDiffState {
 const basenameOf = (p: unknown): string | undefined =>
   typeof p === 'string' && p !== '' ? p.split(/[\\/]/).pop() : undefined;
 
+// Summaries are returned in full: redaction and truncation happen downstream in
+// appendRunActivity, so a secret straddling the 120-char cap is always redacted whole.
 function summaryFor(name: string, input: unknown): string | undefined {
   if (typeof input !== 'object' || input === null) return undefined;
   const inp = input as Record<string, unknown>;
-  if (name === 'bash' && typeof inp.command === 'string' && inp.command !== '') {
-    const cmd = inp.command;
-    return cmd.length > SUMMARY_MAX ? `${cmd.slice(0, SUMMARY_MAX)}…` : cmd;
-  }
+  if (name === 'bash' && typeof inp.command === 'string' && inp.command !== '') return inp.command;
   return basenameOf(inp.path) ?? basenameOf(inp.file_path);
 }
 

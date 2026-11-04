@@ -115,7 +115,7 @@ export class ImplementerAgent {
       })
       .returning()
       .get();
-    emitRunStarted(this.db, new Date(this.now()), run.id);
+    const startSeq = emitRunStarted(this.db, new Date(this.now()), run.id);
 
     // 3. Claim the implementation in the state machine.
     const claim = this.workflow.transition({
@@ -185,7 +185,7 @@ export class ImplementerAgent {
           this.bus.notify(1);
         },
         onActivity: (events) => {
-          const seq = appendRunActivity(this.db, new Date(this.now()), run.id, events, this.redact);
+          const seq = appendRunActivity(this.db, new Date(this.now()), run.id, events, this.redact, undefined, startSeq ?? 0);
           if (seq !== null) this.bus.notify(seq);
         },
       });

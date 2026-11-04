@@ -213,7 +213,8 @@ export class ReviewerAgent {
         .returning()
         .get();
 
-      emitRunStarted(this.db, new Date(this.now()), run.id);
+      // Captured per attempt: the activity cap counts only rows written since this attempt's run.started.
+      const startSeq = emitRunStarted(this.db, new Date(this.now()), run.id);
       this.setActiveRun(story.id, run.id);
 
       try {
@@ -273,7 +274,7 @@ export class ReviewerAgent {
               this.bus.notify(1);
             },
             onActivity: (events) => {
-              const seq = appendRunActivity(this.db, new Date(this.now()), run.id, events, this.redact);
+              const seq = appendRunActivity(this.db, new Date(this.now()), run.id, events, this.redact, undefined, startSeq ?? 0);
               if (seq !== null) this.bus.notify(seq);
             },
           });

@@ -27,14 +27,14 @@ describe('diffActivity', () => {
     expect(diffActivity(state, later)).toEqual([{ kind: 'tool-end', name: 'bash' }]);
   });
 
-  test('bash commands are truncated to 120 chars; long paths use the basename', () => {
+  test('bash commands pass through in full (redaction/truncation happen downstream); long paths use the basename', () => {
     const state = createActivityDiffState();
     const long = 'x'.repeat(200);
     const messages = [
       { role: 'assistant', content: [tool('p1', 'bash', 'running', { command: long })] },
     ];
     expect(diffActivity(state, messages)).toEqual([
-      { kind: 'tool-start', name: 'bash', summary: `${'x'.repeat(120)}…` },
+      { kind: 'tool-start', name: 'bash', summary: long },
     ]);
   });
 

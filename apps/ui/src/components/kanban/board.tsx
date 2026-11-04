@@ -37,10 +37,13 @@ export function Board({
     setTerminalStory(story);
     // The ?terminal= param is one-shot: clear it so later stories refreshes cannot
     // re-open the modal once the user has closed it. A new office click sets it again.
+    // replace (not push): the ?terminal= entry must not stay in history, or Back would
+    // land on it and re-open the modal; Back from the board still returns to the office.
     void navigate({
       to: '/projects/$projectId',
       params: { projectId: String(story.projectId) },
       search: {},
+      replace: true,
     });
   }, [focusStoryId, navigate, stories]);
 

@@ -161,6 +161,41 @@ describe('PixelAgentsBridge', () => {
     t.close();
   });
 
+  test('drain posts run.activity rows as PreToolUse/PostToolUse hook bodies', async () => {
+    const t = createTestDb();
+    const bus = new EventBus();
+    FakeWebSocket.instances = [];
+    const { impl, posts } = makeFetch([]);
+    const bridge = new PixelAgentsBridge({
+      db: t.db, bus, logger: { info: () => undefined, warn: () => undefined }, redact: (s) => s,
+      office: { url: 'http://127.0.0.1:45999', token: 'sekret-token' },
+      fetchImpl: impl, webSocketImpl: FakeWebSocket as unknown as new (url: string) => WebSocket,
+      healthIntervalMs: 60_000, retryDelaysMs: [0, 0],
+    });
+    bridge.start();
+    await bridge.poll(); // healthy; initial drain sees an empty outbox
+
+    appendOutbox(t.db, {
+      topic: 'run.activity', storyId: 1, provenance: 'system',
+      data: {
+        runId: 7, role: 'implementer', storyKey: 'INV-7', projectKey: 'INV',
+        events: [
+          { kind: 'tool-start', name: 'read', summary: 'src/foo.ts' },
+          { kind: 'tool-end', name: 'read' },
+        ],
+      },
+    }, new Date());
+    bus.notify(1);
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(posts.map((p) => p.body)).toEqual([
+      { session_id: 'aik-run-7', hook_event_name: 'PreToolUse', tool_name: 'Read', tool_input: { file_path: 'src/foo.ts' } },
+      { session_id: 'aik-run-7', hook_event_name: 'PostToolUse' },
+    ]);
+    bridge.stop();
+    t.close();
+  });
+
   test('unhealthy path: queues, then flushes in order once health recovers', async () => {
     const t = createTestDb();
     const bus = new EventBus();
