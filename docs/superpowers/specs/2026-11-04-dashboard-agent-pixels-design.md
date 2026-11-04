@@ -1,7 +1,9 @@
 # Dashboard Agent Pixels — Design
 
 Date: 2026-11-04
-Status: approved (user) · pending implementation
+Status: **superseded** by `2026-11-04-pixel-agents-office-design.md` — the user
+pivoted to visualizing agents with Pixel Agents (pixel-agents-hq/pixel-agents)
+instead of native dot indicators. Kept for history; not implemented.
 
 ## Problem
 
