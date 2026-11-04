@@ -12,7 +12,7 @@ import { describeHits, scanStagedDiff } from '../secrets/scan.ts';
 import { systemClock, type Clock } from '../time.ts';
 import type { WorkflowService } from '../workflow/service.ts';
 import type { RunInterruptRegistry } from './interrupts.ts';
-import { emitRunFinished, emitRunStarted } from './run-events.ts';
+import { emitRunFinished, emitRunStarted, appendRunActivity } from './run-events.ts';
 import { ensureModelProfile, ROLE_TIMEOUTS, type ModelRef, type OpenCodeRuntime, type RunOneShotOutput } from './runtime.ts';
 import type { SkillBridgeService } from '../skills/bridge.ts';
 
@@ -26,6 +26,7 @@ export interface ImplementerAgentDeps {
   /** When provided, the implementation session registers as the story's interruptible run (EXE-13). */
   interrupts?: RunInterruptRegistry;
   skills?: SkillBridgeService;
+  redact?: (text: string) => string;
 }
 
 export interface ImplementStoryInput {
@@ -53,6 +54,7 @@ export class ImplementerAgent {
   private readonly interrupts?: RunInterruptRegistry;
   private readonly skills?: SkillBridgeService;
   private readonly now: Clock;
+  private readonly redact: (text: string) => string;
 
   constructor(deps: ImplementerAgentDeps) {
     this.db = deps.db;
@@ -63,6 +65,7 @@ export class ImplementerAgent {
     this.interrupts = deps.interrupts;
     this.skills = deps.skills;
     this.now = deps.now ?? systemClock;
+    this.redact = deps.redact ?? ((s) => s);
   }
 
   async implementStory(input: ImplementStoryInput): Promise<ImplementStoryResult> {
@@ -180,6 +183,10 @@ export class ImplementerAgent {
             .where(eq(agentRuns.id, run.id))
             .run();
           this.bus.notify(1);
+        },
+        onActivity: (events) => {
+          const seq = appendRunActivity(this.db, new Date(this.now()), run.id, events, this.redact);
+          if (seq !== null) this.bus.notify(seq);
         },
       });
     } finally {

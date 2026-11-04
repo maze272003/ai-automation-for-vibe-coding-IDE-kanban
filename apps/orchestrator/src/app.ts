@@ -231,9 +231,9 @@ export async function startOrchestrator(opts: OrchestratorOptions): Promise<Runn
   });
 
   const skills = new SkillBridgeService({ logger: (msg) => logger.info({ msg }, 'skill-bridge') });
-  const planner = new PlannerAgent({ db, workflow, bus, runtime, interrupts, skills });
-  const implementer = new ImplementerAgent({ db, workflow, bus, runtime, worktreeManager, interrupts, skills });
-  const reviewer = new ReviewerAgent({ db, workflow, bus, runtime, worktreeManager, interrupts, skills });
+  const planner = new PlannerAgent({ db, workflow, bus, runtime, interrupts, skills, redact: redactor.redact });
+  const implementer = new ImplementerAgent({ db, workflow, bus, runtime, worktreeManager, interrupts, skills, redact: redactor.redact });
+  const reviewer = new ReviewerAgent({ db, workflow, bus, runtime, worktreeManager, interrupts, skills, redact: redactor.redact });
   // Pixel Agents office bridge (spec 2026-11-04): only exists when the desktop passed the
   // office server config — feature off means no subscriber, no sockets, no processes.
   const officeBridge = opts.agentOffice

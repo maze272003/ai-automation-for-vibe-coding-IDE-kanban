@@ -2,9 +2,10 @@
 // Emits the run.started/run.finished outbox topics (spec 2026-11-04 Pixel Agents office).
 // The payload carries story/project context so consumers (the office bridge) need no extra joins.
 import type { Role } from '@aik/contracts';
-import { agentRuns, projects, userStories, type AikDbOrTx } from '@aik/db';
-import { eq } from 'drizzle-orm';
+import { agentRuns, outboxEvents, projects, userStories, type AikDbOrTx } from '@aik/db';
+import { and, eq, sql } from 'drizzle-orm';
 import { appendOutbox } from '../events/outbox.ts';
+import type { RunActivityEvent } from './run-activity.ts';
 
 export interface RunEventInfo {
   runId: number;
@@ -58,4 +59,43 @@ export function emitRunFinished(db: AikDbOrTx, now: Date, runId: number, status:
       ...(exitReason ? { exitReason } : {}),
     },
   }, now);
+}
+
+/** Max `run.activity` rows per run (spec 2026-11-04-office-agent-activity); drops silently after. */
+export const RUN_ACTIVITY_ROW_CAP = 300;
+
+/** One outbox row per activity batch: `{runId, role, storyKey, projectKey, events}`; summaries redacted. Null = no-op. */
+export function appendRunActivity(
+  db: AikDbOrTx,
+  now: Date,
+  runId: number,
+  events: RunActivityEvent[],
+  redact: (text: string) => string = (s) => s,
+  rowCap: number = RUN_ACTIVITY_ROW_CAP,
+): number | null {
+  if (events.length === 0) return null;
+  const info = runEventInfo(db, runId);
+  if (!info) return null;
+  const count = db
+    .select({ n: sql<number>`count(*)` })
+    .from(outboxEvents)
+    .where(and(eq(outboxEvents.topic, 'run.activity'), sql`json_extract(${outboxEvents.payload}, '$.data.runId') = ${runId}`))
+    .get();
+  if ((count?.n ?? 0) >= rowCap) return null;
+  return appendOutbox(
+    db,
+    {
+      topic: 'run.activity',
+      storyId: info.storyId,
+      provenance: 'system',
+      data: {
+        runId: info.runId,
+        role: info.role,
+        storyKey: info.storyKey,
+        projectKey: info.projectKey,
+        events: events.map((e) => ({ kind: e.kind, name: e.name, ...(e.summary !== undefined ? { summary: redact(e.summary) } : {}) })),
+      },
+    },
+    now,
+  );
 }

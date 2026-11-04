@@ -436,5 +436,31 @@ describe('PlannerAgent', () => {
     expect(rows.map((r) => r.topic)).toEqual(['run.started', 'run.finished']);
     expect(rows[1]?.data).toMatchObject({ status: 'failed', exitReason: 'model exploded' });
   });
+
+  test('planner forwards onActivity to the run.activity outbox with redaction', async () => {
+    const t = createTestDb();
+    const project = seedProject(t.db, { key: 'INV' });
+    const story = seedStory(t.db, project.id, { key: 'INV-9' });
+    const runtime = {
+      runOneShot: async (input: { onActivity?: (e: { kind: string; name: string; summary?: string }[]) => void }) => {
+        input.onActivity?.([{ kind: 'tool-start', name: 'read', summary: 'file-with-hunter2' }]);
+        return { ok: false, error: 'boom' };
+      },
+      interrupt: async () => true,
+    } as unknown as OpenCodeRuntime;
+    const planner = new PlannerAgent({
+      db: t.db,
+      workflow: new WorkflowService({ db: t.db, bus: new EventBus() }),
+      bus: new EventBus(),
+      runtime,
+      redact: (s) => s.replace(/hunter2/g, '[red]'),
+    });
+    const res = await planner.planStory({ storyId: story.id });
+    expect(res.ok).toBe(false);
+    const row = readOutbox(t.db).find((r) => r.topic === 'run.activity');
+    expect(row?.data).toMatchObject({ role: 'planner', storyKey: 'INV-9', projectKey: 'INV' });
+    expect(JSON.stringify(row?.data)).toContain('file-with-[red]');
+    t.close();
+  });
 });
 
