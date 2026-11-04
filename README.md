@@ -13,6 +13,16 @@ downloads + security-scans them from their GitHub sources, and installs approved
 OpenCode/Claude Code. Docs: `docs/skill-vault/` · CLI: `node apps/skill-vault/src/cli.ts help`.
 Vault data lives in `%LOCALAPPDATA%\AiKanban\skill-vault` (never in git).
 
+## Agent office
+
+Optional (Settings → Agent office, off by default): every planner/implementer/reviewer run
+appears as an animated pixel-art character in an embedded office view powered by the bundled
+[Pixel Agents](https://github.com/pixel-agents-hq/pixel-agents) runtime (exact-pinned, MIT).
+The office server runs locally on 127.0.0.1 with terminals disabled and is embedded read-only;
+its loopback bearer token stays in the app's processes (redacted from all logs). Enabling the
+feature also turns on Pixel Agents' global "Watch all sessions" setting (required for external
+agents to appear). Design: `docs/superpowers/specs/2026-11-04-pixel-agents-office-design.md`.
+
 ## Requirements
 Windows 10 22H2+ / 11 · Node ≥ 24.17.0 · Git for Windows ≥ 2.38
 
