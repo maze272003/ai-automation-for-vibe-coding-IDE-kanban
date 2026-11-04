@@ -867,6 +867,22 @@ git commit -m "feat(ui): office character click opens the story terminal modal"
 
 ### Task 6: Office click preload + IPC + build + docs
 
+> **Post-review amendment (CDP):** the mechanism specified below — an isolated-world
+> preload patching `window.WebSocket` — was found **functionally inert in review**:
+> under contextIsolation the preload cannot see the page's WebSocket constructor, so
+> no frame was ever observed. Task 6 was reworked (see
+> `.superpowers/sdd/task-6-report.md`): `office-preload.ts` is deleted and nothing is
+> injected into the pixel-agents page. Instead the main process attaches the office
+> view's `webContents.debugger`, enables `Network`, and passively observes
+> `Network.webSocketFrameSent`/`FrameReceived`; frames are parsed by the pure,
+> unit-tested `apps/desktop/src/main/office-click-frames.ts` (label map from
+> agentCreated/existingAgents/agentClosed; focusAgent resolves the clicked label);
+> parsed clicks route in-process through `OfficeViewManager`'s `clickHandler`, and
+> `acceptAgentClick` stays only as a harmless, still-guarded IPC entry point. The
+> build line for `office-preload.cjs` and the packaging guard were updated
+> accordingly. The steps below are the original (rejected) preload variant, kept for
+> history — do not re-implement them.
+
 **Files:**
 - Create: `apps/desktop/src/main/office-preload.ts`
 - Modify: `apps/desktop/src/main/office-view.ts` (preload attach + `acceptAgentClick` + `onClick`)

@@ -25,17 +25,16 @@ describe('pixel-agents runtime packaging', () => {
     expect(fs.existsSync(new URL('../assets/pixel-agents-runtime/package-lock.json', import.meta.url))).toBe(true);
   });
 
-  test('the office view runs the click-observer preload and only trusts its own webContents', () => {
+  test('the office view observes clicks via CDP frames and no preload is shipped', () => {
     const view = fs.readFileSync(new URL('../src/main/office-view.ts', import.meta.url), 'utf8');
     const build = fs.readFileSync(new URL('../scripts/build.mjs', import.meta.url), 'utf8');
-    const preload = fs.readFileSync(new URL('../src/main/office-preload.ts', import.meta.url), 'utf8');
-    // The view attaches the preload and gates click IPC on the exact webContents id…
-    expect(view).toContain('office-preload.cjs');
+    // The view enables the CDP network domain and keeps the guarded click entry point…
+    expect(view).toContain('Network.enable');
     expect(view).toContain('acceptAgentClick');
-    // …the build ships it next to preload.cjs…
-    expect(build).toContain('office-preload.ts');
-    // …and the preload only observes WebSocket frames and sends one string channel.
-    expect(preload).toContain('aik:office-agent-click');
-    expect(preload).toContain('focusAgent');
+    // …no isolated-world preload is attached or built anywhere…
+    expect(view).not.toContain('office-preload');
+    expect(build).not.toContain('office-preload');
+    // …and the preload source is gone for good.
+    expect(fs.existsSync(new URL('../src/main/office-preload.ts', import.meta.url))).toBe(false);
   });
 });

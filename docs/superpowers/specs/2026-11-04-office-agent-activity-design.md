@@ -2,7 +2,7 @@
 
 Date: 2026-11-04
 Status: approved (user) · pending implementation
-Amends: `2026-11-04-pixel-agents-office-design.md` (§ Security review: office preload; § Non-goals: tool-level fidelity)
+Amends: `2026-11-04-pixel-agents-office-design.md` (§ Security review: office click observation via main-process CDP — their "no preload" guarantee stays intact; § Non-goals: tool-level fidelity)
 
 ## Problem
 
@@ -47,8 +47,10 @@ read in their source):
   `Running: <command>`, unknown tools render `Using <toolName>`. `PostToolUse`
   ignores `tool_name`. Statuses update live for hooks-only agents
   (`agentToolStart` broadcasts; proven by their `--no-terminal` e2e).
-- No click-through/link/postMessage exists for embedders; wrapping the page's
-  `WebSocket` from a preload that runs before page scripts is the only seam.
+- No click-through/link/postMessage exists for embedders; the WebSocket frames are
+  observable from the desktop main process by attaching the office view's
+  `webContents.debugger` and listening to `Network.webSocketFrameSent`/`FrameReceived`
+  (passive CDP observation — zero code enters their page).
 
 **Our app**:
 
@@ -73,11 +75,13 @@ read in their source):
 
 ```
 ┌─ click path ────────────────────────────────────────────────────┐
-│ office WebContentsView (their SPA)                              │
-│   office-preload.cjs: wraps WebSocket, observes focusAgent      │
-│   + agentCreated/existingAgents → id→label map                  │
-│   → ipc 'aik:office-agent-click' (label string only)            │
-│ desktop main: exact webContents-id sender check → window        │
+│ office WebContentsView (their SPA — zero code injected)         │
+│ desktop main: view.webContents.debugger passively observes      │
+│   Network.webSocketFrameSent/FrameReceived                      │
+│   pure parser (office-click-frames.ts): focusAgent + id→label   │
+│   map from agentCreated/existingAgents/agentClosed              │
+│   → clickHandler(label string only) → win.webContents.send(     │
+│   'aik:office-agent-click', label)                              │
 │ renderer: parse label → GET /stories/key/:key → navigate to     │
 │   board with ?terminal=<storyId> → Board opens TerminalModal    │
 └─────────────────────────────────────────────────────────────────┘
@@ -92,27 +96,39 @@ read in their source):
 
 ## Component design
 
-### 1. Office preload (`apps/desktop/src/main/office-preload.ts` → `dist/office-preload.cjs`)
+### 1. Office click observation (main-process CDP: `office-view.ts` + pure `office-click-frames.ts`)
 
-Bundled by `build.mjs` like `preload.cjs` (esbuild, cjs, external electron).
-webPreferences of the office view gain `preload: path.join(__dirname,
-'office-preload.cjs')` (sandbox + contextIsolation stay on).
+> An earlier variant — an isolated-world preload wrapping `window.WebSocket` — was
+> **rejected in review: contextIsolation makes an isolated-world WebSocket patch
+> unobservable** (the preload cannot see the page's WebSocket constructor, so it
+> observed nothing). It was deleted; no preload ships.
 
-The preload replaces `window.WebSocket` with a pass-through subclass that:
+The office view's webPreferences stay exactly `{ sandbox: true, nodeIntegration:
+false, contextIsolation: true }` — no `preload:` at all, so nothing of ours ever
+runs inside their page. Instead, right after `loadURL(origin)`, the main process
+attaches the view's own debugger and observes passively:
 
-- on `send`, parses JSON; a `focusAgent` frame resolves the character id against
-  the maintained `id → directoryName` map (learned from `agentCreated` /
-  `existingAgents` broadcasts; entries dropped on `agentClosed`) and
-  `ipcRenderer.send('aik:office-agent-click', label)` — the label string only.
-- never mutates, holds, or replays frames; failure of any parse step is silent
-  (the page must not break).
-
-**Security posture change (amendment to the 2026-11-04 office spec):** the office
-view now runs a preload. Containment: sandboxed (no node), contextIsolation,
-single outgoing IPC channel, string-only payload, runs in their origin (never
-sees `app://` pages). The receiving `ipcMain.on` handler accepts frames **only**
-from the office view's exact `webContents.id` (`event.sender.id` compared to the
-manager's view, not a URL heuristic), then relays to our renderer window.
+- `view.webContents.debugger.attach('1.3')` + `Network.enable` (once per view;
+  best-effort — if the debugger is unavailable or already attached, click
+  observation is silently off and the office view itself is unaffected).
+- `Network.webSocketFrameReceived` frames feed `applyOfficeFrame(map, payload)` —
+  a **pure, unit-tested parser** (`office-click-frames.ts`, no Electron imports):
+  `agentCreated` {id, directoryName} and `existingAgents`
+  {directoryNames:{[id]:name}} populate an `id → directoryName` map,
+  `agentClosed` {id} drops an id, everything else is ignored; parsing never
+  throws and rejects malformed ids (NaN, non-number) and empty names.
+- `Network.webSocketFrameSent` frames go through `officeClickLabel(map, payload)`:
+  a `focusAgent` {id} frame with a known id yields the character label, which is
+  routed **in-process** to the registered click handler (`this.clickHandler`) —
+  the label string only, never the raw frame. Unknown ids, non-JSON frames and
+  non-focusAgent frames yield null (drop silently).
+- The debugger is detached best-effort in `destroy()` before the webContents
+  closes, and the label map is cleared when the view reloads to a new origin
+  (agent ids are per server instance).
+- `acceptAgentClick(senderWebContentsId, label)` remains the guarded IPC entry
+  point (exact `webContents.id` match, string-only payload ≤ 200 chars). With
+  CDP, frames arrive in-process, so no sender can reach it today — it stays as a
+  harmless, still-guarded API should a preload ever return.
 
 ### 2. Click wiring (desktop main → renderer → modal)
 
@@ -179,24 +195,32 @@ semantics are exactly the existing ones. Unknown `data.events` shapes are skippe
 
 - Office not running / bridge offline: activity rows pile up in the bounded queue
   like today (cap 100, oldest dropped) — worst case stale bubbles, self-heals.
-- Click before the label map is populated (broadcast race): the preload drops the
+- Click before the label map is populated (broadcast race): the observer drops the
   click silently; clicking again works once `agentCreated` arrived.
+- Debugger unavailable or already attached: click observation is off, the office
+  view itself is unaffected (best-effort attach, silent degradation).
 - Run finished between click and modal open: the modal already renders the last
   run's session messages (`lastRun`) — graceful.
 - Implementer/reviewer sessions run in worktrees; summaries may carry worktree
   paths — harmless (display only, redacted, local).
 - Rapid tool churn: events are batched per 400 ms tick into one row; cap 300
   rows/run bounds DB growth (~2 min of continuous activity at worst).
-- Feature off (`agentOffice: false`): no preload click path (view never loads),
-  no bridge; `run.activity` rows are still appended (they also serve the UI SSE)
-  — this is accepted and cheap.
+- Feature off (`agentOffice: false`): no click path (view never loads, no CDP
+  attach), no bridge; `run.activity` rows are still appended (they also serve the
+  UI SSE) — this is accepted and cheap.
 
 ## Security review
 
-- The office preload is the single deviation from the reviewed office spec and is
-  containment-first: sandboxed, contextIsolated, no node, one string channel,
-  exact-webContents sender check in main. It observes only the pixel-agents page's
-  own WebSocket traffic on 127.0.0.1.
+- The office click observer is the single deviation from the reviewed office spec
+  and is containment-first: it runs entirely in the desktop main process by
+  attaching the office view's own `webContents.debugger` — **zero code is
+  injected into the pixel-agents page** (their "no preload, no node access"
+  guarantee from the office spec stays intact: sandbox + contextIsolation, and
+  the view loads nothing of ours). Frames are parsed by a pure function, only
+  the resolved label string is forwarded to our renderer, and observation is
+  read-only (no CDP commands are sent after `Network.enable`).
+  `acceptAgentClick` keeps the exact `webContents.id` sender check for the
+  currently sender-less IPC channel.
 - `summary` values are redacted (orchestrator redactor) and truncated before any
   persistence or IPC; tokens/secrets already covered by the redactor's secret
   list can therefore not leak into bubbles, outbox rows, or logs.
@@ -207,9 +231,13 @@ semantics are exactly the existing ones. Unknown `data.events` shapes are skippe
 
 - **UI**: `parseOfficeLabel` unit tests (story keys with digits/hyphens, roles);
   office route subscribes/unsubscribes; `?terminal=` consumed once by Board.
-- **Desktop**: office-view click forwarding is not unit-testable without
-  Electron (existing gap) — the preload is kept dumb-thin; the sender check is a
-  pure id comparison reviewed by test where extractable.
+- **Desktop**: the frame parser is pure and fully unit-tested
+  (`apps/desktop/test/office-click-frames.test.ts`: label resolution, unknown
+  ids, non-JSON payloads, map population incl. NaN-key rejection, agentClosed
+  removal, unrelated frame types); the CDP attach itself needs Electron
+  (existing gap, manually verified) and is guarded by packaging assertions
+  (`Network.enable` present, no `office-preload` anywhere); the sender check is
+  a pure id comparison reviewed by test where extractable.
 - **Orchestrator**: runtime diffing against fixture message arrays (spk-1 probe
   shapes); `appendRunActivity` outbox rows (batching, redaction, cap) per agent;
   bridge translation table incl. defensive skips (extend
@@ -233,4 +261,4 @@ semantics are exactly the existing ones. Unknown `data.events` shapes are skippe
 1. Contracts + story-by-key API + UI label parsing + `?terminal=` modal open.
 2. Runtime `onActivity` diffing + `run.activity` outbox (agents, redaction, cap).
 3. Bridge translation for `run.activity`.
-4. Office preload + IPC + click wiring + docs.
+4. Office click observation (main-process CDP frames + pure parser) + IPC + click wiring + docs.
