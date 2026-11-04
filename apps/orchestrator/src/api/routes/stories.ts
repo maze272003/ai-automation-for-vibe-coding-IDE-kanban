@@ -2,6 +2,7 @@
 import { CreateStoryRequest, PatchStoryRequest, RevertMergeRequest, StoryListQuery, TransitionRequest } from '@aik/contracts';
 import type { AikDb } from '@aik/db';
 import type { FastifyInstance } from 'fastify';
+import { z } from 'zod';
 import type { StoryService } from '../../stories/service.ts';
 import type { Clock } from '../../time.ts';
 import { mutation, parse } from '../idempotency.ts';
@@ -10,6 +11,8 @@ import { IdParams } from './projects.ts';
 export function registerStoryRoutes(app: FastifyInstance, deps: { db: AikDb; now: Clock; stories: StoryService }): void {
   app.get('/projects/:id/stories', async (req) => deps.stories.list(parse(IdParams, req.params).id, parse(StoryListQuery, req.query)));
   app.get('/stories/:id', async (req) => deps.stories.get(parse(IdParams, req.params).id));
+  const KeyParams = z.object({ key: z.string().min(1).max(100) });
+  app.get('/stories/key/:key', async (req) => deps.stories.getByKey(parse(KeyParams, req.params).key));
   app.get('/stories/:id/agent-run', async (req) => deps.stories.getAgentRun(parse(IdParams, req.params).id));
   app.get('/stories/:id/details', async (req) => deps.stories.getDetails(parse(IdParams, req.params).id));
   mutation(app, deps, 'POST', '/projects/:id/stories', async (req) => ({

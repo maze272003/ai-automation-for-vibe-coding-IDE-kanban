@@ -4,9 +4,12 @@ import crypto from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ApiHttpError } from '../src/api/errors.ts';
+import { EventBus } from '../src/events/bus.ts';
 import type { LocalMerger } from '../src/git/merger.ts';
+import { StoryService } from '../src/stories/service.ts';
+import { WorkflowService } from '../src/workflow/service.ts';
 import { buildTestApp } from './helpers/app.ts';
-import { forceStory, seedPlan } from './helpers/db.ts';
+import { createTestDb, forceStory, seedPlan, seedProject, seedStory } from './helpers/db.ts';
 import { makeTempRepo } from './helpers/temp.ts';
 
 let ctx: Awaited<ReturnType<typeof buildTestApp>>;
@@ -58,6 +61,27 @@ describe('stories CRUD', () => {
     expect(pct.map((s: { title: string }) => s.title)).toEqual(['100% coverage 🚀']);
     const us = (await ctx.inject('GET', `/projects/${projectId}/stories?q=${encodeURIComponent('_')}`)).json();
     expect(us.map((s: { title: string }) => s.title)).toEqual(['snake_case naming']);
+  });
+});
+
+describe('GET /stories/key/:key', () => {
+  it('getByKey resolves a story across projects and 404s unknown keys', () => {
+    const t = createTestDb();
+    const project = seedProject(t.db, { key: 'INV' });
+    const story = seedStory(t.db, project.id, { key: 'INV-4' });
+    const stories = new StoryService({ db: t.db, workflow: new WorkflowService({ db: t.db, bus: new EventBus() }), bus: new EventBus() });
+    expect(stories.getByKey('INV-4').id).toBe(story.id);
+    expect(() => stories.getByKey('NOPE-1')).toThrow(/not found/i);
+    t.close();
+  });
+
+  it('serves the global key lookup over HTTP and 404s unknown keys', async () => {
+    const s = await createStory({ title: 'By key' });
+    const ok = await ctx.inject('GET', `/stories/key/${s.key}`);
+    expect(ok.statusCode).toBe(200);
+    expect(ok.json()).toMatchObject({ id: s.id, key: s.key });
+    const missing = await ctx.inject('GET', '/stories/key/NOPE-1');
+    expect(missing.statusCode).toBe(404);
   });
 });
 

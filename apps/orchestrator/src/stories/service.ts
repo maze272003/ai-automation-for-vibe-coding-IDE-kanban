@@ -104,6 +104,13 @@ export class StoryService {
     return toStoryDTO(this.db, row);
   }
 
+  /** Global key lookup (office click-through, spec 2026-11-04-office-agent-activity). Keys embed the project key, so they are unique across projects. */
+  getByKey(key: string): StoryDTO {
+    const row = this.db.select().from(userStories).where(eq(userStories.key, key)).get();
+    if (!row) throw new ApiHttpError(404, 'NOT_FOUND', `Story ${key} not found`);
+    return toStoryDTO(this.db, row);
+  }
+
   create(projectId: number, input: CreateStoryRequest): StoryDTO {
     let seq: number | null = null;
     const dto = this.db.transaction((tx) => {
