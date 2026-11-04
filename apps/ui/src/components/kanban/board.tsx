@@ -2,6 +2,7 @@
 import { STORY_STATUS, type StoryDTO, type StoryStatus } from '@aik/contracts';
 import { monitorForElements } from '@atlaskit/pragmatic-drag-and-drop/element/adapter';
 import { dragVerdict } from '@aik/workflow';
+import { useNavigate } from '@tanstack/react-router';
 import { useCallback, useEffect, useState } from 'react';
 import { performMove, toDragStory } from '../../lib/transitions.ts';
 import { useToast } from '../ui/toast.tsx';
@@ -21,6 +22,7 @@ export function Board({
   focusStoryId?: number;
 }) {
   const toast = useToast();
+  const navigate = useNavigate();
   const [pending, setPending] = useState<Record<number, StoryStatus>>({});
   const [dragging, setDragging] = useState<StoryDTO | null>(null);
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({ DONE: true, CANCELLED: true });
@@ -31,8 +33,16 @@ export function Board({
   useEffect(() => {
     if (focusStoryId === undefined) return;
     const story = stories.find((s) => s.id === focusStoryId);
-    if (story) setTerminalStory(story);
-  }, [focusStoryId, stories]);
+    if (!story) return;
+    setTerminalStory(story);
+    // The ?terminal= param is one-shot: clear it so later stories refreshes cannot
+    // re-open the modal once the user has closed it. A new office click sets it again.
+    void navigate({
+      to: '/projects/$projectId',
+      params: { projectId: String(story.projectId) },
+      search: {},
+    });
+  }, [focusStoryId, navigate, stories]);
 
   useEffect(
     () =>
