@@ -3,7 +3,7 @@ import type { AddressInfo } from 'node:net';
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'vitest';
 import { OpenCodeRuntime } from '../src/agents/runtime.ts';
 
-type MockMessage = { type: string; outcome?: string; finish?: string; content?: { type: string; text: string }[]; time?: { created: number } };
+type MockMessage = { type: string; outcome?: string; finish?: string; content?: Record<string, unknown>[]; time?: { created: number } };
 
 /** The transcript exactly as the pinned server returns it: newest first, no idle yet. */
 function succeededRun(answer: string): MockMessage[] {
@@ -387,5 +387,43 @@ describe('OpenCodeRuntime', () => {
     expect(result).toEqual({ ok: true, text: 'Finished the story work.' });
     const runRequests = receivedRequests.slice(firstIndex);
     expect(runRequests.some((r) => r.method === 'POST' && r.url?.endsWith('/interrupt'))).toBe(false);
+  });
+
+  test('runOneShot reports activity diffs while the session runs', async () => {
+    // Built on the fake-server harness like every test above: a bare `new OpenCodeRuntime()`
+    // would resolve the real OpenCode service from the user state dir (or fail) instead of this
+    // in-process server.
+    const runtime = new OpenCodeRuntime({ baseUrl, password: authPassword });
+    // The fake server harness: active for 3 polls, messages contain one completed tool.
+    sessionStartDelayPolls = 0;
+    sessionActivePolls = 3;
+    mockMessages = [
+      { type: 'assistant', finish: 'stop', content: [{ type: 'text', text: 'done' }], time: { created: 2 } },
+    ] as typeof mockMessages;
+    const ticks: unknown[][] = [];
+    const result = await runtime.runOneShot({
+      title: 'activity',
+      directory: process.cwd(),
+      prompt: 'go',
+      onActivity: (events) => ticks.push(events),
+      onSessionCreated: () => {
+        // Swap in tool parts mid-run so the next 400 ms tick sees them.
+        mockMessages = [
+          {
+            type: 'assistant',
+            finish: 'stop',
+            content: [
+              { type: 'tool', id: 'tp1', name: 'read', state: { status: 'completed', input: { path: 'src/foo.ts' } } },
+              { type: 'text', text: 'done' },
+            ],
+            time: { created: 2 },
+          },
+        ] as typeof mockMessages;
+      },
+    });
+    expect(result.ok).toBe(true);
+    const flat = ticks.flat() as { kind: string; name: string; summary?: string }[];
+    expect(flat).toContainEqual({ kind: 'tool-start', name: 'read', summary: 'foo.ts' });
+    expect(flat).toContainEqual({ kind: 'tool-end', name: 'read' });
   });
 });

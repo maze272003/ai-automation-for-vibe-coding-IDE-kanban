@@ -4,6 +4,7 @@ import { and, eq } from 'drizzle-orm';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import { createActivityDiffState, diffActivity, type RunActivityEvent } from './run-activity.ts';
 
 export function ensureModelProfile(db: AikDb, model?: ModelRef): number | null {
   if (!model?.id) return null;
@@ -67,6 +68,8 @@ export interface RunOneShotInput {
   model?: ModelRef;
   timeoutMs?: number;
   onSessionCreated?: (sessionId: string, model?: ModelRef) => void | Promise<void>;
+  /** Fired at most once per 400 ms tick with the run's new activity (office bubbles, spec 2026-11-04-office-agent-activity). Never throws. */
+  onActivity?: (events: RunActivityEvent[]) => void;
   /** Polled between activity checks; a truthy return aborts the run (EXE-13). */
   shouldStop?: () => boolean;
 }
@@ -260,6 +263,10 @@ export class OpenCodeRuntime {
       let interruptSent = false;
       let graceDeadline = 0;
       let sawActive = false;
+      // Office bubble feed (spec 2026-11-04-office-agent-activity): when a consumer wants
+      // activity, fetch the messages each tick and diff them. Cost: one extra loopback GET
+      // per 400 ms — the same message endpoint the run's final extraction already uses.
+      const activity = input.onActivity ? createActivityDiffState() : null;
       for (;;) {
         if (input.shouldStop?.() && !interruptSent) {
           // Fire the interrupt exactly once; the stop flag alone must end the loop even if the
@@ -281,6 +288,18 @@ export class OpenCodeRuntime {
           const pending = await this.api('GET', `/api/session/${id}/message`, input.directory).catch(() => ({ status: 0, body: null }));
           const pendingMessages = (pending.body as { data?: OpenCodeMessageLike[] } | null)?.data ?? [];
           if (sessionHasCompleted(pendingMessages) || Date.now() > startGraceDeadline) break;
+        }
+        if (activity && input.onActivity) {
+          const res = await this.api('GET', `/api/session/${id}/message`, input.directory).catch(() => ({ status: 0, body: null }));
+          const msgs = (res.body as { data?: unknown[] } | null)?.data ?? [];
+          const events = diffActivity(activity, msgs);
+          if (events.length > 0) {
+            try {
+              input.onActivity(events);
+            } catch {
+              // activity reporting must never fail a run
+            }
+          }
         }
         if (interruptSent) {
           if (Date.now() > graceDeadline) {
