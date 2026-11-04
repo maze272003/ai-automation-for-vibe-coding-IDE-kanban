@@ -73,6 +73,8 @@ export interface AikWindowApi {
     setVisible(visible: boolean): void;
     /** Report the office container's viewport bounds (CSS px == DIP at zoom 1) so main can position the embedded view. */
     setBounds(bounds: OfficeBounds): void;
+    /** Fired when the user clicks a character in the embedded office (label = `${storyKey} ${role}`). */
+    onAgentClick(listener: (label: string) => void): () => void;
   };
   events: { subscribe(listener: (event: EventEnvelope) => void): () => void };
   system: { subscribe(listener: (state: SystemState) => void): () => void };

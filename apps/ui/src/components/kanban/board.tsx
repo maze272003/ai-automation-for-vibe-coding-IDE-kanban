@@ -10,7 +10,16 @@ import { ConfirmDialog } from './confirm-dialog.tsx';
 import { RequestChangesDialog } from './request-changes-dialog.tsx';
 import { TerminalModal } from './terminal-modal.tsx';
 
-export function Board({ stories, onChanged }: { stories: StoryDTO[]; onChanged: () => Promise<void> }) {
+export function Board({
+  stories,
+  onChanged,
+  focusStoryId,
+}: {
+  stories: StoryDTO[];
+  onChanged: () => Promise<void>;
+  /** Story to open the Terminal modal for (office click-through navigates with ?terminal=). */
+  focusStoryId?: number;
+}) {
   const toast = useToast();
   const [pending, setPending] = useState<Record<number, StoryStatus>>({});
   const [dragging, setDragging] = useState<StoryDTO | null>(null);
@@ -18,6 +27,12 @@ export function Board({ stories, onChanged }: { stories: StoryDTO[]; onChanged: 
   const [confirm, setConfirm] = useState<{ message: string; resolve: (ok: boolean) => void } | null>(null);
   const [changes, setChanges] = useState<{ resolve: (text: string | null) => void } | null>(null);
   const [terminalStory, setTerminalStory] = useState<StoryDTO | null>(null);
+
+  useEffect(() => {
+    if (focusStoryId === undefined) return;
+    const story = stories.find((s) => s.id === focusStoryId);
+    if (story) setTerminalStory(story);
+  }, [focusStoryId, stories]);
 
   useEffect(
     () =>

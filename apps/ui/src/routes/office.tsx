@@ -1,8 +1,8 @@
-import { Link } from '@tanstack/react-router';
+import { Link, useNavigate } from '@tanstack/react-router';
 import { useEffect, useRef, useState } from 'react';
 import type { AppSettings } from '@aik/contracts';
 import { TopBar } from '../components/shell/top-bar.tsx';
-import { isOfficeEnabled, toOfficeBounds } from '../lib/office.ts';
+import { isOfficeEnabled, parseOfficeLabel, toOfficeBounds } from '../lib/office.ts';
 
 /**
  * The office itself renders in a main-process WebContentsView layered over this container
@@ -38,6 +38,25 @@ export function OfficePage() {
       window.api.office.setVisible(false);
     };
   }, [enabled]);
+
+  const navigate = useNavigate();
+  useEffect(() => {
+    if (!enabled) return;
+    return window.api.office.onAgentClick((label) => {
+      const parsed = parseOfficeLabel(label);
+      if (!parsed) return;
+      void window.api.request('GET', `/stories/key/${encodeURIComponent(parsed.storyKey)}`).then((res) => {
+        if (res.status !== 200) return;
+        const story = res.body as { id: number; projectId: number } | null;
+        if (!story || typeof story.id !== 'number' || typeof story.projectId !== 'number') return;
+        void navigate({
+          to: '/projects/$projectId',
+          params: { projectId: String(story.projectId) },
+          search: { terminal: String(story.id) },
+        });
+      });
+    });
+  }, [enabled, navigate]);
 
   return (
     <div className="flex h-full flex-col">

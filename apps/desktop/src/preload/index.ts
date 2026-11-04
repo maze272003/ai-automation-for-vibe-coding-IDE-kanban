@@ -22,6 +22,13 @@ const api: AikWindowApi = {
   office: {
     setVisible: (visible) => ipcRenderer.send('aik:office-visible', visible),
     setBounds: (bounds) => ipcRenderer.send('aik:office-bounds', bounds),
+    onAgentClick: (listener) => {
+      const handler = (_e: IpcRendererEvent, label: string) => listener(label);
+      ipcRenderer.on('aik:office-agent-click', handler);
+      return () => {
+        ipcRenderer.removeListener('aik:office-agent-click', handler);
+      };
+    },
   },
   events: {
     subscribe(listener) {

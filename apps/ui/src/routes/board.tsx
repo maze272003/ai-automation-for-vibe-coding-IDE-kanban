@@ -1,6 +1,6 @@
 // apps/ui/src/routes/board.tsx
 import type { ProjectDTO } from '@aik/contracts';
-import { Link, useParams } from '@tanstack/react-router';
+import { Link, useParams, useSearch } from '@tanstack/react-router';
 import { useEffect, useState } from 'react';
 import { Board } from '../components/kanban/board.tsx';
 import { CreateStoryDialog } from '../components/kanban/create-story-dialog.tsx';
@@ -18,6 +18,8 @@ const SEARCH_DEBOUNCE_MS = 200;
 export function BoardPage() {
   const params = useParams({ strict: false }) as { projectId?: string };
   const id = Number(params.projectId);
+  const search = useSearch({ from: '/projects/$projectId' });
+  const focusStoryId = search.terminal ? Number(search.terminal) : undefined;
   const [project, setProject] = useState<ProjectDTO | null>(null);
   const [query, setQuery] = useState<StoryQuery>({ q: '', label: '', sort: 'rank' });
   const [debouncedSearch, setDebouncedSearch] = useState('');
@@ -104,7 +106,7 @@ export function BoardPage() {
           ))}
         </div>
       ) : (
-        <Board stories={stories} onChanged={refetch} />
+        <Board stories={stories} onChanged={refetch} focusStoryId={focusStoryId} />
       )}
       <CreateStoryDialog open={creating} projectId={id} onClose={() => setCreating(false)} onCreated={() => void refetch()} />
     </div>
