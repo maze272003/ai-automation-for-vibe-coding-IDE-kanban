@@ -10,6 +10,7 @@ import { ReviewerAgent } from './agents/reviewer.ts';
 import { AgentRunner } from './agents/runner.ts';
 import { OpenCodeRuntime } from './agents/runtime.ts';
 import { registerEventRoutes } from './api/routes/events.ts';
+import { registerFileRoutes } from './api/routes/files.ts';
 import { registerGitHubRoutes } from './api/routes/github.ts';
 import { registerGitViewRoutes } from './api/routes/git-view.ts';
 import { registerHealthRoutes } from './api/routes/health.ts';
@@ -24,6 +25,7 @@ import { RetentionService } from './maintenance/retention.ts';
 import { UsageMetricsService } from './metrics/usage-service.ts';
 import { dataPaths } from './config.ts';
 import { EventBus } from './events/bus.ts';
+import { WorkspaceFileService } from './files/service.ts';
 import { startGateway } from './gateway/server.ts';
 import { createCredentialStore } from './github/credentials.ts';
 import { GitHubCloneService } from './github/clone-service.ts';
@@ -201,6 +203,10 @@ export async function startOrchestrator(opts: OrchestratorOptions): Promise<Runn
       }
     },
   });
+  const files = new WorkspaceFileService({
+    projects,
+    busy: (projectId) => projectBusyReason(db, projectId),
+  });
 
   const stories = new StoryService({
     db,
@@ -254,6 +260,7 @@ export async function startOrchestrator(opts: OrchestratorOptions): Promise<Runn
   registerHealthRoutes(app, { db, versions: { ...opts.versions, node: process.versions.node }, dataDir: opts.dataDir });
   registerProjectRoutes(app, { db, now: systemClock, projects });
   registerGitViewRoutes(app, { db, now: systemClock, gitView });
+  registerFileRoutes(app, { db, now: systemClock, files });
   // Root-relative `/providers` + `/settings/default-model` routes; only wired in managed mode.
   if (providerService) {
     registerProviderRoutes(app, { db, now: systemClock, providers: providerService });

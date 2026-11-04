@@ -1,4 +1,4 @@
-import { createHashHistory, createRootRoute, createRoute, createRouter } from '@tanstack/react-router';
+import { createHashHistory, createRootRoute, createRoute, createRouter, lazyRouteComponent } from '@tanstack/react-router';
 import { BoardPage } from './routes/board.tsx';
 import { DashboardPage } from './routes/dashboard.tsx';
 import { GitPage } from './routes/git-page.tsx';
@@ -7,14 +7,16 @@ import { SettingsPage } from './routes/settings.tsx';
 import { UsagePage } from './routes/usage.tsx';
 
 const rootRoute = createRootRoute({ component: RootLayout });
+const CodePage = lazyRouteComponent(() => import('./routes/code-page.tsx'), 'CodePage');
 const dashboardRoute = createRoute({ getParentRoute: () => rootRoute, path: '/', component: DashboardPage });
 const boardRoute = createRoute({ getParentRoute: () => rootRoute, path: '/projects/$projectId', component: BoardPage });
+const codeRoute = createRoute({ getParentRoute: () => rootRoute, path: '/projects/$projectId/code', component: CodePage });
 const gitRoute = createRoute({ getParentRoute: () => rootRoute, path: '/projects/$projectId/git', component: GitPage });
 const usageRoute = createRoute({ getParentRoute: () => rootRoute, path: '/usage', component: UsagePage });
 const settingsRoute = createRoute({ getParentRoute: () => rootRoute, path: '/settings', component: SettingsPage });
 
 export const router = createRouter({
-  routeTree: rootRoute.addChildren([dashboardRoute, boardRoute, gitRoute, usageRoute, settingsRoute]),
+  routeTree: rootRoute.addChildren([dashboardRoute, boardRoute, codeRoute, gitRoute, usageRoute, settingsRoute]),
   history: createHashHistory(),
 });
 

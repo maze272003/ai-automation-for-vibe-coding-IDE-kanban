@@ -16,16 +16,32 @@ export function parse<T extends z.ZodType>(schema: T, value: unknown): z.output<
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 type Result = { status: number; body: unknown };
 
+/** Same-key requests must be serialized, or two concurrent retries both execute the mutation. */
+const inFlight = new Map<string, Promise<unknown>>();
+
+async function serialized<T>(key: string, run: () => Promise<T>): Promise<T> {
+  const previous = inFlight.get(key) ?? Promise.resolve();
+  const current = previous.catch(() => undefined).then(run);
+  inFlight.set(key, current);
+  try {
+    return await current;
+  } finally {
+    if (inFlight.get(key) === current) inFlight.delete(key);
+  }
+}
+
 export function mutation(
   app: FastifyInstance,
   deps: { db: AikDb; now: Clock },
   method: 'POST' | 'PATCH' | 'PUT' | 'DELETE',
   url: string,
   handler: (req: FastifyRequest) => Promise<Result>,
+  options?: { bodyLimit?: number },
 ): void {
   app.route({
     method,
     url,
+    ...(options?.bodyLimit !== undefined ? { bodyLimit: options.bodyLimit } : {}),
     handler: async (req, reply) => {
       const key = req.headers['idempotency-key'];
       if (typeof key !== 'string' || !UUID.test(key)) {
@@ -33,20 +49,22 @@ export function mutation(
       }
       const route = `${method} ${url}`;
       const requestHash = crypto.createHash('sha256').update(`${route}\n${req.url}\n${JSON.stringify(req.body ?? null)}`).digest('hex');
-      const existing = deps.db.select().from(apiIdempotency).where(eq(apiIdempotency.key, key)).get();
-      if (existing) {
-        if (existing.requestHash !== requestHash) {
-          throw new ApiHttpError(422, 'IDEMPOTENCY_MISMATCH', 'This Idempotency-Key was already used for a different request');
+      return serialized(key, async () => {
+        const existing = deps.db.select().from(apiIdempotency).where(eq(apiIdempotency.key, key)).get();
+        if (existing) {
+          if (existing.requestHash !== requestHash) {
+            throw new ApiHttpError(422, 'IDEMPOTENCY_MISMATCH', 'This Idempotency-Key was already used for a different request');
+          }
+          return reply.status(existing.responseStatus).send(existing.responseBody ?? undefined);
         }
-        return reply.status(existing.responseStatus).send(existing.responseBody ?? undefined);
-      }
-      const result = await handler(req);
-      deps.db
-        .insert(apiIdempotency)
-        .values({ key, route, requestHash, responseStatus: result.status, responseBody: result.body ?? null, createdAt: new Date(deps.now()) })
-        .onConflictDoNothing()
-        .run();
-      return reply.status(result.status).send(result.body ?? undefined);
+        const result = await handler(req);
+        deps.db
+          .insert(apiIdempotency)
+          .values({ key, route, requestHash, responseStatus: result.status, responseBody: result.body ?? null, createdAt: new Date(deps.now()) })
+          .onConflictDoNothing()
+          .run();
+        return reply.status(result.status).send(result.body ?? undefined);
+      });
     },
   });
 }

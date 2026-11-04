@@ -31,6 +31,9 @@ export function toEnvelope(err: unknown): { status: number; body: ApiError } {
   if (err instanceof ZodError) {
     return { status: 400, body: { error: { code: 'VALIDATION_FAILED', message: 'Invalid request', retryable: false, details: err.issues } } };
   }
+  if ((err as { code?: string }).code === 'FST_ERR_CTP_BODY_TOO_LARGE') {
+    return { status: 400, body: { error: { code: 'VALIDATION_FAILED', message: 'Request body is too large', retryable: false } } };
+  }
   const status = (err as { statusCode?: number }).statusCode;
   if (typeof status === 'number' && status >= 400 && status < 500) {
     return { status, body: { error: { code: 'VALIDATION_FAILED', message: (err as Error).message, retryable: false } } };

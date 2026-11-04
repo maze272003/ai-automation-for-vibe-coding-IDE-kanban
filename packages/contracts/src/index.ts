@@ -4,6 +4,7 @@ export * from './bridge.ts';
 export * from './common.ts';
 export * from './enums.ts';
 export * from './events.ts';
+export * from './files.ts';
 export * from './github.ts';
 export * from './git-view.ts';
 export * from './hints.ts';

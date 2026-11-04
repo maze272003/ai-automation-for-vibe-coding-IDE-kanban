@@ -48,10 +48,26 @@ export function GitPage() {
   return (
     <div className="flex h-full flex-col">
       <TopBar data-testid="git-toolbar" title={project ? `${project.key} · ${project.name}` : 'Git'}>
-        <div data-testid="project-tabs" className="inline-flex items-center gap-1 rounded-control border border-glass-border bg-surface-2/60 p-1">
-          <Link to="/projects/$projectId" params={{ projectId: String(id) }} className="rounded-control px-2.5 py-1 text-xs font-semibold text-muted hover:text-foreground">Board</Link>
-          <span aria-current="page" data-testid="tab-git" className="rounded-control bg-accent-soft px-2.5 py-1 text-xs font-semibold text-accent-soft-foreground">Git</span>
-        </div>
+        <nav aria-label="Project views" data-testid="project-tabs" className="inline-flex items-center gap-1 rounded-control border border-glass-border bg-surface-2/60 p-1">
+          <Link
+            to="/projects/$projectId"
+            params={{ projectId: String(id) }}
+            activeOptions={{ exact: true }}
+            className="rounded-control px-2.5 py-1 text-xs font-semibold text-muted hover:text-foreground"
+          >
+            Board
+          </Link>
+          <Link
+            to="/projects/$projectId/code"
+            params={{ projectId: String(id) }}
+            activeOptions={{ exact: true }}
+            data-testid="tab-code"
+            className="rounded-control px-2.5 py-1 text-xs font-semibold text-muted hover:text-foreground"
+          >
+            Code
+          </Link>
+          <span aria-current="page" data-testid="tab-git" className="rounded-control bg-accent-soft px-2.5 py-1 text-xs font-semibold text-accent-soft-foreground underline decoration-2 underline-offset-4">Git</span>
+        </nav>
         <Link to="/" className="ml-2 text-sm font-semibold text-muted hover:text-foreground">← Projects</Link>
       </TopBar>
       {(error ?? actionError) && (

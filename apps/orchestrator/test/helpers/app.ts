@@ -1,9 +1,11 @@
 // apps/orchestrator/test/helpers/app.ts
 import crypto from 'node:crypto';
 import { createApiServer } from '../../src/api/server.ts';
+import { registerFileRoutes } from '../../src/api/routes/files.ts';
 import { registerGitViewRoutes } from '../../src/api/routes/git-view.ts';
 import { registerProjectRoutes } from '../../src/api/routes/projects.ts';
 import { registerStoryRoutes } from '../../src/api/routes/stories.ts';
+import { WorkspaceFileService } from '../../src/files/service.ts';
 import { GitViewService } from '../../src/git/view-service.ts';
 import { WorktreeManager } from '../../src/git/worktree.ts';
 import { EventBus } from '../../src/events/bus.ts';
@@ -39,17 +41,19 @@ export async function buildTestApp(
   const stories = new StoryService({ db: t.db, workflow, bus, now, merger: options?.merger });
   const busy = options?.fakeBusy ?? ((projectId: number) => projectBusyReason(t.db, projectId));
   const gitView = new GitViewService({ db: t.db, projects, busy });
+  const files = new WorkspaceFileService({ projects, busy });
   const app = createApiServer({ token: TOKEN, getPort: () => PORT });
   registerProjectRoutes(app, { db: t.db, now, projects });
   registerGitViewRoutes(app, { db: t.db, now, gitView });
+  registerFileRoutes(app, { db: t.db, now, files });
   registerStoryRoutes(app, { db: t.db, now, stories });
   await app.ready();
-  const inject = (method: 'GET' | 'POST' | 'PATCH' | 'DELETE', url: string, payload?: object, key: string = crypto.randomUUID()) =>
+  const inject = (method: 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE', url: string, payload?: object, key: string = crypto.randomUUID()) =>
     app.inject({
       method,
       url,
       payload,
       headers: { host: `127.0.0.1:${PORT}`, authorization: `Bearer ${TOKEN}`, ...(method === 'GET' ? {} : { 'idempotency-key': key }) },
     });
-  return { t, app, inject, bus, purgeLines, worktrees, services: { workflow, projects, stories, gitView } };
+  return { t, app, inject, bus, purgeLines, worktrees, services: { workflow, projects, stories, gitView, files } };
 }

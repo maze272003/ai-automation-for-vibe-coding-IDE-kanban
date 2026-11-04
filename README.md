@@ -33,5 +33,9 @@ Windows 10 22H2+ / 11 · Node ≥ 24.17.0 · Git for Windows ≥ 2.38
   (branch, origin, history) and never modifies it outside approved runs.
 - **Git tab** — per project: stage/unstage/commit/discard, push/pull (`--ff-only`), branch
   dropdown with create-new, and history. Mutations pause while an agent run or merge is active.
+- **Code tab** — lazy-loaded Monaco editor, one-directory-at-a-time file explorer, and literal
+  search across the checkout. `Ctrl/Cmd+S` saves with optimistic concurrency (a file changed on
+  disk raises a conflict); binary and >2 MiB files are read-only. Saves pause while an agent run
+  is active, symlinks and `.git` are never followed, and search skips build/vendor directories.
 - **Delete project** — dashboard card `⋯` → two-step confirm. Detaches the project and cleans
   app-owned worktrees (`%LOCALAPPDATA%\AiKanban\wt`); your folder on disk and `.git` are never touched.

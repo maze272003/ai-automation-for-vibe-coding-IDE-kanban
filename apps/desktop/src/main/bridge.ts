@@ -4,19 +4,13 @@ import { BrowserWindow, dialog, ipcMain, shell, type IpcMainInvokeEvent } from '
 import { spawn } from 'node:child_process';
 import path from 'node:path';
 import { z } from 'zod';
+import { BridgeRequest } from './bridge-request.ts';
 import { installOpencode, opencodeStatus } from './opencode.ts';
 import { refreshGatewayContext } from './gateway-context.ts';
 import { listOpencodeModels, opencodeChat, opencodeLoginStart, opencodeLoginWait, opencodeSignedIn, readAppSettings, writeAppSettings } from './opencode-server.ts';
 import { stopOpencodeServer } from './opencode-server.ts';
 import type { DesktopPaths } from './paths.ts';
 import type { OrchestratorSupervisor } from './supervisor.ts';
-
-const BridgeRequest = z.object({
-  method: z.enum(['GET', 'POST', 'PATCH', 'PUT', 'DELETE']),
-  path: z.string().max(2000).regex(/^\/(?!events\b)[A-Za-z0-9/_\-.~%?=&,+:@()]*$/),
-  body: z.unknown().optional(),
-  idempotencyKey: z.uuid().optional(),
-});
 
 export interface BridgeDeps {
   supervisor: OrchestratorSupervisor;
@@ -40,7 +34,14 @@ function assertTrusted(event: IpcMainInvokeEvent, deps: BridgeDeps): void {
 export function registerBridge(deps: BridgeDeps): void {
   ipcMain.handle('aik:request', async (event, raw: unknown): Promise<BridgeResponse> => {
     assertTrusted(event, deps);
-    const req = BridgeRequest.parse(raw);
+    const parsed = BridgeRequest.safeParse(raw);
+    if (!parsed.success) {
+      return {
+        status: 400,
+        body: { error: { code: 'VALIDATION_FAILED', message: 'The desktop bridge rejected this request', retryable: false } },
+      };
+    }
+    const req = parsed.data;
     const port = deps.supervisor.port;
     if (port === null) return unavailable('The orchestrator is not running');
     try {
@@ -55,7 +56,15 @@ export function registerBridge(deps: BridgeDeps): void {
         signal: AbortSignal.timeout(60_000),
       });
       const text = await res.text();
-      return { status: res.status, body: text ? (JSON.parse(text) as unknown) : null };
+      if (text === '') return { status: res.status, body: null };
+      try {
+        return { status: res.status, body: JSON.parse(text) as unknown };
+      } catch {
+        return {
+          status: res.status,
+          body: { error: { code: 'DEPENDENCY_UNAVAILABLE', message: 'The orchestrator returned an invalid response', retryable: true } },
+        };
+      }
     } catch {
       return unavailable('The orchestrator did not respond');
     }
