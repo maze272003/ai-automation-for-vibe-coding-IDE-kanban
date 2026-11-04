@@ -5,7 +5,10 @@ import path from 'node:path';
 import { registerBridge } from './bridge.ts';
 import { EventForwarder } from './events-forwarder.ts';
 import { refreshGatewayContext, setGatewayContext } from './gateway-context.ts';
+import { getOfficeContext, setOfficeContext } from './office-context.ts';
 import { readAppSettings, stopOpencodeServer } from './opencode-server.ts';
+import { installPixelAgents, officeInstalled, startOfficeServer, stopOfficeServer } from './office-server.ts';
+import { OfficeViewManager, registerOfficeIpc } from './office-view.ts';
 import { desktopPaths, resolveDataDir } from './paths.ts';
 import { APP_SCHEME, registerAppProtocol } from './protocol.ts';
 import { OrchestratorSupervisor, type ChildLike } from './supervisor.ts';
@@ -61,6 +64,7 @@ function main(): void {
       type: 'init',
       token,
       ...(gatewayToken ? { gatewayToken } : {}),
+      ...(getOfficeContext() ? { agentOffice: getOfficeContext() } : {}),
       dataDir: paths.dataDir,
       migrationsFolder: path.join(__dirname, 'migrations'),
       versions: { app: app.getVersion(), electron: process.versions.electron },
@@ -95,18 +99,47 @@ function main(): void {
     quitting = true;
     forwarder.stop();
     stopOpencodeServer();
+    stopOfficeServer();
     void supervisor.stop().finally(() => app.quit());
   });
 
-  void app.whenReady().then(() => {
+  void app.whenReady().then(async () => {
     session.defaultSession.setPermissionRequestHandler((_wc, _permission, callback) => callback(false));
     registerAppProtocol(path.join(__dirname, 'ui'));
+
+    // Pixel Agents office (spec 2026-11-04): boot before the supervisor so the init message
+    // carries the config; failures degrade to feature-off (no office, no bridge).
+    if (readAppSettings(paths.dataDir).agentOffice) {
+      if (!officeInstalled(paths.dataDir)) {
+        const installed = installPixelAgents(paths.dataDir, path.join(__dirname, 'pixel-agents-runtime'));
+        if (!installed.ok) console.error(`agent office install failed: ${installed.error}`);
+      }
+      if (officeInstalled(paths.dataDir)) {
+        const info = await startOfficeServer({ dataDir: paths.dataDir, assetsDir: path.join(__dirname, 'pixel-agents-runtime') });
+        if (info) setOfficeContext({ url: info.url, token: info.token });
+      }
+    }
+
     registerBridge({
       supervisor,
       token,
       paths,
       opencodeAssetsDir: path.join(__dirname, 'opencode-runtime'),
       isTrustedSender: (url) => url.startsWith('app://ui/') || (devUrl !== null && url.startsWith(devUrl)),
+      onSettingsChanged: async (next) => {
+        if (next.agentOffice) {
+          if (!officeInstalled(paths.dataDir)) installPixelAgents(paths.dataDir, path.join(__dirname, 'pixel-agents-runtime'));
+          const info = officeInstalled(paths.dataDir)
+            ? await startOfficeServer({ dataDir: paths.dataDir, assetsDir: path.join(__dirname, 'pixel-agents-runtime') })
+            : null;
+          if (info) setOfficeContext({ url: info.url, token: info.token });
+        } else {
+          stopOfficeServer();
+          setOfficeContext(null);
+        }
+        // initMessage is a closure: the restarted orchestrator gets the new office state.
+        supervisor.restart();
+      },
     });
     supervisor.start();
     forwarder.start();
@@ -114,6 +147,12 @@ function main(): void {
     win.on('closed', () => {
       win = null;
     });
+    const officeManager = new OfficeViewManager(win);
+    registerOfficeIpc({
+      manager: officeManager,
+      isTrustedSender: (url) => url.startsWith('app://ui/') || (devUrl !== null && url.startsWith(devUrl)),
+    });
+    win.on('closed', () => officeManager.destroy());
     if (isE2E) (globalThis as Record<string, unknown>).__aik = { supervisor, dataDir: paths.dataDir, token };
   });
 }

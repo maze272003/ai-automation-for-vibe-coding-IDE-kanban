@@ -1,4 +1,5 @@
 import type { EventEnvelope } from './events.ts';
+import type { OfficeBounds } from './pixel-agents.ts';
 
 export type HttpMethod = 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE';
 export interface BridgeResponse {
@@ -67,6 +68,12 @@ export interface AikWindowApi {
   getAppSettings(): Promise<AppSettings>;
   setAppSettings(settings: AppSettings): Promise<AppSettings>;
   openTerminalCli(options?: { sessionId?: string; cwd?: string }): Promise<{ ok: boolean; error?: string }>;
+  office: {
+    /** Tell main whether the office view should be visible (office route active + feature on). */
+    setVisible(visible: boolean): void;
+    /** Report the office container's viewport bounds (CSS px == DIP at zoom 1) so main can position the embedded view. */
+    setBounds(bounds: OfficeBounds): void;
+  };
   events: { subscribe(listener: (event: EventEnvelope) => void): () => void };
   system: { subscribe(listener: (state: SystemState) => void): () => void };
 }

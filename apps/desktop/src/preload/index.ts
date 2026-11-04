@@ -19,6 +19,10 @@ const api: AikWindowApi = {
   getAppSettings: () => ipcRenderer.invoke('aik:app-settings'),
   setAppSettings: (settings) => ipcRenderer.invoke('aik:app-settings-set', settings),
   openTerminalCli: (options) => ipcRenderer.invoke('aik:open-terminal-cli', options),
+  office: {
+    setVisible: (visible) => ipcRenderer.send('aik:office-visible', visible),
+    setBounds: (bounds) => ipcRenderer.send('aik:office-bounds', bounds),
+  },
   events: {
     subscribe(listener) {
       const handler = (_e: IpcRendererEvent, value: EventEnvelope) => listener(value);
