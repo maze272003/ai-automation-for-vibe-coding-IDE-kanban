@@ -11,6 +11,7 @@ import { EventBus } from '../src/events/bus.ts';
 import { WorktreeManager } from '../src/git/worktree.ts';
 import { WorkflowService } from '../src/workflow/service.ts';
 import { createTestDb, forceStory, seedAcceptanceCriterion, seedPlan, seedProject, seedStory } from './helpers/db.ts';
+import { readOutbox } from './helpers/outbox.ts';
 import { makeTempDir, makeTempRepo } from './helpers/temp.ts';
 
 describe('ReviewerAgent', () => {
@@ -702,6 +703,89 @@ describe('ReviewerAgent', () => {
     expect(result.verdict).toBe('APPROVED');
     expect(capturedPrompt).toContain('AVAILABLE SKILLS');
     expect(capturedPrompt).toContain('code-review');
+  });
+
+  test('emits run.started and run.finished outbox events per review attempt', async () => {
+    const repoPath = makeTempRepo({ name: 'rev-run-events-repo' });
+    const project = seedProject(dbHolder.db, { repoPath, baseBranch: 'main' });
+    const candidate = await reviewCandidate(repoPath, 'REV-10', 'run-events-review.ts');
+    const story = seedStory(dbHolder.db, project.id, {
+      key: 'REV-10',
+      title: 'Run events review',
+      status: 'READY_FOR_REVIEW',
+      candidateSha: candidate.candidateSha,
+      candidateTree: candidate.candidateTree,
+    });
+    const ac = seedAcceptanceCriterion(dbHolder.db, story.id, 'Works');
+    seedPlan(dbHolder.db, story.id, { status: 'approved' });
+
+    // The review only approves a verified candidate (workflow guard), so seed a passed run.
+    const verification = dbHolder.db
+      .insert(verificationRuns)
+      .values({ storyId: story.id, commitSha: candidate.candidateSha, trigger: 'candidate', status: 'passed', startedAt: new Date(), endedAt: new Date() })
+      .returning()
+      .get();
+    dbHolder.db
+      .insert(verificationChecks)
+      .values({
+        verificationRunId: verification.id,
+        checkKey: 'test',
+        mandatory: true,
+        command: 'git status',
+        cwd: repoPath,
+        status: 'passed',
+        startedAt: new Date(),
+        endedAt: new Date(),
+      })
+      .run();
+
+    const mockRuntime: OpenCodeRuntime = {
+      runOneShot: vi.fn().mockResolvedValue({ ok: true, text: approvedReview(String(ac.id)) }),
+    } as unknown as OpenCodeRuntime;
+
+    const agent = new ReviewerAgent({ db: dbHolder.db, workflow, bus, runtime: mockRuntime, worktreeManager });
+    const result = await agent.reviewStory({ storyId: story.id });
+
+    expect(result.ok).toBe(true);
+    expect(result.verdict).toBe('APPROVED');
+
+    // dbHolder is shared across tests, so isolate this story's run events.
+    const rows = readOutbox(dbHolder.db).filter((r) => r.topic.startsWith('run.') && r.storyId === story.id);
+    expect(rows.map((r) => r.topic)).toEqual(['run.started', 'run.finished']);
+    expect(rows[0].data).toMatchObject({ role: 'reviewer', storyKey: story.key });
+    expect(rows[1].data).toMatchObject({ role: 'reviewer', status: 'succeeded' });
+  });
+
+  test('emits run.finished failed when the reviewer output is invalid', async () => {
+    const repoPath = makeTempRepo({ name: 'rev-run-events-invalid-repo' });
+    const project = seedProject(dbHolder.db, { repoPath, baseBranch: 'main' });
+    const candidate = await reviewCandidate(repoPath, 'REV-11', 'run-events-invalid.ts');
+    const story = seedStory(dbHolder.db, project.id, {
+      key: 'REV-11',
+      title: 'Run events invalid review',
+      status: 'READY_FOR_REVIEW',
+      candidateSha: candidate.candidateSha,
+      candidateTree: candidate.candidateTree,
+    });
+    seedAcceptanceCriterion(dbHolder.db, story.id, 'Works');
+    seedPlan(dbHolder.db, story.id, { status: 'approved' });
+
+    // Invalid output on both attempts → two full run.started/run.finished cycles.
+    const mockRuntime: OpenCodeRuntime = {
+      runOneShot: vi.fn().mockResolvedValue({ ok: true, text: 'not json at all' }),
+    } as unknown as OpenCodeRuntime;
+
+    const agent = new ReviewerAgent({ db: dbHolder.db, workflow, bus, runtime: mockRuntime, worktreeManager });
+    const result = await agent.reviewStory({ storyId: story.id });
+
+    expect(result.ok).toBe(false);
+    expect(mockRuntime.runOneShot).toHaveBeenCalledTimes(2);
+
+    // dbHolder is shared across tests, so isolate this story's run events.
+    const rows = readOutbox(dbHolder.db).filter((r) => r.topic.startsWith('run.') && r.storyId === story.id);
+    expect(rows.map((r) => r.topic)).toEqual(['run.started', 'run.finished', 'run.started', 'run.finished']);
+    expect(rows[1].data).toMatchObject({ status: 'failed' });
+    expect(rows[3].data).toMatchObject({ status: 'failed' });
   });
 });
 

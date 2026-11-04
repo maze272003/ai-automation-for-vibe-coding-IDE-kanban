@@ -13,6 +13,7 @@ import type { WorktreeManager } from '../git/worktree.ts';
 import { systemClock, type Clock } from '../time.ts';
 import type { WorkflowService } from '../workflow/service.ts';
 import type { RunInterruptRegistry } from './interrupts.ts';
+import { emitRunFinished, emitRunStarted } from './run-events.ts';
 import { ensureModelProfile, ROLE_TIMEOUTS, type ModelRef, type OpenCodeRuntime, type RunOneShotOutput } from './runtime.ts';
 import type { SkillBridgeService } from '../skills/bridge.ts';
 
@@ -209,6 +210,7 @@ export class ReviewerAgent {
         .returning()
         .get();
 
+      emitRunStarted(this.db, new Date(this.now()), run.id);
       this.setActiveRun(story.id, run.id);
 
       try {
@@ -282,6 +284,7 @@ export class ReviewerAgent {
             .set({ status: 'interrupted', exitReason: 'Interrupted by a stop request', endedAt: new Date(this.now()) })
             .where(eq(agentRuns.id, run.id))
             .run();
+          emitRunFinished(this.db, new Date(this.now()), run.id, 'interrupted', 'Interrupted by a stop request');
           this.bus.notify(1);
           return { ok: false, error: `The review run for ${story.key} was interrupted by a stop request` };
         }
@@ -423,6 +426,7 @@ export class ReviewerAgent {
         .set({ status: 'succeeded', resultSha: candidate, endedAt: new Date(this.now()) })
         .where(eq(agentRuns.id, runId))
         .run();
+      emitRunFinished(tx, new Date(this.now()), runId, 'succeeded');
       return row;
     });
 
@@ -527,6 +531,7 @@ ${correction ? `\nCorrection: ${correction}` : ''}`;
       .set({ status: 'failed', exitReason: reason, endedAt: new Date(this.now()) })
       .where(eq(agentRuns.id, runId))
       .run();
+    emitRunFinished(this.db, new Date(this.now()), runId, 'failed', reason);
     this.bus.notify(1);
   }
 
