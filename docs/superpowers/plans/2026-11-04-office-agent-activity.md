@@ -4,7 +4,7 @@
 
 **Goal:** Clicking a pixel-office character opens the existing "Terminal Logs & Thoughts" modal for that story, and characters show live real tool/thinking activity while runs are in flight.
 
-**Architecture:** Three wires: (1) the runtime's 400 ms poll loop diffs OpenCode session messages into `onActivity` events that agents append as `run.activity` outbox rows; (2) the PixelAgentsBridge translates those rows into `PreToolUse`/`PostToolUse` hook posts so pixel-agents renders real bubbles; (3) a sandboxed preload inside the embedded office view observes the page's `focusAgent` WebSocket frame (character click) and forwards the character label, which the office route resolves to a story and opens the existing Terminal modal via a `?terminal=` board search param.
+**Architecture:** Three wires: (1) the runtime's 400 ms poll loop diffs OpenCode session messages into `onActivity` events that agents append as `run.activity` outbox rows; (2) the PixelAgentsBridge translates those rows into `PreToolUse`/`PostToolUse` hook posts so pixel-agents renders real bubbles; (3) the main process passively observes the office page's WebSocket frames via `webContents.debugger` (CDP `Network.webSocketFrame*`) — a `focusAgent` frame is a character click; the parsed label resolves to a story and opens the existing Terminal modal via a `?terminal=` board search param.
 
 **Tech Stack:** TypeScript, Electron (utilityProcess, WebContentsView, sandboxed preloads), Fastify, better-sqlite3 + Drizzle, TanStack Router, Vitest. No new npm dependencies.
 
