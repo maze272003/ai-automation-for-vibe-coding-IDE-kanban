@@ -7,6 +7,7 @@ import { ROLE_TIMEOUTS, type OpenCodeRuntime, type RunOneShotInput } from '../sr
 import { EventBus } from '../src/events/bus.ts';
 import { WorkflowService } from '../src/workflow/service.ts';
 import { createTestDb, forceStory, seedAcceptanceCriterion, seedPlan, seedProject, seedStory } from './helpers/db.ts';
+import { readOutbox } from './helpers/outbox.ts';
 
 /** A valid PlanV1 JSON code block with configurable clarification questions. */
 function mockPlanText(clarificationQuestions: string[] = []): string {
@@ -400,6 +401,40 @@ describe('PlannerAgent', () => {
     );
     expect(capturedPrompt).toContain('AVAILABLE SKILLS:\n- writing-plans');
     expect(mockSkills.cleanupSkills).toHaveBeenCalledWith(project.repoPath);
+  });
+
+  test('emits run.started and run.finished outbox events', async () => {
+    const project = seedProject(dbHolder.db, { repoPath: 'C:/repos/office-proj' });
+    const story = seedStory(dbHolder.db, project.id, { title: 'Office Plan', status: 'NEW' });
+
+    const runOneShot = vi.fn().mockResolvedValue({ ok: true, text: mockPlanText([]) });
+    const mockRuntime: OpenCodeRuntime = { runOneShot } as unknown as OpenCodeRuntime;
+    const planner = new PlannerAgent({ db: dbHolder.db, workflow, bus, runtime: mockRuntime });
+
+    const result = await planner.planStory({ storyId: story.id });
+    expect(result.ok).toBe(true);
+
+    // The file shares one DB across tests, so scope to this test's story (envelope.storyId).
+    const rows = readOutbox(dbHolder.db).filter((r) => r.topic.startsWith('run.') && r.storyId === story.id);
+    expect(rows.map((r) => r.topic)).toEqual(['run.started', 'run.finished']);
+    expect(rows[0].data).toMatchObject({ role: 'planner', storyKey: story.key });
+    expect(rows[1].data).toMatchObject({ role: 'planner', status: 'succeeded' });
+  });
+
+  test('emits run.finished with status failed when planning fails', async () => {
+    const project = seedProject(dbHolder.db, { repoPath: 'C:/repos/office-proj-2' });
+    const story = seedStory(dbHolder.db, project.id, { title: 'Office Fail', status: 'NEW' });
+
+    const runOneShot = vi.fn().mockResolvedValue({ ok: false, error: 'model exploded' });
+    const mockRuntime: OpenCodeRuntime = { runOneShot } as unknown as OpenCodeRuntime;
+    const planner = new PlannerAgent({ db: dbHolder.db, workflow, bus, runtime: mockRuntime });
+
+    await planner.planStory({ storyId: story.id });
+
+    // The file shares one DB across tests, so scope to this test's story (envelope.storyId).
+    const rows = readOutbox(dbHolder.db).filter((r) => r.topic.startsWith('run.') && r.storyId === story.id);
+    expect(rows.map((r) => r.topic)).toEqual(['run.started', 'run.finished']);
+    expect(rows[1].data).toMatchObject({ status: 'failed', exitReason: 'model exploded' });
   });
 });
 

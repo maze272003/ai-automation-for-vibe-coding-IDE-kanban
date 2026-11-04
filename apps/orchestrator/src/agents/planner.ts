@@ -6,6 +6,7 @@ import type { EventBus } from '../events/bus.ts';
 import { systemClock, type Clock } from '../time.ts';
 import type { WorkflowService } from '../workflow/service.ts';
 import type { RunInterruptRegistry } from './interrupts.ts';
+import { emitRunFinished, emitRunStarted } from './run-events.ts';
 import { ensureModelProfile, ROLE_TIMEOUTS, type ModelRef, type OpenCodeRuntime, type RunOneShotOutput } from './runtime.ts';
 import type { SkillBridgeService } from '../skills/bridge.ts';
 
@@ -85,6 +86,7 @@ export class PlannerAgent {
       })
       .returning()
       .get();
+    emitRunStarted(this.db, new Date(this.now()), run.id);
 
     // Attach active run to story so the UI Kanban card immediately shows the working terminal badge
     this.db
@@ -219,6 +221,7 @@ Output only the JSON code block.`;
         .set({ status: 'interrupted', exitReason: 'Interrupted by a stop request', endedAt: new Date(this.now()) })
         .where(eq(agentRuns.id, run.id))
         .run();
+      emitRunFinished(this.db, new Date(this.now()), run.id, 'interrupted', 'Interrupted by a stop request');
       this.bus.notify(1);
       return { ok: false, error: `The planning run for ${story.key} was interrupted by a stop request` };
     }
@@ -229,6 +232,7 @@ Output only the JSON code block.`;
         .set({ status: 'failed', exitReason: result.error ?? 'No response', endedAt: new Date(this.now()) })
         .where(eq(agentRuns.id, run.id))
         .run();
+      emitRunFinished(this.db, new Date(this.now()), run.id, 'failed', result.error ?? 'No response');
       this.db
         .update(userStories)
         .set({ activeRunId: null, planningStatus: 'planning_failed', updatedAt: new Date(this.now()) })
@@ -276,6 +280,7 @@ Output only the JSON code block.`;
       .set({ status: 'succeeded', endedAt: new Date(this.now()) })
       .where(eq(agentRuns.id, run.id))
       .run();
+    emitRunFinished(this.db, new Date(this.now()), run.id, 'succeeded');
 
     this.db
       .update(userStories)
