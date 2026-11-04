@@ -155,6 +155,7 @@ function main(): void {
       manager: officeManager,
       isTrustedSender: (url) => url.startsWith('app://ui/') || (devUrl !== null && url.startsWith(devUrl)),
     });
+    officeManager.onClick((label) => sendToWindow('aik:office-agent-click', label));
     win.on('closed', () => officeManager.destroy());
     if (isE2E) (globalThis as Record<string, unknown>).__aik = { supervisor, dataDir: paths.dataDir, token };
   });

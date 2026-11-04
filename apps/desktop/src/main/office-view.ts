@@ -5,6 +5,7 @@
 import type { OfficeBounds } from '@aik/contracts';
 import { ipcMain, WebContentsView } from 'electron';
 import type { BrowserWindow } from 'electron';
+import path from 'node:path';
 import { getOfficeContext, parseOfficeBounds } from './office-context.ts';
 
 export class OfficeViewManager {
@@ -21,7 +22,9 @@ export class OfficeViewManager {
     if (!office || this.win.isDestroyed()) return null;
     const origin = `${office.url}/`;
     if (!this.view) {
-      this.view = new WebContentsView({ webPreferences: { sandbox: true, nodeIntegration: false, contextIsolation: true } });
+      this.view = new WebContentsView({
+        webPreferences: { sandbox: true, nodeIntegration: false, contextIsolation: true, preload: path.join(__dirname, 'office-preload.cjs') },
+      });
       this.view.webContents.on('will-navigate', (event, url) => {
         if (!url.startsWith(origin)) event.preventDefault();
       });
@@ -61,6 +64,21 @@ export class OfficeViewManager {
     this.view = null;
     this.loadedOrigin = null;
   }
+
+  private clickHandler: ((label: string) => void) | null = null;
+
+  /** The window forwards office click IPC here; only the office view's own webContents may use it. */
+  acceptAgentClick(senderWebContentsId: number, label: unknown): void {
+    if (!this.view || this.view.webContents.isDestroyed()) return;
+    if (senderWebContentsId !== this.view.webContents.id) return; // exact match, no URL heuristics
+    if (typeof label !== 'string' || label === '' || label.length > 200) return;
+    this.clickHandler?.(label);
+  }
+
+  /** Register the UI-side click consumer (label = `${storyKey} ${role}`). */
+  onClick(handler: (label: string) => void): void {
+    this.clickHandler = handler;
+  }
 }
 
 export function registerOfficeIpc(deps: { manager: OfficeViewManager; isTrustedSender: (url: string) => boolean }): void {
@@ -73,5 +91,8 @@ export function registerOfficeIpc(deps: { manager: OfficeViewManager; isTrustedS
     if (!deps.isTrustedSender(event.senderFrame?.url ?? '')) return;
     const bounds = parseOfficeBounds(raw);
     if (bounds) deps.manager.setBounds(bounds);
+  });
+  ipcMain.on('aik:office-agent-click', (event, label: unknown) => {
+    deps.manager.acceptAgentClick(event.sender.id, label);
   });
 }

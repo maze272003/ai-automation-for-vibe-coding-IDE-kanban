@@ -23,6 +23,10 @@ its loopback bearer token stays in the app's processes (redacted from all logs).
 feature also turns on Pixel Agents' global "Watch all sessions" setting (required for external
 agents to appear). Design: `docs/superpowers/specs/2026-11-04-pixel-agents-office-design.md`.
 
+- Click a character to open that story's "Terminal Logs & Thoughts" view (live reasoning,
+  tool calls and output); while a run is in flight the character's bubble shows the agent's
+  real activity (`Reading foo.ts`, `Running: npm test`, `Using Thinking`).
+
 ## Requirements
 Windows 10 22H2+ / 11 · Node ≥ 24.17.0 · Git for Windows ≥ 2.38
 

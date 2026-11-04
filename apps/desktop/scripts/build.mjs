@@ -13,6 +13,7 @@ fs.mkdirSync(out, { recursive: true });
 const common = { bundle: true, platform: 'node', target: 'node24', format: 'cjs', logLevel: 'warning', sourcemap: true };
 await build({ ...common, entryPoints: [path.join(root, 'apps/desktop/src/main/index.ts')], outfile: path.join(out, 'main.cjs'), external: ['electron'] });
 await build({ ...common, entryPoints: [path.join(root, 'apps/desktop/src/preload/index.ts')], outfile: path.join(out, 'preload.cjs'), external: ['electron'], sourcemap: false });
+await build({ ...common, entryPoints: [path.join(root, 'apps/desktop/src/main/office-preload.ts')], outfile: path.join(out, 'office-preload.cjs'), external: ['electron'], sourcemap: false });
 // The orchestrator source is ESM but this bundle is CJS, so `import.meta.url`
 // would be `undefined` at runtime and git.ts would crash the orchestrator on
 // load. Point it at the bundle's own file so code shipped next to it resolves.
