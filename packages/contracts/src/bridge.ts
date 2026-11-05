@@ -49,6 +49,27 @@ export interface AppSettings {
   agentOffice: boolean;
 }
 
+/** Result of `aik:terminal-open` (Phase 5.3 spec §IPC contract): a live session id, or why it was refused. */
+export type TerminalOpenResult =
+  | { ok: true; id: number; cwd: string }
+  | { ok: false; reason: 'BAD_REQUEST' | 'TOO_MANY_SESSIONS' | 'INVALID_CWD' | 'SPAWN_FAILED'; message?: string };
+/** One batch of shell output forwarded over `aik:terminal-data` (data is unbounded shell output). */
+export interface TerminalDataEvent {
+  id: number;
+  data: string;
+}
+/** A session's shell exit forwarded over `aik:terminal-exit` (may lag the last data by ~1 s). */
+export interface TerminalExitEvent {
+  id: number;
+  exitCode: number;
+}
+/** Open arguments; mirrors `TerminalOpenPayload` (contracts terminal.ts) without pulling zod into this surface. */
+export interface TerminalOpenOptions {
+  cwd?: string;
+  cols: number;
+  rows: number;
+}
+
 /** The only API the renderer can reach (exposed by the preload as `window.api`). */
 export interface AikWindowApi {
   request(method: HttpMethod, path: string, body?: unknown, idempotencyKey?: string): Promise<BridgeResponse>;
@@ -78,4 +99,18 @@ export interface AikWindowApi {
   };
   events: { subscribe(listener: (event: EventEnvelope) => void): () => void };
   system: { subscribe(listener: (state: SystemState) => void): () => void };
+  terminal: {
+    /** Opens a ConPTY session at `cwd` (main falls back to the home directory when absent). */
+    open(options: TerminalOpenOptions): Promise<TerminalOpenResult>;
+    /** Writes UTF-8 text to the session's shell; false = unknown id / invalid / exited. */
+    write(id: number, data: string): Promise<boolean>;
+    /** Resizes the session's grid; false = unknown id / invalid / exited. */
+    resize(id: number, cols: number, rows: number): Promise<boolean>;
+    /** Kills the session and its console-attached process tree. */
+    close(id: number): Promise<boolean>;
+    /** Subscribes to `aik:terminal-data` output events; the return value unsubscribes. */
+    onData(listener: (event: TerminalDataEvent) => void): () => void;
+    /** Subscribes to `aik:terminal-exit` events; the return value unsubscribes. */
+    onExit(listener: (event: TerminalExitEvent) => void): () => void;
+  };
 }

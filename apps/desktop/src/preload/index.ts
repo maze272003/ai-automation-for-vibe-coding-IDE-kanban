@@ -1,4 +1,13 @@
-import type { AikWindowApi, BridgeResponse, EventEnvelope, HttpMethod, SystemState } from '@aik/contracts';
+import type {
+  AikWindowApi,
+  BridgeResponse,
+  EventEnvelope,
+  HttpMethod,
+  SystemState,
+  TerminalDataEvent,
+  TerminalExitEvent,
+  TerminalOpenResult,
+} from '@aik/contracts';
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron';
 
 const api: AikWindowApi = {
@@ -45,6 +54,26 @@ const api: AikWindowApi = {
       ipcRenderer.on('aik:system', handler);
       return () => {
         ipcRenderer.removeListener('aik:system', handler);
+      };
+    },
+  },
+  terminal: {
+    open: (options) => ipcRenderer.invoke('aik:terminal-open', options) as Promise<TerminalOpenResult>,
+    write: (id, data) => ipcRenderer.invoke('aik:terminal-write', { id, data }) as Promise<boolean>,
+    resize: (id, cols, rows) => ipcRenderer.invoke('aik:terminal-resize', { id, cols, rows }) as Promise<boolean>,
+    close: (id) => ipcRenderer.invoke('aik:terminal-close', { id }) as Promise<boolean>,
+    onData: (listener) => {
+      const handler = (_e: IpcRendererEvent, value: TerminalDataEvent) => listener(value);
+      ipcRenderer.on('aik:terminal-data', handler);
+      return () => {
+        ipcRenderer.removeListener('aik:terminal-data', handler);
+      };
+    },
+    onExit: (listener) => {
+      const handler = (_e: IpcRendererEvent, value: TerminalExitEvent) => listener(value);
+      ipcRenderer.on('aik:terminal-exit', handler);
+      return () => {
+        ipcRenderer.removeListener('aik:terminal-exit', handler);
       };
     },
   },

@@ -14,3 +14,4 @@ export * from './projects.ts';
 export * from './providers.ts';
 export * from './sse.ts';
 export * from './stories.ts';
+export * from './terminal.ts';
