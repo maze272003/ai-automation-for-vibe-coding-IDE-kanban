@@ -2,6 +2,7 @@ export * from './agents.ts';
 export * from './app.ts';
 export * from './bridge.ts';
 export * from './common.ts';
+export * from './diagnostics.ts';
 export * from './enums.ts';
 export * from './events.ts';
 export * from './files.ts';

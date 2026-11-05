@@ -1,3 +1,4 @@
+import type { DiagnosticsExportResult } from './diagnostics.ts';
 import type { EventEnvelope } from './events.ts';
 import type { OfficeBounds } from './pixel-agents.ts';
 
@@ -76,6 +77,8 @@ export interface AikWindowApi {
   pickDirectory(): Promise<string | null>;
   systemState(): Promise<SystemState>;
   restoreLatestBackup(): Promise<{ ok: true; restoredFrom: string } | { ok: false; reason: string }>;
+  /** Saves the redacted diagnostics archive through a native Save dialog in main; the renderer never sees it. */
+  exportDiagnostics(): Promise<DiagnosticsExportResult>;
   restartOrchestrator(): Promise<void>;
   /** Restarts the isolated OpenCode server so a newly connected provider appears in the model list. */
   restartOpencode(): Promise<void>;

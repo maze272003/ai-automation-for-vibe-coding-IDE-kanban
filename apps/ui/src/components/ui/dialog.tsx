@@ -23,7 +23,7 @@ export function Dialog({ open, title, onClose, children }: { open: boolean; titl
           }}
           className={cn(
             'fixed left-1/2 top-1/2 z-50 w-[32rem] max-w-[90vw] -translate-x-1/2 -translate-y-1/2',
-            'rounded-panel border border-glass-border bg-[rgb(16_20_36/0.92)] p-0 text-foreground shadow-panel backdrop-blur-[22px]',
+            'rounded-panel border border-glass-border bg-overlay-fill p-0 text-foreground shadow-panel backdrop-blur-[22px]',
           )}
         >
           <DialogPrimitive.Title className="border-b border-border bg-surface/40 px-5 py-3 text-base font-bold tracking-tight">

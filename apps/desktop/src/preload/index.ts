@@ -1,6 +1,7 @@
 import type {
   AikWindowApi,
   BridgeResponse,
+  DiagnosticsExportResult,
   EventEnvelope,
   HttpMethod,
   SystemState,
@@ -16,6 +17,7 @@ const api: AikWindowApi = {
   pickDirectory: () => ipcRenderer.invoke('aik:pick-directory') as Promise<string | null>,
   systemState: () => ipcRenderer.invoke('aik:system-state') as Promise<SystemState>,
   restoreLatestBackup: () => ipcRenderer.invoke('aik:restore-latest-backup'),
+  exportDiagnostics: () => ipcRenderer.invoke('aik:diagnostics-export') as Promise<DiagnosticsExportResult>,
   restartOrchestrator: () => ipcRenderer.invoke('aik:restart-orchestrator') as Promise<void>,
   restartOpencode: () => ipcRenderer.invoke('aik:opencode-restart') as Promise<void>,
   opencodeStatus: () => ipcRenderer.invoke('aik:opencode-status'),

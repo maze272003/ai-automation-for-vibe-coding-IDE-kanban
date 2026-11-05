@@ -19,6 +19,29 @@ const RULES: Rule[] = [
     replace: (_m, prefix) => `${prefix}[REDACTED]`,
   },
   { re: /\b(https?:\/\/)[^\s/:@]+:[^\s/@]+@/gi, replace: (_m, scheme) => `${scheme}[REDACTED]@` },
+  // JWT: header.payload.signature, base64url, at least 10 chars per segment; header starts eyJ.
+  {
+    re: /\beyJ[A-Za-z0-9_-]{7,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}(?![A-Za-z0-9_-])/g,
+    replace: () => '[REDACTED:jwt]',
+  },
+  // API-key header values: x-api-key / api-key / apikey, case-insensitive, prefix preserved.
+  {
+    re: /\b((?:x-api-key|api-key|apikey)["']?\s*[:=]\s*["']?)[^\s"',;}]+/gi,
+    replace: (_m, prefix) => `${prefix}[REDACTED]`,
+  },
+  // Cookie header values: cookie / set-cookie, case-insensitive, prefix preserved.
+  {
+    re: /\b((?:set-cookie|cookie)["']?\s*[:=]\s*["']?)[^\r\n"']+/gi,
+    replace: (_m, prefix) => `${prefix}[REDACTED]`,
+  },
+  // Database URL userinfo (postgres/postgresql/mysql/mariadb/redis/rediss/mongodb(+srv)/amqp/amqps).
+  {
+    re: /\b((?:postgres(?:ql)?|mysql|mariadb|redis(?:s)?|mongodb(?:\+srv)?|amqps?):\/\/)[^\s/@]+@/gi,
+    replace: (_m, scheme) => `${scheme}[REDACTED]@`,
+  },
+  { re: /\bnpm_[A-Za-z0-9]{36}(?![A-Za-z0-9])/g, replace: () => '[REDACTED:npm-token]' },
+  { re: /\bglpat-[A-Za-z0-9_-]{20,}(?![A-Za-z0-9_-])/g, replace: () => '[REDACTED:gitlab-token]' },
+  { re: /\bhf_[A-Za-z0-9]{30,}(?![A-Za-z0-9])/g, replace: () => '[REDACTED:huggingface-token]' },
 ];
 
 const MIN_SECRET_LENGTH = 8;

@@ -10,10 +10,16 @@ import { Select } from '../components/ui/select.tsx';
 import { Textarea } from '../components/ui/textarea.tsx';
 import { api } from '../lib/api.ts';
 import { cn } from '../lib/cn.ts';
-import { applyTheme, loadTheme, type Theme } from '../lib/theme.ts';
+import { useTheme } from '../lib/use-theme.ts';
 import type { Health } from './root.tsx';
 
 const MODEL_STORAGE_KEY = 'aik:default-model';
+
+const THEME_OPTIONS = [
+  { value: 'light', label: 'Light', description: 'Bright surfaces for daytime work.' },
+  { value: 'dark', label: 'Dark', description: 'Aurora dark surfaces.' },
+  { value: 'system', label: 'System', description: 'System follows Windows and switches automatically.' },
+] as const satisfies readonly { value: 'light' | 'dark' | 'system'; label: string; description: string }[];
 
 function loadSavedModel(): { providerID: string; id: string } | null {
   try {
@@ -292,7 +298,7 @@ function ModelPicker({ status, mode, onModeChange }: ModelPickerProps) {
 }
 
 export function SettingsPage() {
-  const [theme, setTheme] = useState<Theme>(loadTheme());
+  const { preference, resolved, setPreference, toggle } = useTheme();
   const [health, setHealth] = useState<Health | null>(null);
   const [opencode, setOpencode] = useState<OpencodeStatus | null>(null);
   const [installing, setInstalling] = useState(false);
@@ -351,17 +357,39 @@ export function SettingsPage() {
           <Card data-testid="settings-appearance" className="p-4">
             <h2 className="text-sm font-semibold text-foreground">Appearance</h2>
             <p className="mt-1 text-xs text-muted">The theme applies instantly and is remembered on this device.</p>
+            <fieldset data-testid="theme-preference" className="mt-3">
+              <legend className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-2">Theme</legend>
+              <div className="mt-1.5 flex flex-col gap-1.5">
+                {THEME_OPTIONS.map((option) => (
+                  <label
+                    key={option.value}
+                    className={cn(
+                      'flex cursor-pointer items-start gap-2 rounded-control border px-2.5 py-2 text-xs transition-colors',
+                      preference === option.value
+                        ? 'border-accent/50 bg-accent/10 text-foreground'
+                        : 'border-border bg-surface-3 text-muted hover:text-foreground',
+                    )}
+                  >
+                    <input
+                      type="radio"
+                      name="theme-preference"
+                      value={option.value}
+                      aria-label={option.label}
+                      checked={preference === option.value}
+                      onChange={() => setPreference(option.value)}
+                      className="mt-0.5 h-3.5 w-3.5 shrink-0 appearance-none rounded-full border border-border-strong bg-surface-2 checked:border-accent checked:bg-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+                    />
+                    <span className="flex flex-col gap-0.5">
+                      <span>{option.label}</span>
+                      <span className="text-muted-2">{option.description}</span>
+                    </span>
+                  </label>
+                ))}
+              </div>
+            </fieldset>
             <div className="mt-3">
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={() => {
-                  const next: Theme = theme === 'dark' ? 'light' : 'dark';
-                  applyTheme(next);
-                  setTheme(next);
-                }}
-              >
-                Switch to {theme === 'dark' ? 'light' : 'dark'} theme
+              <Button variant="secondary" size="sm" onClick={toggle}>
+                Switch to {resolved === 'dark' ? 'light' : 'dark'} theme
               </Button>
             </div>
           </Card>

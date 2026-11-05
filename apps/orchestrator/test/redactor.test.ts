@@ -28,6 +28,71 @@ describe('redactor patterns', () => {
   });
 });
 
+describe('redactor extended patterns', () => {
+  const r = createRedactor();
+  const jwt = `eyJ${'a'.repeat(20)}.${'b'.repeat(20)}.${'c'.repeat(20)}`;
+
+  it.each([
+    ['JWT', `session ${jwt} ok`, 'session [REDACTED:jwt] ok'],
+    ['x-api-key header', 'x-api-key: abc123def', 'x-api-key: [REDACTED]'],
+    ['api-key header', 'API-KEY = abc123', 'API-KEY = [REDACTED]'],
+    ['apikey header', 'apikey=abc123', 'apikey=[REDACTED]'],
+    ['set-cookie header', 'Set-Cookie: a=1; b=2', 'Set-Cookie: [REDACTED]'],
+    ['cookie header', 'Cookie: a=1; b=2', 'Cookie: [REDACTED]'],
+    ['postgres URL', 'postgres://user:p%40ss@db.example.com:5432/app', 'postgres://[REDACTED]@db.example.com:5432/app'],
+    ['postgresql URL', 'postgresql://u:p@h/db', 'postgresql://[REDACTED]@h/db'],
+    ['mysql URL', 'mysql://u:p@h/db', 'mysql://[REDACTED]@h/db'],
+    ['mariadb URL', 'mariadb://u:p@h/db', 'mariadb://[REDACTED]@h/db'],
+    ['redis URL', 'redis://u:p@h:6379', 'redis://[REDACTED]@h:6379'],
+    ['rediss URL', 'rediss://u:p@h:6379', 'rediss://[REDACTED]@h:6379'],
+    ['mongodb URL', 'mongodb://u:p@h/db', 'mongodb://[REDACTED]@h/db'],
+    ['mongodb+srv URL', 'mongodb+srv://u:p@cluster.example.net/db', 'mongodb+srv://[REDACTED]@cluster.example.net/db'],
+    ['amqp URL', 'amqp://u:p@h:5672', 'amqp://[REDACTED]@h:5672'],
+    ['amqps URL', 'amqps://u:p@h:5672', 'amqps://[REDACTED]@h:5672'],
+    ['npm token', `npm_${'d'.repeat(36)}`, '[REDACTED:npm-token]'],
+    ['GitLab token', `glpat-${'e'.repeat(20)}`, '[REDACTED:gitlab-token]'],
+    ['Hugging Face token', `hf_${'f'.repeat(30)}`, '[REDACTED:huggingface-token]'],
+  ])('%s', (_name, input, expected) => {
+    expect(r.redact(input)).toBe(expected);
+  });
+
+  it.each([
+    ['two-segment JWT', `eyJ${'a'.repeat(20)}.${'b'.repeat(20)}`],
+    ['short JWT segment', `eyJ${'a'.repeat(20)}.${'b'.repeat(5)}.${'c'.repeat(20)}`],
+    ['JWT whose header does not start with eyJ', `${'x'.repeat(23)}.${'b'.repeat(20)}.${'c'.repeat(20)}`],
+    ['api-key header without a value', 'x-api-key:'],
+    ['cookie prose', 'The cookie banner asks for consent before storing data.'],
+    ['token prose', 'The token budget for this request is exhausted.'],
+    ['database URL without userinfo', 'postgres://localhost:5432/app'],
+    ['short npm token', `npm_${'d'.repeat(35)}`],
+    ['short GitLab token', `glpat-${'e'.repeat(19)}`],
+    ['short Hugging Face token', `hf_${'f'.repeat(29)}`],
+  ])('leaves %s alone', (_name, input) => {
+    expect(r.redact(input)).toBe(input);
+  });
+
+  it('is idempotent and keeps every new label', () => {
+    const input = [
+      `jwt ${jwt}`,
+      'x-api-key: abc123',
+      'Cookie: a=1; b=2',
+      'postgres://user:pass@host/db',
+      `npm_${'d'.repeat(36)}`,
+      `glpat-${'e'.repeat(20)}`,
+      `hf_${'f'.repeat(30)}`,
+    ].join('\n');
+    const once = r.redact(input);
+    expect(once).toContain('[REDACTED:jwt]');
+    expect(once).toContain('x-api-key: [REDACTED]');
+    expect(once).toContain('Cookie: [REDACTED]');
+    expect(once).toContain('postgres://[REDACTED]@host/db');
+    expect(once).toContain('[REDACTED:npm-token]');
+    expect(once).toContain('[REDACTED:gitlab-token]');
+    expect(once).toContain('[REDACTED:huggingface-token]');
+    expect(r.redact(once)).toBe(once);
+  });
+});
+
 describe('redactor live secrets', () => {
   it('redacts registered secrets, including their JSON-escaped form', () => {
     const r = createRedactor();

@@ -11,6 +11,11 @@ import { Button } from '../components/ui/button.tsx';
 import { Dialog } from '../components/ui/dialog.tsx';
 import { ApiRequestError, api } from '../lib/api.ts';
 import { fileContent, languageForPath, saveFile } from '../lib/files.ts';
+import { SHORTCUTS_BY_ID, matchesShortcut } from '../lib/shortcuts.ts';
+
+const SAVE_CHORD = SHORTCUTS_BY_ID['editor.save'].chord;
+const SEARCH_CHORD = SHORTCUTS_BY_ID['editor.search'].chord;
+const TERMINAL_CHORD = SHORTCUTS_BY_ID['view.terminal'].chord;
 
 interface LoadedFile {
   path: string;
@@ -98,14 +103,14 @@ export function CodePage() {
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if ((event.ctrlKey || event.metaKey) && !event.shiftKey && event.key.toLowerCase() === 's') {
+      if (matchesShortcut(event, SAVE_CHORD)) {
         event.preventDefault();
         saveRef.current();
-      } else if ((event.ctrlKey || event.metaKey) && !event.shiftKey && event.key === '`') {
+      } else if (matchesShortcut(event, TERMINAL_CHORD)) {
         // Toggle the integrated terminal (Phase 5.3 spec §Component 7, IDE-5).
         event.preventDefault();
         setTerminalOpen((value) => !value);
-      } else if ((event.ctrlKey || event.metaKey) && event.shiftKey && event.key.toLowerCase() === 'f') {
+      } else if (matchesShortcut(event, SEARCH_CHORD)) {
         event.preventDefault();
         setSearchOpen(true);
       } else if (

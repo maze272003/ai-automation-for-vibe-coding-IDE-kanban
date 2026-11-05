@@ -373,7 +373,7 @@ export function TerminalModal({
       className="fixed inset-0 z-50 flex items-center justify-center bg-[rgb(4_7_16/0.70)] p-4 backdrop-blur-[3px]"
     >
       <div
-        className="flex h-[90vh] w-full max-w-5xl flex-col overflow-hidden rounded-panel border border-glass-border bg-[rgb(16_20_36/0.90)] shadow-panel backdrop-blur-[22px]"
+        className="flex h-[90vh] w-full max-w-5xl flex-col overflow-hidden rounded-panel border border-glass-border bg-overlay-fill shadow-panel backdrop-blur-[22px]"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Top Header */}
@@ -790,11 +790,11 @@ export function TerminalModal({
                               {c.status} (exit {c.exitCode ?? 0})
                             </span>
                           </div>
-                          <code className="block rounded border border-border bg-black/50 p-2 font-mono text-xs text-muted">
+                          <code className="block rounded border border-border bg-surface-3 p-2 font-mono text-xs text-muted">
                             {c.command}
                           </code>
                           {c.outputTail && (
-                            <pre className="max-h-40 overflow-y-auto whitespace-pre-wrap rounded bg-black/40 p-2 font-mono text-[11px] text-foreground">
+                            <pre className="max-h-40 overflow-y-auto whitespace-pre-wrap rounded bg-surface-3 p-2 font-mono text-[11px] text-foreground">
                               {c.outputTail}
                             </pre>
                           )}

@@ -26,6 +26,13 @@ function blocks(selector: string): string {
   return bodies.join('\n');
 }
 
+/** Reads the declared value of a token from the concatenated selector blocks. */
+function tokenValue(selector: string, token: string): string | null {
+  const escaped = token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const match = blocks(selector).match(new RegExp(`${escaped}\\s*:\\s*([^;]+);`));
+  return match?.[1]?.trim() ?? null;
+}
+
 const SEMANTIC_TOKENS = [
   '--background', '--surface', '--surface-2', '--surface-3',
   '--border', '--border-strong',
@@ -34,7 +41,7 @@ const SEMANTIC_TOKENS = [
   '--danger', '--danger-foreground',
   '--success', '--success-foreground',
   '--warning', '--warning-foreground',
-  '--glass-fill', '--glass-border', '--glass-highlight', '--scrim',
+  '--glass-fill', '--glass-border', '--glass-highlight', '--scrim', '--overlay-fill',
   '--panel-shadow', '--card-shadow',
 ] as const;
 
@@ -61,6 +68,16 @@ describe('design tokens', () => {
     for (const token of SEMANTIC_TOKENS) {
       expect(theme, `@theme inline is missing ${token}`).toContain(`var(${token})`);
     }
+  });
+
+  it('defines the theme-specific overlay fill values', () => {
+    expect(tokenValue(':root', '--overlay-fill')).toBe('rgb(255 255 255 / 0.98)');
+    expect(tokenValue('.dark', '--overlay-fill')).toBe('rgb(16 20 36 / 0.92)');
+  });
+
+  it('darkens light muted-2 while leaving dark muted-2 unchanged', () => {
+    expect(tokenValue(':root', '--muted-2')).toBe('#5f6472');
+    expect(tokenValue('.dark', '--muted-2')).toBe('#7e86a2');
   });
 
   it('paints the aurora canvas on a fixed layer', () => {

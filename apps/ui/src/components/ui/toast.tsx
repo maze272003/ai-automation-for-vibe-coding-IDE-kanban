@@ -24,7 +24,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
           <div
             key={t.id}
             className={cn(
-              'pointer-events-auto rounded-card border bg-[rgb(18_22_38/0.94)] p-3 shadow-panel backdrop-blur-[18px]',
+              'pointer-events-auto rounded-card border bg-overlay-fill p-3 shadow-panel backdrop-blur-[18px]',
               t.tone === 'error' ? 'border-danger/40' : 'border-glass-border',
             )}
           >

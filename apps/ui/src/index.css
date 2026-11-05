@@ -34,7 +34,7 @@
   --border-strong: rgb(24 24 37 / 0.18);
   --foreground: #15161a;
   --muted: #5e6270;
-  --muted-2: #6b7280;
+  --muted-2: #5f6472;
   --accent: #6d28d9;
   --accent-2: #4f46e5;
   --accent-foreground: #ffffff;
@@ -52,6 +52,7 @@
   --glass-border: rgb(24 24 37 / 0.09);
   --glass-highlight: rgb(255 255 255 / 0.85);
   --scrim: rgb(255 255 255 / 0.92);
+  --overlay-fill: rgb(255 255 255 / 0.98);
   --panel-shadow: 0 30px 70px -35px rgb(24 24 37 / 0.35);
   --card-shadow: 0 8px 22px -14px rgb(24 24 37 / 0.35);
 }
@@ -84,6 +85,7 @@
   --glass-border: rgb(255 255 255 / 0.10);
   --glass-highlight: rgb(255 255 255 / 0.06);
   --scrim: rgb(16 20 36 / 0.90);
+  --overlay-fill: rgb(16 20 36 / 0.92);
   --panel-shadow: 0 40px 90px -40px rgb(0 0 0 / 0.95);
   --card-shadow: 0 10px 26px -16px rgb(0 0 0 / 0.90);
 }
@@ -129,6 +131,7 @@
   --color-glass-border: var(--glass-border);
   --color-glass-highlight: var(--glass-highlight);
   --color-scrim: var(--scrim);
+  --color-overlay-fill: var(--overlay-fill);
   --shadow-panel: var(--panel-shadow);
   --shadow-card: var(--card-shadow);
 }

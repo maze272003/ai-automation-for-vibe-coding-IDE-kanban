@@ -46,9 +46,9 @@ export function BranchDropdown({ current, local, remote, disabled, onCheckout, o
         ⎇ {current ?? 'no branch'} ▾
       </Button>
       {open && (
-        <div className="absolute left-0 top-8 z-40 w-64 rounded-panel border border-border-strong bg-[rgb(20_26_44/0.97)] p-2 shadow-panel">
+        <div className="absolute left-0 top-8 z-40 w-64 rounded-panel border border-border-strong bg-overlay-fill p-2 shadow-panel">
           <input
-            className="w-full rounded-control border border-border bg-black/30 px-2 py-1 text-xs"
+            className="w-full rounded-control border border-border bg-surface-3 px-2 py-1 text-xs"
             placeholder="Search branches…"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
@@ -77,7 +77,7 @@ export function BranchDropdown({ current, local, remote, disabled, onCheckout, o
           </div>
           <label className="mt-2 flex items-center gap-2 border-t border-border px-2 pt-2 text-xs font-semibold">
             ＋ New branch
-            <input className="flex-1 rounded-control border border-border bg-black/30 px-2 py-1 text-xs" value={creating ?? ''} onChange={(e) => setCreating(e.target.value)} />
+            <input className="flex-1 rounded-control border border-border bg-surface-3 px-2 py-1 text-xs" value={creating ?? ''} onChange={(e) => setCreating(e.target.value)} />
             <Button size="sm" variant="primary" disabled={!creating} onClick={() => void create()}>Create</Button>
           </label>
         </div>
