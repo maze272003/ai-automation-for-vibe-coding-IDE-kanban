@@ -12,6 +12,8 @@ import { OfficeViewManager, registerOfficeIpc } from './office-view.ts';
 import { desktopPaths, resolveDataDir } from './paths.ts';
 import { APP_SCHEME, registerAppProtocol } from './protocol.ts';
 import { OrchestratorSupervisor, type ChildLike } from './supervisor.ts';
+import { registerTerminalIpc } from './terminal-ipc.ts';
+import { TerminalManager } from './terminal.ts';
 import { createMainWindow } from './window.ts';
 
 protocol.registerSchemesAsPrivileged([APP_SCHEME]);
@@ -56,6 +58,7 @@ function main(): void {
   const gatewayToken = managed ? crypto.randomBytes(32).toString('base64url') : null;
   if (gatewayToken) setGatewayContext({ token: gatewayToken });
   const devUrl = process.env.AIK_UI_DEV_URL ?? null;
+  const isTrustedSender = (url: string) => url.startsWith('app://ui/') || (devUrl !== null && url.startsWith(devUrl));
   let win: BrowserWindow | null = null;
 
   const supervisor = new OrchestratorSupervisor({
@@ -77,6 +80,9 @@ function main(): void {
       win.webContents.send(channel, ...args);
     }
   };
+  // Constructed before the before-quit handler below closes over it (Phase 5.3 spec
+  // §Component design 3); terminal output events ride sendToWindow.
+  const terminalManager = new TerminalManager({ send: sendToWindow });
 
   const forwarder = new EventForwarder({ getPort: () => supervisor.port, token, send: (e) => sendToWindow('aik:event', e) });
   supervisor.on('state', () => sendToWindow('aik:system', { state: supervisor.state, fatal: supervisor.fatal }));
@@ -95,6 +101,7 @@ function main(): void {
   let quitting = false;
   app.on('before-quit', (event) => {
     if (quitting) return;
+    terminalManager.killAll(); // every shell dies before anything else (spec: session ends when the app quits)
     event.preventDefault();
     quitting = true;
     forwarder.stop();
@@ -125,7 +132,7 @@ function main(): void {
       token,
       paths,
       opencodeAssetsDir: path.join(__dirname, 'opencode-runtime'),
-      isTrustedSender: (url) => url.startsWith('app://ui/') || (devUrl !== null && url.startsWith(devUrl)),
+      isTrustedSender,
       onSettingsChanged: async (next) => {
         if (next.agentOffice) {
           if (!officeInstalled(paths.dataDir)) {
@@ -153,10 +160,20 @@ function main(): void {
     const officeManager = new OfficeViewManager(win);
     registerOfficeIpc({
       manager: officeManager,
-      isTrustedSender: (url) => url.startsWith('app://ui/') || (devUrl !== null && url.startsWith(devUrl)),
+      isTrustedSender,
     });
     officeManager.onClick((label) => sendToWindow('aik:office-agent-click', label));
     win.on('closed', () => officeManager.destroy());
-    if (isE2E) (globalThis as Record<string, unknown>).__aik = { supervisor, dataDir: paths.dataDir, token };
+    registerTerminalIpc({ manager: terminalManager, isTrustedSender });
+    win.on('closed', () => terminalManager.killAll()); // idempotent with before-quit's killAll
+    if (isE2E)
+      (globalThis as Record<string, unknown>).__aik = {
+        supervisor,
+        dataDir: paths.dataDir,
+        token,
+        terminalManager,
+        // Serializable accessor: raw manager/Electron objects do not cross app.evaluate.
+        terminalSessions: () => terminalManager.sessionsInfo(),
+      };
   });
 }

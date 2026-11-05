@@ -70,7 +70,7 @@ export function apiCall<T = unknown>(page: Page, method: 'GET' | 'POST' | 'PATCH
 }
 
 /** Main-process test hook, present only when AIK_E2E=1. */
-export function aik<T>(app: ElectronApplication, fn: (h: { supervisor: { state: string; port: number | null; child: { pid: number | undefined } | null }; token: string; dataDir: string }) => T): Promise<T> {
+export function aik<T>(app: ElectronApplication, fn: (h: { supervisor: { state: string; port: number | null; child: { pid: number | undefined } | null }; token: string; dataDir: string; terminalSessions: () => { id: number; pid: number }[] }) => T): Promise<T> {
   return app.evaluate((_electron, f) => {
     const hook = (globalThis as unknown as { __aik: Parameters<typeof fn>[0] }).__aik;
     return new Function('h', `return (${f})(h)`)(hook) as T;
