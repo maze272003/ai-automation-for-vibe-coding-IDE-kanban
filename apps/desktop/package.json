@@ -6,6 +6,7 @@
   "dependencies": {
     "@aik/contracts": "0.0.0",
     "@aik/db": "0.0.0",
+    "node-pty": "1.1.0",
     "zod": "4.6.7"
   },
   "build": {
@@ -17,16 +18,23 @@
     "files": [
       "dist/**/*"
     ],
+    "asarUnpack": [
+      "**/node-pty/**"
+    ],
     "extraResources": [
       {
         "from": "assets/opencode-runtime",
         "to": "opencode-runtime",
-        "filter": ["**/*"]
+        "filter": [
+          "**/*"
+        ]
       },
       {
         "from": "assets/pixel-agents-runtime",
         "to": "pixel-agents-runtime",
-        "filter": ["**/*"]
+        "filter": [
+          "**/*"
+        ]
       }
     ],
     "win": {

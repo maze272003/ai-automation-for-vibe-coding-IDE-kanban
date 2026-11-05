@@ -38,6 +38,13 @@ describe('REL-6 Packaging & Electron Fuses Configuration', () => {
     expect(hasRuntime).toBe(true);
   });
 
+  test('unpacks the node-pty native module from asar (IDE-5 terminal)', () => {
+    // Native .node prebuilds cannot load from inside an asar archive; smartUnpack is
+    // not relied on (spec 2026-11-05 T-14).
+    const unpack = build.asarUnpack ?? [];
+    expect(unpack.some((pattern: string) => pattern.includes('node-pty'))).toBe(true);
+  });
+
   test('enforces hardened Electron fuses to prevent process takeover and code injection', () => {
     expect(REQUIRED_FUSES.runAsNode).toBe(false);
     expect(REQUIRED_FUSES.enableCookieEncryption).toBe(true);
