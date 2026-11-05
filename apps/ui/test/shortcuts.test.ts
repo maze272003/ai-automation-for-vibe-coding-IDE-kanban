@@ -242,12 +242,12 @@ describe('isModalOpen', () => {
   test('is guarded without a document and queries role="dialog" when present', () => {
     expect(isModalOpen()).toBe(false);
 
-    const querySelector = vi.fn(() => null);
+    const querySelector = vi.fn<() => Element | null>(() => null);
     vi.stubGlobal('document', { querySelector });
     expect(isModalOpen()).toBe(false);
     expect(querySelector).toHaveBeenLastCalledWith('[role="dialog"]');
 
-    querySelector.mockReturnValue({});
+    querySelector.mockReturnValue({} as Element);
     expect(isModalOpen()).toBe(true);
   });
 });

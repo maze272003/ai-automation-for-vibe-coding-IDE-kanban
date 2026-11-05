@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { BridgeRequest } from '../src/main/bridge-request.ts';
+import { BridgeRequest, isRendererPathAllowed } from '../src/main/bridge-request.ts';
 
 const request = (path: string) => ({ method: 'GET' as const, path });
 
@@ -25,5 +25,33 @@ describe('BridgeRequest', () => {
   it('allows a long encoded path but not an unbounded one', () => {
     expect(BridgeRequest.safeParse(request(`/projects/1/files/content?path=${'a'.repeat(8000)}`)).success).toBe(true);
     expect(BridgeRequest.safeParse(request(`/projects/1/files/content?path=${'a'.repeat(16_001)}`)).success).toBe(false);
+  });
+});
+
+describe('isRendererPathAllowed', () => {
+  it('accepts ordinary API paths including encoded query values', () => {
+    for (const path of ['/projects', '/diagnostics/logs?tailBytes=65536', '/files?path=C%3A%5Crepo']) {
+      expect(isRendererPathAllowed(path), path).toBe(true);
+    }
+  });
+
+  it('denies the event stream and direct diagnostics export after normalisation', () => {
+    for (const path of [
+      '/events',
+      '/x/../events',
+      '/%65vents',
+      '//events',
+      '/events/',
+      '/diagnostics/export',
+      '/diagnostics/%65xport',
+      '/EVENTS',
+      '/a/..%2fevents',
+    ]) {
+      expect(isRendererPathAllowed(path), path).toBe(false);
+    }
+  });
+
+  it('refuses malformed percent-encoding instead of guessing', () => {
+    expect(isRendererPathAllowed('/projects/%ZZ')).toBe(false);
   });
 });

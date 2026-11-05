@@ -24,11 +24,9 @@ export const DIAGNOSTICS_RESTORE_NOTE =
  * alternate-data-stream colon — ending in `.log` or a rotation suffix
  * (`.log.1` … `.log.N`). The service re-checks containment on disk.
  */
-export const DiagnosticsLogName = z
-  .string()
-  .min(1)
-  .max(160)
-  .regex(/^[A-Za-z0-9][A-Za-z0-9._-]*\.log(?:\.\d+)?$/);
+export const DIAGNOSTICS_LOG_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*\.log(?:\.\d+)?$/;
+
+export const DiagnosticsLogName = z.string().min(1).max(160).regex(DIAGNOSTICS_LOG_NAME_RE);
 
 export const DiagnosticsLogParams = z.object({ file: DiagnosticsLogName });
 
@@ -84,20 +82,21 @@ export interface DiagnosticsErrorsDTO {
   errors: DiagnosticsErrorDTO[];
   scannedFiles: number;
 }
+export interface DiagnosticsHealthComponents {
+  db: DiagnosticsComponentHealth & { sizeBytes: number };
+  logs: DiagnosticsComponentHealth & { fileCount: number };
+  backups: DiagnosticsComponentHealth & { count: number; latest: DiagnosticsBackupDTO | null };
+  opencode: DiagnosticsComponentHealth;
+  gateway: DiagnosticsComponentHealth;
+  github: DiagnosticsComponentHealth;
+  ollama: DiagnosticsComponentHealth;
+}
 export interface DiagnosticsHealthDTO {
   status: 'ok' | 'degraded';
   uptimeSeconds: number;
   versions: { app: string; node: string; electron: string | null };
   memory: { rssBytes: number; heapUsedBytes: number };
-  components: {
-    db: DiagnosticsComponentHealth & { sizeBytes: number };
-    logs: DiagnosticsComponentHealth & { fileCount: number };
-    backups: DiagnosticsComponentHealth & { count: number; latest: DiagnosticsBackupDTO | null };
-    opencode: DiagnosticsComponentHealth;
-    gateway: DiagnosticsComponentHealth;
-    github: DiagnosticsComponentHealth;
-    ollama: DiagnosticsComponentHealth;
-  };
+  components: DiagnosticsHealthComponents;
 }
 export interface DiagnosticsBackupDTO {
   name: string;

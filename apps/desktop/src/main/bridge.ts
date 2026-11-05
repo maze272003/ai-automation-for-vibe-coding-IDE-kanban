@@ -1,10 +1,12 @@
-import type { AppSettings, BridgeResponse, SystemState } from '@aik/contracts';
+import type { AppSettings, BridgeResponse, DiagnosticsExportResult, SystemState } from '@aik/contracts';
 import { listBackups, restoreBackup } from '@aik/db/backup';
 import { BrowserWindow, dialog, ipcMain, shell, type IpcMainInvokeEvent } from 'electron';
 import { spawn } from 'node:child_process';
+import { writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { z } from 'zod';
-import { BridgeRequest } from './bridge-request.ts';
+import { BridgeRequest, isRendererPathAllowed } from './bridge-request.ts';
+import { exportDiagnostics } from './diagnostics-export.ts';
 import { installOpencode, opencodeStatus } from './opencode.ts';
 import { refreshGatewayContext } from './gateway-context.ts';
 import { listOpencodeModels, opencodeChat, opencodeLoginStart, opencodeLoginWait, opencodeSignedIn, readAppSettings, writeAppSettings } from './opencode-server.ts';
@@ -44,6 +46,12 @@ export function registerBridge(deps: BridgeDeps): void {
       };
     }
     const req = parsed.data;
+    if (!isRendererPathAllowed(req.path)) {
+      return {
+        status: 400,
+        body: { error: { code: 'VALIDATION_FAILED', message: 'The desktop bridge rejected this request', retryable: false } },
+      };
+    }
     const port = deps.supervisor.port;
     if (port === null) return unavailable('The orchestrator is not running');
     try {
@@ -69,6 +77,53 @@ export function registerBridge(deps: BridgeDeps): void {
       }
     } catch {
       return unavailable('The orchestrator did not respond');
+    }
+  });
+
+  // Native diagnostics export (K-10): main fetches the redacted archive with the launch
+  // token, the user picks the destination, and the renderer only ever sees the result.
+  // Every refusal is returned, never thrown across IPC (mirrors terminal-ipc.ts).
+  ipcMain.handle('aik:diagnostics-export', async (event): Promise<DiagnosticsExportResult> => {
+    try {
+      if (!deps.isTrustedSender(event.senderFrame?.url ?? '')) return { ok: false, reason: 'untrusted' };
+      const port = deps.supervisor.port;
+      if (port === null) return { ok: false, reason: 'orchestrator unavailable' };
+
+      let response: Response;
+      try {
+        response = await fetch(`http://127.0.0.1:${port}/diagnostics/export`, {
+          headers: { authorization: `Bearer ${deps.token}` },
+          signal: AbortSignal.timeout(60_000),
+        });
+      } catch {
+        return { ok: false, reason: 'orchestrator unavailable' };
+      }
+      if (!response.ok) return { ok: false, reason: 'export failed' };
+
+      let archive: unknown;
+      try {
+        archive = (await response.json()) as unknown;
+      } catch {
+        return { ok: false, reason: 'export failed' };
+      }
+
+      return await exportDiagnostics({
+        fetchArchive: async () => archive,
+        choosePath: async (defaultName) => {
+          const win = BrowserWindow.fromWebContents(event.sender);
+          const options: Electron.SaveDialogOptions = {
+            defaultPath: defaultName,
+            filters: [{ name: 'JSON', extensions: ['json'] }],
+          };
+          const result = win ? await dialog.showSaveDialog(win, options) : await dialog.showSaveDialog(options);
+          return result.canceled || !result.filePath ? null : result.filePath;
+        },
+        writeFile: async (file, data) => {
+          await writeFile(file, data, 'utf8');
+        },
+      });
+    } catch {
+      return { ok: false, reason: 'export failed' };
     }
   });
 
