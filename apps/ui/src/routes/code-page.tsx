@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from 'react';
 import { CodeEditor } from '../components/code/code-editor.tsx';
 import { FileExplorer } from '../components/code/file-explorer.tsx';
 import { SearchPanel } from '../components/code/search-panel.tsx';
+import { TerminalPanel } from '../components/code/terminal-panel.tsx';
 import { TopBar } from '../components/shell/top-bar.tsx';
 import { Button } from '../components/ui/button.tsx';
 import { Dialog } from '../components/ui/dialog.tsx';
@@ -41,6 +42,7 @@ export function CodePage() {
   const [pendingOpen, setPendingOpen] = useState<PendingOpen | null>(null);
   const [reloadOpen, setReloadOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
+  const [terminalOpen, setTerminalOpen] = useState(false);
   const [revealLine, setRevealLine] = useState<number | null>(null);
   const [resetToken, setResetToken] = useState(0);
   const [explorerRefresh, setExplorerRefresh] = useState(0);
@@ -85,6 +87,7 @@ export function CodePage() {
     setPendingOpen(null);
     setReloadOpen(false);
     setSearchOpen(false);
+    setTerminalOpen(false);
     setRevealLine(null);
     setResetToken((value) => value + 1);
   }, [id]);
@@ -98,6 +101,10 @@ export function CodePage() {
       if ((event.ctrlKey || event.metaKey) && !event.shiftKey && event.key.toLowerCase() === 's') {
         event.preventDefault();
         saveRef.current();
+      } else if ((event.ctrlKey || event.metaKey) && !event.shiftKey && event.key === '`') {
+        // Toggle the integrated terminal (Phase 5.3 spec §Component 7, IDE-5).
+        event.preventDefault();
+        setTerminalOpen((value) => !value);
       } else if ((event.ctrlKey || event.metaKey) && event.shiftKey && event.key.toLowerCase() === 'f') {
         event.preventDefault();
         setSearchOpen(true);
@@ -236,6 +243,16 @@ export function CodePage() {
           </Link>
         </nav>
         <Button
+          data-testid="code-terminal-toggle"
+          aria-pressed={terminalOpen}
+          aria-controls="code-terminal-panel"
+          title="Terminal (Ctrl+`)"
+          className={terminalOpen ? 'border-accent/40 bg-accent-soft text-accent-soft-foreground' : ''}
+          onClick={() => setTerminalOpen((value) => !value)}
+        >
+          Terminal
+        </Button>
+        <Button
           id="code-search-toggle"
           data-testid="code-search-toggle"
           aria-pressed={searchOpen}
@@ -324,6 +341,9 @@ export function CodePage() {
         </section>
         <SearchPanel projectId={id} open={searchOpen} onClose={() => setSearchOpen(false)} onOpenMatch={openMatch} />
       </div>
+      {terminalOpen && project ? (
+        <TerminalPanel defaultCwd={project.repoPath} onClose={() => setTerminalOpen(false)} />
+      ) : null}
       <Dialog open={pendingOpen !== null} title="Discard unsaved changes?" onClose={() => setPendingOpen(null)}>
         <p className="text-sm text-muted">
           <span className="font-mono">{file?.path}</span> has unsaved changes. Opening another file discards them.
