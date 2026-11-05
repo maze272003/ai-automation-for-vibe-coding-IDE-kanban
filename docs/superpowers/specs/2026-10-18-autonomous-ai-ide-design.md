@@ -178,7 +178,7 @@ Every feature is missing, since the project is greenfield. Priorities follow §2
 | Next.js | **Vite 8 + React + TanStack Router** [R] | Under static export, Next.js server features don't work [V]. Tauri itself recommends Vite for single-page apps [V]. |
 | Prisma or Drizzle | **Drizzle 0.45 + better-sqlite3 13** [R] | Prisma 7 migrations still need a downloaded native schema-engine binary, and Prisma 8 marks SQLite as experimental [V/I]. Drizzle can run migrations from code at startup [V]. |
 | SQLite queue vs Redis/BullMQ | **A hand-written SQLite jobs table** [R] | No mature SQLite queue library exists [V]. Redis has no native Windows build and has had licence churn [V]. |
-| SSE vs WebSocket | **SSE** for the activity stream; WebSocket only for the P2 terminal [R] | The stream is one-directional, and SSE gives automatic reconnect plus `Last-Event-ID` replay [I]. |
+| SSE vs WebSocket | **SSE** for the activity stream; terminal I/O over guarded IPC (plan deviation 2) [R] | The stream is one-directional, and SSE gives automatic reconnect plus `Last-Event-ID` replay [I]. |
 | OpenCode CLI or SDK | **A private `serve --stdio` server driven through its HTTP API with `@opencode/client`** [R] | It offers clean interrupts, permission replies, parallel sessions, and messages that can be re-read to reconcile state [V]. See §6.13 for alternatives. |
 | (not in proposal) | **Model gateway** [R] | It is the only enforcement point that guarantees "never silently pay" and "keys never reach agents". |
 | (not in proposal) | **`aiide-helper.exe` (Go)** [R] | Starts processes inside a Job Object without a race, kills whole process trees, and acts as the git credential helper. Go needs no MSVC. |
@@ -2450,7 +2450,7 @@ These follow the standard DoD in §30.1.
 
 **IDE-1…IDE-7** (P2): file explorer, Monaco editor (the user's checkout only; agent worktrees are read-only in the UI), search across files (ripgrep-like, implemented in Node), branch and commit history, integrated terminal, keyboard shortcuts and themes, advanced diagnostics and log viewer.
 - **Common acceptance criteria:** keyboard accessible; no agent can reach these capabilities.
-- **Terminal specifics:** WebSocket opened only from the renderer with the launch token; working directory chosen by the user; the session ends when the window closes.
+- **Terminal specifics:** Terminal I/O flows over guarded `aik:terminal-*` IPC with the PTY hosted in desktop main (plan deviation 2: the launch token never reaches the renderer, so a renderer-side WebSocket handshake is not possible without undoing that invariant); working directory chosen by the user; the session ends when the window closes.
 - **Security:** the terminal runs with the user's full rights by design and is clearly labelled.
 
 **ADV-1…ADV-8** (P3):
