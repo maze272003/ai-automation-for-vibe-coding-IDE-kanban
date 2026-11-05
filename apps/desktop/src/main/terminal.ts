@@ -2,7 +2,9 @@
 // Electron-free on purpose: only node builtins and node-pty, so unit tests import this
 // module directly. Owns capped ConPTY sessions: output is coalesced per session and
 // flushed over `send`, every kill is belt-and-braces (pty.kill + taskkill /T /F, spec
-// T-9) and owner lifetime hooks (T-10) close the hard-reload / renderer-crash leak.
+// T-9) and owner lifetime hooks (T-10) close the hard-reload / renderer-crash leak —
+// SPA pushState navigations are exempt via `isSameDocument`, and `open` never spawns
+// after killAll() or for an already-destroyed owner.
 // Never logs: terminal bytes must not be printed or persisted.
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
@@ -42,6 +44,8 @@ export interface OwnerLike {
   readonly id: number;
   on(event: string, listener: () => void): unknown;
   removeListener(event: string, listener: () => void): unknown;
+  /** True once the real webContents is gone; test fakes may omit it. */
+  isDestroyed?(): boolean;
 }
 
 export interface TerminalManagerDeps {
@@ -67,6 +71,14 @@ interface TerminalSession {
 /** Owner events that mean "this renderer is going away" (spec T-10). */
 const OWNER_LIFETIME_EVENTS = ['did-start-navigation', 'render-process-gone', 'destroyed'] as const;
 
+/** The slice of Electron's did-start-navigation details the manager reads. */
+interface NavigationDetails {
+  isSameDocument?: boolean;
+}
+
+/** Owner-lifetime listener shape: did-start-navigation passes details, the others pass nothing. */
+type OwnerListener = (details?: NavigationDetails) => void;
+
 /** Default killTree (spec T-9): synchronous tree kill on win32, errors swallowed, no-op elsewhere. */
 function defaultKillTree(pid: number): void {
   if (process.platform !== 'win32') return;
@@ -82,6 +94,8 @@ export class TerminalManager {
   /** Unsubscribe callbacks for the lifetime hooks, keyed by owner id. */
   private readonly ownerHooks = new Map<number, Array<() => void>>();
   private nextId = 1;
+  /** Set by killAll(): once teardown began, open() must never spawn again. */
+  private disposed = false;
   private readonly createPty: PtyFactory;
   private readonly schedule: (cb: () => void) => void;
   private readonly killTree: (pid: number) => void;
@@ -104,7 +118,11 @@ export class TerminalManager {
     } catch {
       return { ok: false, reason: 'INVALID_CWD' };
     }
-    // The stat above awaited, so a concurrent open may have taken the last slot meanwhile.
+    // The stat above awaited, so teardown may have raced us: never spawn into a manager
+    // that is shutting down, nor for an owner whose renderer is already destroyed.
+    if (this.disposed) return { ok: false, reason: 'SPAWN_FAILED', message: 'terminal manager is shutting down' };
+    if (owner.isDestroyed?.()) return { ok: false, reason: 'SPAWN_FAILED', message: 'terminal owner is destroyed' };
+    // A concurrent open may also have taken the last session slot meanwhile.
     if (this.sessions.size >= TERMINAL_MAX_SESSIONS) return { ok: false, reason: 'TOO_MANY_SESSIONS' };
     let pty: PtyLike;
     try {
@@ -129,8 +147,12 @@ export class TerminalManager {
       const live = this.sessions.get(id);
       if (!live) return; // closed/killed earlier — node-pty's delayed exit event is a no-op
       this.flush(id); // deliver the output tail before the exit event
-      this.sessions.delete(id);
-      this.send('aik:terminal-exit', { id, exitCode });
+      this.sessions.delete(id); // first, so the session dies even if the exit send throws
+      try {
+        this.send('aik:terminal-exit', { id, exitCode });
+      } catch {
+        // a throwing send must never propagate into node-pty's exit callback
+      }
       this.dropOwnerHooksIfIdle(live.ownerId);
     });
     this.ensureOwnerHooks(owner);
@@ -170,8 +192,9 @@ export class TerminalManager {
     return true;
   }
 
-  /** Kills every session synchronously and drops all owner hooks. Sends nothing. Idempotent. */
+  /** Kills every session synchronously, drops all owner hooks and refuses later opens. Sends nothing. Idempotent. */
   killAll(): void {
+    this.disposed = true; // any open still awaiting its stat must refuse to spawn afterwards
     for (const session of [...this.sessions.values()]) this.killSession(session);
     for (const offs of [...this.ownerHooks.values()]) {
       for (const off of offs) off();
@@ -187,8 +210,13 @@ export class TerminalManager {
   private flush(id: number): void {
     const session = this.sessions.get(id);
     if (!session || session.buffer === '') return; // dropped session or already-drained buffer
-    this.send('aik:terminal-data', { id, data: session.buffer });
-    session.buffer = '';
+    const data = session.buffer;
+    session.buffer = ''; // drain first: a throwing send must not grow or re-send the buffer
+    try {
+      this.send('aik:terminal-data', { id, data });
+    } catch {
+      // a throwing send must never propagate into the pty/scheduler callbacks
+    }
   }
 
   private killSession(session: TerminalSession): void {
@@ -215,7 +243,17 @@ export class TerminalManager {
   private ensureOwnerHooks(owner: OwnerLike): void {
     if (this.ownerHooks.has(owner.id)) return; // one subscription set per distinct owner
     const offs = OWNER_LIFETIME_EVENTS.map((event) => {
-      const listener = (): void => this.killSessionsOfOwner(owner.id);
+      // did-start-navigation also fires for History-API (SPA) route changes; those carry
+      // isSameDocument:true and must NOT kill live sessions. Real document navigations
+      // (hard reload, link) carry isSameDocument:false → kill. A bare emit with no
+      // details is treated as a real navigation (leak-safe default; Electron always
+      // passes details for this event). The other two events are unconditional kills.
+      const listener: OwnerListener =
+        event === 'did-start-navigation'
+          ? (details) => {
+              if (details?.isSameDocument !== true) this.killSessionsOfOwner(owner.id);
+            }
+          : () => this.killSessionsOfOwner(owner.id);
       owner.on(event, listener);
       return () => owner.removeListener(event, listener);
     });

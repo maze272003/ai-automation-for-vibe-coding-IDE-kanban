@@ -63,6 +63,14 @@ class FakeOwner extends EventEmitter implements OwnerLike {
   }
 }
 
+/** Fake owner whose destruction can be toggled (the webContents.isDestroyed seam). */
+class CheckedOwner extends FakeOwner {
+  destroyed = false;
+  isDestroyed(): boolean {
+    return this.destroyed;
+  }
+}
+
 interface SpawnCall {
   file: string;
   args: string[];
@@ -135,8 +143,8 @@ describe('terminal manager', () => {
     });
     const failed = await manager.open({ cols: 80, rows: 24 }, new FakeOwner(1));
     expect(failed).toEqual({ ok: false, reason: 'SPAWN_FAILED', message: 'no ConPTY' });
-    const next = await manager.open({ cols: 80, rows: 24 }, new FakeOwner(1)); // factory no longer consulted? still throws → same shape
-    expect(next).toEqual({ ok: false, reason: 'SPAWN_FAILED', message: 'no ConPTY' });
+    const retried = await manager.open({ cols: 80, rows: 24 }, new FakeOwner(1)); // every open consults the factory — a retry fails the same way
+    expect(retried).toEqual({ ok: false, reason: 'SPAWN_FAILED', message: 'no ConPTY' });
     expect(sent).toEqual([]);
     expect(manager.sessionsInfo()).toEqual([]);
   });
@@ -257,7 +265,7 @@ describe('terminal manager', () => {
     await h.manager.open({ cols: 80, rows: 24 }, ownerA);
     await h.manager.open({ cols: 80, rows: 24 }, ownerA);
     await h.manager.open({ cols: 80, rows: 24 }, ownerB);
-    ownerA.emit('did-start-navigation'); // hard reload
+    ownerA.emit('did-start-navigation'); // bare emit, no details — treated as a real navigation → kill (leak-safe)
     expect(h.ptys[0]?.killCount).toBe(1);
     expect(h.ptys[1]?.killCount).toBe(1);
     expect(h.ptys[2]?.killCount).toBe(0); // the other owner is untouched
@@ -272,6 +280,81 @@ describe('terminal manager', () => {
     ownerB.emit('destroyed');
     expect(h.ptys[2]?.killCount).toBe(1);
     expect(h.manager.sessionsInfo()).toEqual([]);
+  });
+
+  test('did-start-navigation with isSameDocument:true (SPA route change) spares the session and the buffer keeps flowing', async () => {
+    const h = makeHarness();
+    const owner = new FakeOwner(1);
+    await h.manager.open({ cols: 80, rows: 24 }, owner);
+    owner.emit('did-start-navigation', { isSameDocument: true }); // TanStack pushState
+    expect(h.ptys[0]?.killCount).toBe(0); // the live session survives in-app navigation
+    expect(h.manager.sessionsInfo()).toEqual([{ id: 1, pid: h.ptys[0]?.pid }]);
+    h.ptys[0]!.emitData('still alive');
+    h.drain();
+    expect(h.sent).toEqual([{ channel: 'aik:terminal-data', payload: { id: 1, data: 'still alive' } }]);
+    owner.emit('render-process-gone'); // the other lifetime events stay unconditional
+    expect(h.ptys[0]?.killCount).toBe(1);
+    expect(h.manager.sessionsInfo()).toEqual([]);
+  });
+
+  test('did-start-navigation kills only on real navigations: isSameDocument:false, or a bare emit (no details)', async () => {
+    const h = makeHarness();
+    const owner = new FakeOwner(1);
+    await h.manager.open({ cols: 80, rows: 24 }, owner);
+    owner.emit('did-start-navigation', { isSameDocument: false }); // hard reload
+    expect(h.ptys[0]?.killCount).toBe(1);
+    expect(h.manager.sessionsInfo()).toEqual([]);
+    const reopened = await h.manager.open({ cols: 80, rows: 24 }, owner); // hooks re-armed
+    expect(reopened.ok).toBe(true);
+    owner.emit('did-start-navigation'); // missing details → real navigation → kill (leak-safe)
+    expect(h.ptys[1]?.killCount).toBe(1);
+    expect(h.manager.sessionsInfo()).toEqual([]);
+  });
+
+  test('killAll() racing open() during the stat await refuses the spawn: no session, no pty', async () => {
+    const h = makeHarness();
+    const opening = h.manager.open({ cols: 80, rows: 24 }, new FakeOwner(1));
+    h.manager.killAll(); // runs while open is still awaiting fs.stat
+    expect(await opening).toEqual({ ok: false, reason: 'SPAWN_FAILED', message: 'terminal manager is shutting down' });
+    expect(h.spawnCalls).toEqual([]);
+    expect(h.manager.sessionsInfo()).toEqual([]);
+    const later = await h.manager.open({ cols: 80, rows: 24 }, new FakeOwner(2)); // disposed is sticky
+    expect(later).toEqual({ ok: false, reason: 'SPAWN_FAILED', message: 'terminal manager is shutting down' });
+  });
+
+  test('open() refuses to spawn for an owner that reports isDestroyed after the stat await', async () => {
+    const h = makeHarness();
+    const dead = new CheckedOwner(1);
+    dead.destroyed = true;
+    expect(await h.manager.open({ cols: 80, rows: 24 }, dead)).toEqual({
+      ok: false,
+      reason: 'SPAWN_FAILED',
+      message: 'terminal owner is destroyed',
+    });
+    expect(h.spawnCalls).toEqual([]); // no pty was created for the dead owner
+    const alive = new CheckedOwner(2); // explicit isDestroyed():false (fakes omitting it are covered by every other test)
+    expect((await h.manager.open({ cols: 80, rows: 24 }, alive)).ok).toBe(true);
+    expect(h.spawnCalls.length).toBe(1);
+  });
+
+  test('a throwing send never propagates: flush and exit sends are swallowed and the session still dies', async () => {
+    const queue: Array<() => void> = [];
+    const pty = new FakePty(7777);
+    const manager = new TerminalManager({
+      createPty: () => pty,
+      schedule: (cb) => queue.push(cb),
+      killTree: () => {},
+      send: () => {
+        throw new Error('webContents.send is gone'); // e.g. the window died mid-flight
+      },
+    });
+    expect((await manager.open({ cols: 80, rows: 24 }, new FakeOwner(1))).ok).toBe(true);
+    pty.emitData('chunk');
+    expect(() => {
+      while (queue.length > 0) queue.shift()?.();
+    }).not.toThrow(); // flush's send throws → swallowed, nothing escapes into the scheduler
+    expect(() => pty.emitExit(0)).not.toThrow(); // exit's send throws → swallowed inside node-pty's callback
+    expect(manager.sessionsInfo()).toEqual([]); // the session was still deleted after exit
   });
 
   test('owner hooks are unsubscribed after killAll (no listener leak)', async () => {
