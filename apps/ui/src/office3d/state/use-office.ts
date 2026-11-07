@@ -24,7 +24,10 @@ export function useOffice(): { state: OfficeState; now: number; ready: boolean; 
     try {
       const rooms = await api.get<OfficeRoomDTO[]>('/office/rooms?include=archived');
       feed({ type: 'rooms', rooms });
-      if (alive.current) setError(null);
+      if (alive.current) {
+        setError(null);
+        setReady(true);
+      }
       return true;
     } catch (e) {
       if (alive.current) setError(e instanceof Error ? e.message : String(e));

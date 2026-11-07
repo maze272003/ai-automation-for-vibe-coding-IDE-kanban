@@ -1,3 +1,4 @@
+import type { OfficeState } from '../state/model.ts';
 import type { StationView } from '../state/selectors.ts';
 
 export type StationTarget =
@@ -15,4 +16,11 @@ export function stationTarget(view: StationView, _projectId: number): StationTar
 /** The board has no BLOCKED filter today, so the PM desk simply opens the board. */
 export function pmTarget(_pm: unknown, _projectId: number): { kind: 'board' } {
   return { kind: 'board' };
+}
+
+/** Every live run in the room (not layout-capped seats). */
+export function activeAgentCount(state: OfficeState, roomId: number): number {
+  let n = 0;
+  for (const r of state.runs.values()) if (r.roomId === roomId) n++;
+  return n;
 }
