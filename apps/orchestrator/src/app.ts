@@ -163,6 +163,8 @@ export async function startOrchestrator(opts: OrchestratorOptions): Promise<Runn
     // created at startup above, so the synchronous append always has a target.
     purgeLog: (line) => fs.appendFileSync(path.join(paths.logs, 'audit-purge.log'), `${line}\n`),
   });
+  // Startup: make every project have a room and archive rooms whose project is gone.
+  rooms.reconcile();
   // Provider stack (spec PK-1..PK-4), gated on the per-run gateway token: managed mode only.
   // Ordering matters — the vault feeds the service, the service feeds the routes, the
   // default-model lookup feeds the runtime, and the gateway is started once ports are bound.

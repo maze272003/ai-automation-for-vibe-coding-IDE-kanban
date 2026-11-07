@@ -113,8 +113,8 @@ export class ProjectService {
         throw new ApiHttpError(500, 'PROJECT_PURGE_FAILED', `Could not remove app-generated worktrees: ${detail}`, { retryable: true });
       }
     }
-    this.deps.rooms?.onProjectDeleted(id);
     const result = purgeProjectData(this.db, id);
+    this.deps.rooms?.onProjectDeleted(id);
     this.deps.purgeLog?.(
       `${new Date(this.now()).toISOString()} purge project=${project.key} id=${id} stories=${result.stories} worktrees=${discardedWorktrees.length} ok=true`,
     );

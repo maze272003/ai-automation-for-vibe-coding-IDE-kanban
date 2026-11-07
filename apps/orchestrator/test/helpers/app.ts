@@ -26,7 +26,7 @@ const TOKEN = 'k'.repeat(43);
 const PORT = 41236;
 
 export async function buildTestApp(
-  options?: { merger?: LocalMerger; fakeBusy?: (projectId: number) => string | null; worktrees?: string },
+  options?: { merger?: LocalMerger; fakeBusy?: (projectId: number) => string | null; worktrees?: string; beforeStart?: (db: ReturnType<typeof createTestDb>['db']) => void },
 ) {
   const t = createTestDb();
   const now = () => 1_700_000_000_000;
@@ -43,6 +43,9 @@ export async function buildTestApp(
     worktreePurge: (input) => worktreeManager.purgeForProject(input),
     purgeLog: (line) => purgeLines.push(line),
   });
+  // Mirrors app.ts startup: seed hook stands in for pre-existing rows, then reconcile.
+  options?.beforeStart?.(t.db);
+  rooms.reconcile();
   const stories = new StoryService({ db: t.db, workflow, bus, now, merger: options?.merger });
   const busy = options?.fakeBusy ?? ((projectId: number) => projectBusyReason(t.db, projectId));
   const gitView = new GitViewService({ db: t.db, projects, busy });

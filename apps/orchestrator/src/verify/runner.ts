@@ -9,7 +9,7 @@ import { appendOutbox } from '../events/outbox.ts';
 import { git } from '../git/git.ts';
 import type { WorktreeManager } from '../git/worktree.ts';
 import { runCheckCommand, type CommandStatus, type SpawnedCheckProcess } from '../checks/run.ts';
-import { runVulnerabilityScan } from '../security/vulnerability.ts';
+import { detectLockfilesChanged, runVulnerabilityScan } from '../security/vulnerability.ts';
 import { describeHits, scanWorktree } from '../secrets/scan.ts';
 import { systemClock, type Clock } from '../time.ts';
 import type { RunInterruptRegistry } from '../agents/interrupts.ts';
@@ -444,9 +444,9 @@ export class VerificationRunner {
     verificationRunId: number,
     settings: ProjectSettings,
     worktreePath: string,
-    baseSha?: string | null,
-    candidateSha?: string | null,
-    ids: { storyKey: string; projectKey: string } = { storyKey: '', projectKey: '' },
+    baseSha: string | null | undefined,
+    candidateSha: string | null | undefined,
+    ids: { storyKey: string; projectKey: string },
   ): Promise<boolean> {
     let allMandatoryPassed = true;
     const emit = (
@@ -513,7 +513,10 @@ export class VerificationRunner {
 
       // Vulnerability scanning (REL-3) runs when dependency lockfiles change
       if (settings.vulnerabilityScan?.enabled) {
-        emit('check.started', 'vulnerabilities');
+        // Announce only when the scan will really execute (lockfiles changed), so every started
+        // event is matched by a finished event.
+        const vulnWillRun = detectLockfilesChanged(worktreePath, baseSha, candidateSha).length > 0;
+        if (vulnWillRun) emit('check.started', 'vulnerabilities');
         const vulnStarted = new Date(this.now());
         const vulnResult = await runVulnerabilityScan({
           cwd: worktreePath,
@@ -547,7 +550,7 @@ export class VerificationRunner {
               endedAt: new Date(this.now()),
             })
             .run();
-          emit('check.finished', 'vulnerabilities', { status });
+          if (vulnWillRun) emit('check.finished', 'vulnerabilities', { status });
         }
       }
 

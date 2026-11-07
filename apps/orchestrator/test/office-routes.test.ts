@@ -1,9 +1,12 @@
 // apps/orchestrator/test/office-routes.test.ts
 import { OfficeSnapshot } from '@aik/contracts';
-import { agentRuns } from '@aik/db';
+import { agentRuns, projects } from '@aik/db';
+import { eq } from 'drizzle-orm';
 import { describe, expect, it } from 'vitest';
 import { buildTestApp } from './helpers/app.ts';
-import { seedStory } from './helpers/db.ts';
+import { seedProject, seedStory } from './helpers/db.ts';
+import { ProjectService } from '../src/projects/service.ts';
+import { createTestDb } from './helpers/db.ts';
 import { makeTempRepo } from './helpers/temp.ts';
 
 const json = (r: { body: string }) => JSON.parse(r.body);
@@ -68,5 +71,22 @@ describe('/office routes', () => {
     expect(res.statusCode).toBe(200);
     const snap = OfficeSnapshot.parse(json(res));
     expect(snap.rooms).toHaveLength(1);
+  });
+
+  it('startup reconcile gives a pre-seeded project a room', async () => {
+    const { inject } = await buildTestApp({ beforeStart: (db) => void seedProject(db, { key: 'PRE', name: 'Pre' }) });
+    const rooms = json(await inject('GET', '/office/rooms'));
+    expect(rooms).toHaveLength(1);
+    expect(rooms[0]).toMatchObject({ projectKey: 'PRE', state: 'active' });
+  });
+
+  it('room is archived only after the data purge succeeded', async () => {
+    const t = createTestDb();
+    const p = seedProject(t.db);
+    let projectGoneAtHook: boolean | null = null;
+    const rooms = { onProjectDeleted: () => { projectGoneAtHook = t.db.select().from(projects).where(eq(projects.id, p.id)).get() === undefined; } };
+    const svc = new ProjectService({ db: t.db, rooms: rooms as never });
+    await svc.delete(p.id);
+    expect(projectGoneAtHook).toBe(true);
   });
 });
