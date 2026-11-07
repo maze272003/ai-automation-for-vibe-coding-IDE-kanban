@@ -357,13 +357,23 @@ export function SettingsPage() {
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [office3d, setOffice3d] = useState<OfficePreferences>(DEFAULT_OFFICE_PREFERENCES);
   const [compactOpen, setCompactOpen] = useState(false);
+  const [office3dError, setOffice3dError] = useState<string | null>(null);
   const settingsRef = useRef<AppSettings | null>(null);
   const prefsRef = useRef<OfficePreferences>(DEFAULT_OFFICE_PREFERENCES);
   const persistTimer = useRef<number | null>(null);
   /** Writes the latest 3D office prefs; sliders and colour pickers call this debounced so a drag is one write. */
   const persistOffice3d = () => {
     persistTimer.current = null;
-    void window.api.setAppSettings({ ...settingsRef.current, office3d: prefsRef.current } as AppSettings).then((saved) => setSettings(saved), () => undefined);
+    const loaded = settingsRef.current;
+    // The inputs stay disabled until settings load; never write a partial settings object.
+    if (!loaded) return;
+    void window.api.setAppSettings({ ...loaded, office3d: prefsRef.current }).then(
+      (saved) => {
+        setSettings(saved);
+        setOffice3dError(null);
+      },
+      (e: unknown) => setOffice3dError(`Could not save 3D office settings: ${e instanceof Error ? e.message : String(e)}`),
+    );
   };
   const persistRef = useRef(persistOffice3d);
   persistRef.current = persistOffice3d;
@@ -477,7 +487,12 @@ export function SettingsPage() {
           <Card data-testid="settings-office3d" className="p-4">
             <h2 className="text-sm font-semibold text-foreground">3D office</h2>
             <p className="mt-1 text-xs text-muted">Controls for the 3D office view: navigation, graphics and how stations are shown.</p>
-            <div className="mt-3 flex flex-col gap-3">
+            <fieldset
+              data-testid="office3d-prefs"
+              disabled={settings === null}
+              aria-busy={settings === null}
+              className="mt-3 flex min-w-0 flex-col gap-3 disabled:opacity-60"
+            >
               <RadioRow name="office3d-view" label="Default view" testid="office3d-default-view" options={VIEW_OPTIONS} value={office3d.defaultView} onChange={(v) => changeOffice3d({ defaultView: v })} />
               <CheckRow label="Enable walk mode" testid="office3d-walk" checked={office3d.walkEnabled} onChange={(v) => changeOffice3d({ walkEnabled: v })} />
               <RangeRow label="Mouse sensitivity" testid="office3d-sensitivity" min={0.2} max={3} step={0.1} value={office3d.mouseSensitivity} onChange={(v) => changeOffice3d({ mouseSensitivity: v }, true)} />
@@ -514,11 +529,16 @@ export function SettingsPage() {
                   </Button>
                 </div>
               </fieldset>
-              <div>
-                <Button variant="secondary" size="sm" data-testid="office3d-compact" onClick={() => setCompactOpen(true)}>
-                  Compact layout
-                </Button>
-              </div>
+            </fieldset>
+            {office3dError && (
+              <p role="alert" className="mt-2 text-sm text-danger-foreground" data-testid="office3d-error">
+                {office3dError}
+              </p>
+            )}
+            <div className="mt-3">
+              <Button variant="secondary" size="sm" data-testid="office3d-compact" onClick={() => setCompactOpen(true)}>
+                Compact layout
+              </Button>
             </div>
             <ConfirmAction
               open={compactOpen}
