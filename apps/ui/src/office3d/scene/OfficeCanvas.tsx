@@ -1,12 +1,12 @@
 import type { OfficePreferences, StationRole } from '@aik/contracts';
 import { Canvas, useThree } from '@react-three/fiber';
-import { Component, useEffect, useMemo, useRef, type ReactNode } from 'react';
+import { Component, useCallback, useEffect, useMemo, useRef, type ReactNode } from 'react';
 import { dataSignature } from '../screens/data.ts';
 import type { FigureState } from '../state/figures.ts';
 import type { OfficeState } from '../state/model.ts';
 import { Agents } from './Agents.tsx';
-import { BasicCamera } from './BasicCamera.tsx';
 import { Building, type OpsTile } from './Building.tsx';
+import { Navigation } from './camera/Navigation.tsx';
 import { sceneModel, stateColor, type SuiteModel } from './derive.ts';
 import { hubPlacements, hubStructure } from './hub.ts';
 import { Lighting } from './Lighting.tsx';
@@ -26,6 +26,11 @@ export type OfficeCanvasProps = {
   selectedRoomId: number | null;
   onSelectRoom(id: number | null): void;
   onStationClick(roomId: number, role: StationRole): void;
+  /** First-person walk mode (spec 6.6); the route owns the toggle (V) and exit (Esc). */
+  walking?: boolean;
+  /** Changes on "back to overview" (Esc) so the overview is re-framed even with no room selected. */
+  resetToken?: number;
+  onExitWalk?(): void;
   children?: ReactNode;
 };
 
@@ -74,6 +79,13 @@ class CanvasErrorBoundary extends Component<{ children: ReactNode }, { failed: b
   }
 }
 
+/** A callback with a stable identity that always calls the latest `fn`. */
+function useStableCallback(fn: (() => void) | undefined): () => void {
+  const ref = useRef(fn);
+  ref.current = fn;
+  return useCallback(() => ref.current?.(), []);
+}
+
 /** Keeps object identity for suites whose data did not change, so memoised children skip re-rendering. */
 function useStableSuites(suites: SuiteModel[]): SuiteModel[] {
   const cache = useRef(new Map<number, { sig: string; model: SuiteModel }>());
@@ -90,7 +102,7 @@ function useStableSuites(suites: SuiteModel[]): SuiteModel[] {
   return last.current;
 }
 
-export function OfficeCanvas({ state, now, prefs, selectedRoomId, onSelectRoom, onStationClick, children }: OfficeCanvasProps) {
+export function OfficeCanvas({ state, now, prefs, selectedRoomId, onSelectRoom, onStationClick, walking = false, resetToken = 0, onExitWalk, children }: OfficeCanvasProps) {
   const q = qualitySettings(prefs.quality);
   const low = prefs.quality === 'low';
   const scene = useMemo(() => sceneModel(state, now, prefs), [state, now, prefs]);
@@ -129,10 +141,10 @@ export function OfficeCanvas({ state, now, prefs, selectedRoomId, onSelectRoom, 
     () => suites.filter((s) => s.dim !== 'archived').map((s) => ({ key: s.projectKey, color: stateColor(s.aggregate, prefs.statusColors) })),
     [suites, prefs.statusColors],
   );
-  const selected = suites.find((s) => s.roomId === selectedRoomId) ?? null;
-  const focus = selected
-    ? { x0: Math.min(selected.suite.dev.x0, selected.suite.lab.x0), z0: Math.min(selected.suite.dev.z0, selected.suite.lab.z0), x1: Math.max(selected.suite.dev.x1, selected.suite.lab.x1), z1: Math.max(selected.suite.dev.z1, selected.suite.lab.z1) }
-    : null;
+  // Navigation sees only the visible suites (camera targets and the walk-mode collision follow what is drawn).
+  const navBuilding = useMemo(() => ({ ...building, suites: suites.map((m) => m.suite) }), [building, suites]);
+  const navLayouts = useMemo(() => new Map(suites.map((m) => [m.roomId, m.layout])), [suites]);
+  const exitWalk = useStableCallback(onExitWalk);
 
   return (
     <CanvasErrorBoundary>
@@ -156,7 +168,15 @@ export function OfficeCanvas({ state, now, prefs, selectedRoomId, onSelectRoom, 
         ))}
         <Whiteboards suites={suites} state={state} />
         <Agents state={state} now={now} suites={suites} prefs={prefs} selectedRoomId={selectedRoomId} figures={figures} onStationClick={onStationClick} />
-        <BasicCamera bounds={building.bounds} focus={focus} />
+        <Navigation
+          building={navBuilding}
+          layouts={navLayouts}
+          prefs={prefs}
+          selectedRoomId={selectedRoomId}
+          walking={walking}
+          resetToken={resetToken}
+          onExitWalk={exitWalk}
+        />
         {children}
       </Canvas>
     </CanvasErrorBoundary>

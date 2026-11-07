@@ -32,6 +32,44 @@ test('every imported project gets its own room in the office', async () => {
   await app.close();
 });
 
+test('office navigation: fly to a room, keys from the registry, last room remembered', async () => {
+  const { app, page } = await launchApp(makeTempDir());
+  const errors: string[] = [];
+  page.on('console', (m) => {
+    if (m.type() === 'error' || m.text().includes('Refused to')) errors.push(m.text());
+  });
+  page.on('pageerror', (e) => errors.push(e.message));
+  await waitReady(page);
+  const ids = await createProjects(page);
+  await page.getByRole('link', { name: 'Office' }).click();
+  const canvas = page.getByTestId('office-canvas').locator('canvas');
+  await expect(canvas).toBeVisible();
+  // Fly to a room from the quick-jump list; the selection is saved as lastRoomId after the 1 s debounce.
+  await page.getByTestId('office-room-BETA').getByRole('button').first().click();
+  await expect
+    .poll(async () => page.evaluate(async () => (await window.api.getAppSettings()).office3d?.lastRoomId ?? null), { timeout: 5_000 })
+    .not.toBeNull();
+  const rooms = await apiCall<Array<{ id: number; projectId: number | null }>>(page, 'GET', '/office/rooms');
+  const beta = rooms.body.find((r) => r.projectId === ids.BETA);
+  expect(beta).toBeDefined();
+  expect(await page.evaluate(async () => (await window.api.getAppSettings()).office3d?.lastRoomId)).toBe(beta!.id);
+  // Esc back to the overview, V into walk mode (WASD), Esc / V out again; '/' focuses the room search.
+  await page.keyboard.press('Escape');
+  await page.keyboard.press('v');
+  await page.keyboard.down('w');
+  await page.waitForTimeout(300);
+  await page.keyboard.up('w');
+  await page.keyboard.press('v');
+  await page.keyboard.press('/');
+  await expect(page.getByLabel('Search rooms')).toBeFocused();
+  // Typing 'v' in the search field types, it does not toggle walk mode.
+  await page.keyboard.type('v');
+  await expect(page.getByLabel('Search rooms')).toHaveValue('v');
+  await expect(canvas).toBeVisible();
+  expect(errors).toEqual([]);
+  await app.close();
+});
+
 test('deleting a project moves its room to Archived', async () => {
   const { app, page } = await launchApp(makeTempDir());
   await waitReady(page);

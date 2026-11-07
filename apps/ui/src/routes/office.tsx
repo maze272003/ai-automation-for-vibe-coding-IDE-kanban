@@ -1,5 +1,7 @@
 import { DEFAULT_OFFICE_PREFERENCES, type OfficePreferences } from '@aik/contracts';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { isModalOpen } from '../lib/shortcuts.ts';
+import { officeKeyAction } from '../office3d/scene/camera/keys.ts';
 import { TopBar } from '../components/shell/top-bar.tsx';
 import { RoomEditor } from '../office3d/editor/RoomEditor.tsx';
 import { OfficeCanvas } from '../office3d/scene/OfficeCanvas.tsx';
@@ -14,6 +16,9 @@ export function OfficePage() {
   const [editRoomId, setEditRoomId] = useState<number | null>(null);
   const editRoom = editRoomId === null ? null : (state.rooms.get(editRoomId) ?? null);
   const [prefs, setPrefs] = useState<OfficePreferences>(DEFAULT_OFFICE_PREFERENCES);
+  const [prefsLoaded, setPrefsLoaded] = useState(false);
+  const [walking, setWalking] = useState(false);
+  const [resetToken, setResetToken] = useState(0);
   const hasProjects = [...state.rooms.values()].some((r) => r.state === 'active');
   const station = useCanvasStationClick(state, now, setSelectedRoom);
 
@@ -22,15 +27,73 @@ export function OfficePage() {
     void window.api
       .getAppSettings()
       .then((s) => {
-        if (alive && s.office3d) setPrefs(s.office3d);
+        if (!alive) return;
+        if (s.office3d) setPrefs(s.office3d);
+        setPrefsLoaded(true);
       })
       .catch(() => {
         // Keep the defaults when settings cannot be read.
+        if (alive) setPrefsLoaded(true);
       });
     return () => {
       alive = false;
     };
   }, []);
+
+  // Default view on open (spec 6.7), applied once when both the preferences and the office state are in.
+  const appliedDefault = useRef(false);
+  useEffect(() => {
+    if (appliedDefault.current || !prefsLoaded || !ready) return;
+    appliedDefault.current = true;
+    if (prefs.defaultView === 'last-room' && prefs.lastRoomId !== null && state.rooms.get(prefs.lastRoomId)?.state === 'active') {
+      setSelectedRoom(prefs.lastRoomId);
+    } else if (prefs.defaultView === 'walk' && prefs.walkEnabled) setWalking(true);
+  }, [prefsLoaded, ready, prefs, state.rooms]);
+
+  // Remember the last selected room (debounced 1 s); merged into the stored office prefs.
+  const savedRoomId = useRef<number | null | undefined>(undefined);
+  useEffect(() => {
+    if (!prefsLoaded || selectedRoomId === null) return;
+    if (savedRoomId.current === undefined) savedRoomId.current = prefs.lastRoomId;
+    if (selectedRoomId === savedRoomId.current) return;
+    const timer = setTimeout(() => {
+      void window.api
+        .getAppSettings()
+        .then((settings) => {
+          const lastRoomId = selectedRoomId;
+          savedRoomId.current = lastRoomId;
+          return window.api.setAppSettings({ ...settings, office3d: { ...(settings.office3d ?? prefs), lastRoomId } });
+        })
+        .catch(() => {
+          // Best effort: the last room is a convenience.
+        });
+    }, 1000);
+    return () => clearTimeout(timer);
+  }, [selectedRoomId, prefsLoaded, prefs]);
+
+  // Office keys from the shortcuts registry: V toggles walk mode, Esc returns to the overview.
+  useEffect(() => {
+    if (!hasProjects) return;
+    const onKey = (e: KeyboardEvent) => {
+      const action = officeKeyAction(e, { walkEnabled: prefs.walkEnabled, modalOpen: isModalOpen() });
+      if (action === 'walk') {
+        e.preventDefault();
+        setWalking((w) => !w);
+      } else if (action === 'back') {
+        setWalking(false);
+        setSelectedRoom(null);
+        setResetToken((n) => n + 1);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [hasProjects, prefs.walkEnabled]);
+
+  const exitWalk = () => {
+    setWalking(false);
+    setSelectedRoom(null);
+    setResetToken((n) => n + 1);
+  };
 
   return (
     <div className="flex h-full flex-col">
@@ -52,6 +115,9 @@ export function OfficePage() {
                     selectedRoomId={selectedRoomId}
                     onSelectRoom={setSelectedRoom}
                     onStationClick={station.onStationClick}
+                    walking={walking}
+                    resetToken={resetToken}
+                    onExitWalk={exitWalk}
                   />
                   {station.popover}
                 </div>

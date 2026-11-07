@@ -5,6 +5,7 @@ import { signText } from '../screens/data.ts';
 import type { OfficeState } from '../state/model.ts';
 import { roomAggregate, stationViews, type StationView } from '../state/selectors.ts';
 import { api } from '../../lib/api.ts';
+import { isEditableTarget, isModalOpen, SHORTCUTS_BY_ID } from '../../lib/shortcuts.ts';
 import { ConfirmAction } from './ConfirmAction.tsx';
 import { RoomSettingsDialog } from './RoomSettingsDialog.tsx';
 import { StationPopover } from './StationPopover.tsx';
@@ -29,8 +30,9 @@ export function QuickJumpPanel({
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      const t = e.target as HTMLElement | null;
-      if (e.key !== '/' || t?.tagName === 'INPUT' || t?.tagName === 'TEXTAREA' || t?.isContentEditable) return;
+      // `office.search` in the shortcuts registry; never while typing or while a dialog is open. The key is
+      // compared verbatim (not with matchesShortcut) so layouts that need Shift/AltGr for '/' still work.
+      if (e.key !== SHORTCUTS_BY_ID['office.search'].chord || isEditableTarget(e.target) || isModalOpen()) return;
       e.preventDefault();
       input.current?.focus();
     };
