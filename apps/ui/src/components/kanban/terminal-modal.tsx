@@ -195,11 +195,14 @@ export function TerminalModal({
   };
 
   const handleOpenTerminal = async () => {
-    if (!sessionId) return;
+    // Main resolves the worktree and session id from the story over the orchestrator API and
+    // launches argv only (spec §6.3); the renderer never supplies them.
     try {
-      await window.api.request('POST', '/api/desktop/open-terminal', {
-        command: `opencode --session ${sessionId}`,
-      });
+      const result = await window.api.openTerminalCli(story.id);
+      if (!result.ok) {
+        toast(`Could not open the CLI session: ${result.reason}`, 'error');
+        return;
+      }
       toast('Opened session in external terminal', 'info');
     } catch {
       await handleCopyCommand();

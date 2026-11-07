@@ -4,6 +4,7 @@ import type {
   DiagnosticsExportResult,
   EventEnvelope,
   HttpMethod,
+  OpenCliResult,
   SystemState,
   TerminalDataEvent,
   TerminalExitEvent,
@@ -29,7 +30,7 @@ const api: AikWindowApi = {
   opencodeLoginWait: () => ipcRenderer.invoke('aik:opencode-login-wait'),
   getAppSettings: () => ipcRenderer.invoke('aik:app-settings'),
   setAppSettings: (settings) => ipcRenderer.invoke('aik:app-settings-set', settings),
-  openTerminalCli: (options) => ipcRenderer.invoke('aik:open-terminal-cli', options),
+  openTerminalCli: (storyId) => ipcRenderer.invoke('aik:open-terminal-cli', { storyId }) as Promise<OpenCliResult>,
   office: {
     setVisible: (visible) => ipcRenderer.send('aik:office-visible', visible),
     setBounds: (bounds) => ipcRenderer.send('aik:office-bounds', bounds),

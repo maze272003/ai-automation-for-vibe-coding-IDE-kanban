@@ -71,6 +71,15 @@ export interface TerminalOpenOptions {
   rows: number;
 }
 
+/** Where main should open a story's CLI session (spec §6.3, §5.11): resolved by the orchestrator
+ *  from the story's own rows. The renderer never supplies a folder or session id. */
+export type OpenCliTargetDTO =
+  | { runtime: 'opencode'; sessionRef: string; cwd: string }
+  | { available: false; reason: string };
+
+/** Result of `aik:open-terminal-cli` (spec §6.3): a visible console launch with argv only. */
+export type OpenCliResult = { ok: true } | { ok: false; reason: string };
+
 /** The only API the renderer can reach (exposed by the preload as `window.api`). */
 export interface AikWindowApi {
   request(method: HttpMethod, path: string, body?: unknown, idempotencyKey?: string): Promise<BridgeResponse>;
@@ -91,7 +100,9 @@ export interface AikWindowApi {
   opencodeLoginWait(): Promise<OpencodeLoginWaitResult>;
   getAppSettings(): Promise<AppSettings>;
   setAppSettings(settings: AppSettings): Promise<AppSettings>;
-  openTerminalCli(options?: { sessionId?: string; cwd?: string }): Promise<{ ok: boolean; error?: string }>;
+  /** Opens the story's OpenCode session in an external console. Main looks up the worktree and
+   *  session id from the orchestrator and spawns argv only — never a shell (spec §6.3). */
+  openTerminalCli(storyId: number): Promise<OpenCliResult>;
   office: {
     /** Tell main whether the office view should be visible (office route active + feature on). */
     setVisible(visible: boolean): void;

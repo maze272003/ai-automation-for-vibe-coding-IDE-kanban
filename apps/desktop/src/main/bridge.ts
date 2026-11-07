@@ -1,7 +1,6 @@
-import type { AppSettings, BridgeResponse, DiagnosticsExportResult, SystemState } from '@aik/contracts';
+import type { AppSettings, BridgeResponse, DiagnosticsExportResult, OpenCliResult, SystemState } from '@aik/contracts';
 import { listBackups, restoreBackup } from '@aik/db/backup';
 import { BrowserWindow, dialog, ipcMain, shell, type IpcMainInvokeEvent } from 'electron';
-import { spawn } from 'node:child_process';
 import { writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { z } from 'zod';
@@ -10,6 +9,7 @@ import { exportDiagnostics } from './diagnostics-export.ts';
 import { installOpencode, opencodeStatus } from './opencode.ts';
 import { refreshGatewayContext } from './gateway-context.ts';
 import { listOpencodeModels, opencodeChat, opencodeLoginStart, opencodeLoginWait, opencodeSignedIn, readAppSettings, writeAppSettings } from './opencode-server.ts';
+import { openTerminalCli, resolveOpenCliExe } from './open-cli.ts';
 import { stopOpencodeServer } from './opencode-server.ts';
 import type { DesktopPaths } from './paths.ts';
 import type { OrchestratorSupervisor } from './supervisor.ts';
@@ -28,6 +28,50 @@ const unavailable = (message: string): BridgeResponse => ({
   status: 503,
   body: { error: { code: 'DEPENDENCY_UNAVAILABLE', message, retryable: true } },
 });
+
+/** `dataPaths().worktrees` in the orchestrator (`config.ts`) is `<dataDir>/wt`; main shares
+ *  that data directory, so the worktrees root is computed locally, never asked of the renderer. */
+const worktreesRoot = (paths: DesktopPaths): string => path.join(paths.dataDir, 'wt');
+
+async function fetchOpenCliTarget(deps: BridgeDeps, port: number | null, storyId: number): Promise<unknown> {
+  if (port === null) return null;
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/stories/${storyId}/open-cli-target`, {
+      headers: { authorization: `Bearer ${deps.token}` },
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!res.ok) return null;
+    return (await res.json()) as unknown;
+  } catch {
+    return null;
+  }
+}
+
+/** Repo paths of every registered project (planner sessions run in the checkout); fetched from
+ *  the orchestrator lazily — never for an untrusted sender or a payload that does not validate,
+ *  and never from the renderer. */
+async function fetchProjectRepoPaths(deps: BridgeDeps, port: number | null): Promise<string[]> {
+  const repoPaths: string[] = [];
+  if (port === null) return repoPaths;
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/projects`, {
+      headers: { authorization: `Bearer ${deps.token}` },
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (res.ok) {
+      const projects = (await res.json()) as unknown;
+      if (Array.isArray(projects)) {
+        for (const project of projects) {
+          const repoPath = (project as { repoPath?: unknown }).repoPath;
+          if (typeof repoPath === 'string' && repoPath !== '') repoPaths.push(repoPath);
+        }
+      }
+    }
+  } catch {
+    // the worktrees root alone still validates story worktrees
+  }
+  return repoPaths;
+}
 
 function assertTrusted(event: IpcMainInvokeEvent, deps: BridgeDeps): void {
   const url = event.senderFrame?.url ?? '';
@@ -227,41 +271,24 @@ export function registerBridge(deps: BridgeDeps): void {
     deps.supervisor.restart();
   });
 
-  ipcMain.handle('aik:open-terminal-cli', async (event, raw: unknown) => {
-    assertTrusted(event, deps);
-    const parsed = z
-      .object({
-        sessionId: z.string().optional(),
-        cwd: z.string().optional(),
-      })
-      .optional()
-      .safeParse(raw);
-    const sessionId = parsed.success ? parsed.data?.sessionId : undefined;
-    const cwd = parsed.success && parsed.data?.cwd ? parsed.data.cwd : process.cwd();
-
+  // Spec §6.3: the renderer may only name a story. Main resolves the worktree and session id
+  // from the orchestrator over the authenticated bridge request, re-validates both, and
+  // launches argv only — no cmd.exe, no start, no sh -c. The old handler interpolated
+  // renderer-supplied values into a shell (plan Reality check 9).
+  ipcMain.handle('aik:open-terminal-cli', async (event, raw: unknown): Promise<OpenCliResult> => {
     try {
-      if (process.platform === 'win32') {
-        const args = ['/c', 'start', 'cmd.exe', '/k', 'opencode'];
-        if (sessionId) {
-          args.push('--session', sessionId);
-        }
-        spawn('cmd.exe', args, {
-          cwd,
-          detached: true,
-          stdio: 'ignore',
-          shell: true,
-        }).unref();
-      } else {
-        const cmd = sessionId ? `opencode --session ${sessionId}` : 'opencode';
-        spawn('sh', ['-c', cmd], {
-          cwd,
-          detached: true,
-          stdio: 'ignore',
-        }).unref();
-      }
-      return { ok: true };
-    } catch (e) {
-      return { ok: false, error: e instanceof Error ? e.message : String(e) };
+      const port = deps.supervisor.port;
+      return await openTerminalCli({
+        trusted: deps.isTrustedSender(event.senderFrame?.url ?? ''),
+        payload: raw,
+        exe: resolveOpenCliExe(deps.paths.dataDir),
+        allowedRoots: [worktreesRoot(deps.paths)],
+        resolveAllowedRoots: async () => [worktreesRoot(deps.paths), ...(await fetchProjectRepoPaths(deps, port))],
+        fetchTarget: (storyId) => fetchOpenCliTarget(deps, port, storyId),
+        onLaunchError: (reason) => console.error(`aik:open-terminal-cli: ${reason}`),
+      });
+    } catch {
+      return { ok: false, reason: 'unavailable' };
     }
   });
 }

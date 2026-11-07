@@ -1,12 +1,12 @@
 import {
-  STORY_STATUS, type CreateStoryRequest, type PatchStoryRequest, type PlanV1, type PullRequestDTO, type StoryDTO, type StoryListQuery, type StoryStatus, type TransitionRequest,
+  STORY_STATUS, type CreateStoryRequest, type OpenCliTargetDTO, type PatchStoryRequest, type PlanV1, type PullRequestDTO, type StoryDTO, type StoryListQuery, type StoryStatus, type TransitionRequest,
 } from '@aik/contracts';
 import {
   acceptanceCriteria, agentRuns, clarifications, durableJobs, mergeApprovals, modelProfiles, plans, projects, pullRequests, reviewAcResults, reviewFindings, reviews, storyDependencies, storyEvents, userStories,
-  verificationChecks, verificationRuns, type AikDb, type AikTx,
+  verificationChecks, verificationRuns, workspaces, type AikDb, type AikTx,
 } from '@aik/db';
 import type { WorkflowEvent } from '@aik/workflow';
-import { and, asc, desc, eq, inArray, isNull, max, sql, type SQL } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, isNotNull, isNull, max, ne, sql, type SQL } from 'drizzle-orm';
 import { execFileSync } from 'node:child_process';
 import crypto from 'node:crypto';
 import { ApiHttpError } from '../api/errors.ts';
@@ -630,6 +630,31 @@ export class StoryService {
       },
       messages,
     };
+  }
+
+  /** Open-in-CLI target (spec §6.3, §5.11): the story's latest OpenCode session ref and its
+   *  story worktree, resolved server-side so the desktop never trusts renderer-supplied paths.
+   *  Runs without an `opencode_session_id` (CLI runtimes) have nothing resumable to open. */
+  getOpenCliTarget(storyId: number): OpenCliTargetDTO {
+    const story = getStoryRow(this.db, storyId);
+    if (!story) throw new ApiHttpError(404, 'NOT_FOUND', 'Story not found');
+    const run = this.db
+      .select({ sessionRef: agentRuns.opencodeSessionId })
+      .from(agentRuns)
+      .where(and(eq(agentRuns.storyId, storyId), isNotNull(agentRuns.opencodeSessionId)))
+      .orderBy(desc(agentRuns.id))
+      .limit(1)
+      .get();
+    if (!run?.sessionRef) return { available: false, reason: 'No OpenCode session for this story' };
+    const workspace = this.db
+      .select({ cwd: workspaces.path })
+      .from(workspaces)
+      .where(and(eq(workspaces.storyId, storyId), eq(workspaces.kind, 'story'), ne(workspaces.status, 'removed')))
+      .orderBy(desc(workspaces.id))
+      .limit(1)
+      .get();
+    if (!workspace) return { available: false, reason: 'No story worktree' };
+    return { runtime: 'opencode', sessionRef: run.sessionRef, cwd: workspace.cwd };
   }
 
   getDetails(storyId: number): {
