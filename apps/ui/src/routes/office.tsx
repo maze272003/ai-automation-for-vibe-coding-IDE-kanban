@@ -1,84 +1,35 @@
-import { Link, useNavigate } from '@tanstack/react-router';
-import { useEffect, useRef, useState } from 'react';
-import type { AppSettings } from '@aik/contracts';
+import { useState } from 'react';
 import { TopBar } from '../components/shell/top-bar.tsx';
-import { isOfficeEnabled, parseOfficeLabel, toOfficeBounds } from '../lib/office.ts';
+import { useOffice } from '../office3d/state/use-office.ts';
+import { QuickJumpPanel } from '../office3d/ui/QuickJumpPanel.tsx';
 
-/**
- * The office itself renders in a main-process WebContentsView layered over this container
- * (an iframe would be mixed content under app://). This page owns: the feature off state,
- * the loading state, and reporting the container's bounds so main can position the view.
- */
+/** The 3D office shell: the canvas (Task 16) on the left, the live room list on the right. */
 export function OfficePage() {
-  const [settings, setSettings] = useState<AppSettings | null>(null);
-  const ref = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    void window.api.getAppSettings().then(setSettings, () => setSettings(null));
-  }, []);
-
-  const enabled = isOfficeEnabled(settings);
-
-  useEffect(() => {
-    if (!enabled) return;
-    const report = () => {
-      const el = ref.current;
-      if (el) window.api.office.setBounds(toOfficeBounds(el.getBoundingClientRect()));
-    };
-    report();
-    window.api.office.setVisible(true);
-    const onResize = () => report();
-    window.addEventListener('resize', onResize);
-    const el = ref.current;
-    const observer = el ? new ResizeObserver(report) : null;
-    if (el && observer) observer.observe(el);
-    return () => {
-      window.removeEventListener('resize', onResize);
-      observer?.disconnect();
-      window.api.office.setVisible(false);
-    };
-  }, [enabled]);
-
-  const navigate = useNavigate();
-  useEffect(() => {
-    if (!enabled) return;
-    return window.api.office.onAgentClick((label) => {
-      const parsed = parseOfficeLabel(label);
-      if (!parsed) return;
-      void window.api.request('GET', `/stories/key/${encodeURIComponent(parsed.storyKey)}`).then((res) => {
-        if (res.status !== 200) return;
-        const story = res.body as { id: number; projectId: number } | null;
-        if (!story || typeof story.id !== 'number' || typeof story.projectId !== 'number') return;
-        void navigate({
-          to: '/projects/$projectId',
-          params: { projectId: String(story.projectId) },
-          search: { terminal: String(story.id) },
-        });
-      });
-    });
-  }, [enabled, navigate]);
+  const { state, now, ready, error } = useOffice();
+  const [, setSelectedRoom] = useState<number | null>(null);
+  const hasProjects = [...state.rooms.values()].some((r) => r.state === 'active');
 
   return (
     <div className="flex h-full flex-col">
-      <TopBar title="Agent office" subtitle="Every running agent as a pixel-art character" />
+      <TopBar title="Office" subtitle="Every project has its own suite" />
       <div className="min-h-0 flex-1 p-4">
-        {settings === null ? (
-          <p data-testid="office-loading" className="text-sm text-muted">Loading…</p>
-        ) : enabled ? (
-          <div
-            data-testid="office-viewport"
-            ref={ref}
-            aria-label="Agent office viewport (rendered natively by the app)"
-            className="h-full w-full rounded-panel border border-glass-border bg-surface-2"
-          />
-        ) : (
-          <p data-testid="office-disabled" className="rounded-panel border border-dashed border-glass-border bg-glass/40 p-6 text-sm text-muted">
-            The agent office is turned off. Enable it in{' '}
-            <Link to="/settings" className="font-semibold text-foreground underline">
-              Settings
-            </Link>
-            .
+        {!ready ? (
+          <p data-testid="office-loading" className="text-sm text-muted">
+            {error ?? 'Loading…'}
           </p>
+        ) : (
+          <div className="flex h-full gap-4">
+            <div className="min-w-0 flex-1">
+              {hasProjects ? (
+                <div data-testid="office-canvas" className="h-full w-full rounded-panel border border-glass-border bg-surface-2" />
+              ) : (
+                <p data-testid="office-empty" className="rounded-panel border border-dashed border-glass-border bg-glass/40 p-6 text-sm text-muted">
+                  Import a project to open its office suite.
+                </p>
+              )}
+            </div>
+            <QuickJumpPanel state={state} now={now} onSelectRoom={setSelectedRoom} />
+          </div>
         )}
       </div>
     </div>

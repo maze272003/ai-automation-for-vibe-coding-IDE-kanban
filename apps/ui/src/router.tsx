@@ -2,12 +2,12 @@ import { createHashHistory, createRootRoute, createRoute, createRouter, lazyRout
 import { BoardPage } from './routes/board.tsx';
 import { DashboardPage } from './routes/dashboard.tsx';
 import { GitPage } from './routes/git-page.tsx';
-import { OfficePage } from './routes/office.tsx';
 import { RootLayout } from './routes/root.tsx';
 import { SettingsPage } from './routes/settings.tsx';
 import { UsagePage } from './routes/usage.tsx';
 
 const rootRoute = createRootRoute({ component: RootLayout });
+const OfficePage = lazyRouteComponent(() => import('./routes/office.tsx'), 'OfficePage');
 const CodePage = lazyRouteComponent(() => import('./routes/code-page.tsx'), 'CodePage');
 const dashboardRoute = createRoute({ getParentRoute: () => rootRoute, path: '/', component: DashboardPage });
 const boardRoute = createRoute({
