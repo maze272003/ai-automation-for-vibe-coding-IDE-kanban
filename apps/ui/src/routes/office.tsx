@@ -1,13 +1,31 @@
-import { useState } from 'react';
+import { DEFAULT_OFFICE_PREFERENCES, type OfficePreferences } from '@aik/contracts';
+import { useEffect, useState } from 'react';
 import { TopBar } from '../components/shell/top-bar.tsx';
+import { OfficeCanvas } from '../office3d/scene/OfficeCanvas.tsx';
 import { useOffice } from '../office3d/state/use-office.ts';
 import { QuickJumpPanel } from '../office3d/ui/QuickJumpPanel.tsx';
 
-/** The 3D office shell: the canvas (Task 16) on the left, the live room list on the right. */
+/** The 3D office: the canvas on the left, the live room list on the right. */
 export function OfficePage() {
   const { state, now, ready, error } = useOffice();
-  const [, setSelectedRoom] = useState<number | null>(null);
+  const [selectedRoomId, setSelectedRoom] = useState<number | null>(null);
+  const [prefs, setPrefs] = useState<OfficePreferences>(DEFAULT_OFFICE_PREFERENCES);
   const hasProjects = [...state.rooms.values()].some((r) => r.state === 'active');
+
+  useEffect(() => {
+    let alive = true;
+    void window.api
+      .getAppSettings()
+      .then((s) => {
+        if (alive && s.office3d) setPrefs(s.office3d);
+      })
+      .catch(() => {
+        // Keep the defaults when settings cannot be read.
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   return (
     <div className="flex h-full flex-col">
@@ -21,7 +39,17 @@ export function OfficePage() {
           <div className="flex h-full gap-4">
             <div className="min-w-0 flex-1">
               {hasProjects ? (
-                <div data-testid="office-canvas" className="h-full w-full rounded-panel border border-glass-border bg-surface-2" />
+                <div data-testid="office-canvas" className="h-full w-full overflow-hidden rounded-panel border border-glass-border bg-surface-2">
+                  <OfficeCanvas
+                    state={state}
+                    now={now}
+                    prefs={prefs}
+                    selectedRoomId={selectedRoomId}
+                    onSelectRoom={setSelectedRoom}
+                    // Task 17 opens the station popover from here; until then a station click selects its room.
+                    onStationClick={(roomId) => setSelectedRoom(roomId)}
+                  />
+                </div>
               ) : (
                 <p data-testid="office-empty" className="rounded-panel border border-dashed border-glass-border bg-glass/40 p-6 text-sm text-muted">
                   Import a project to open its office suite.

@@ -12,14 +12,21 @@ async function createProjects(page: Parameters<typeof apiCall>[0]): Promise<Reco
 
 test('every imported project gets its own room in the office', async () => {
   const { app, page } = await launchApp(makeTempDir());
+  const cspErrors: string[] = [];
+  page.on('console', (m) => {
+    if (m.text().includes('Refused to')) cspErrors.push(m.text());
+  });
   await waitReady(page);
   await createProjects(page);
   await page.getByRole('link', { name: 'Office' }).click();
+  await expect(page.getByTestId('office-canvas').locator('canvas')).toBeVisible();
   await expect(page.getByTestId('office-room-ALPHA')).toContainText('ALPHA DEVELOPMENT OFFICE');
   await expect(page.getByTestId('office-room-BETA')).toBeVisible();
   await expect(page.getByTestId('office-station-ALPHA-planner')).toContainText('idle');
   await page.getByLabel('Search rooms').fill('bet');
   await expect(page.getByTestId('office-room-ALPHA')).toBeHidden();
+  await expect(page.getByTestId('office-canvas').locator('canvas')).toBeVisible();
+  expect(cspErrors).toEqual([]);
   await app.close();
 });
 
