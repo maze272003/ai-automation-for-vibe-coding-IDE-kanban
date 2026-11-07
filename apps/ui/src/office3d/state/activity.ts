@@ -52,8 +52,10 @@ export function classifyActivity(
   if (!a) return out('tool', 'Working');
   if (a.kind === 'message') return out('writing', 'Writing');
   if (a.kind === 'subagent') return out('delegating', `Delegating to ${a.name ?? 'subagent'}`);
+  // Only a tool-start names what the agent is doing; a stray tool-end never re-bubbles.
+  if (a.kind !== 'tool-start') return out('tool', 'Working');
   const name = (a.name ?? '').toLowerCase();
-  if (name === 'thinking' && a.kind === 'tool-start') return out('thinking', 'Thinking…');
+  if (name === 'thinking') return out('thinking', 'Thinking…');
   if (READING.has(name)) return out('reading', say('Reading', a.summary));
   if (CODING.has(name)) return out('coding', say('Coding', a.summary));
   if (RUNNING.has(name)) {

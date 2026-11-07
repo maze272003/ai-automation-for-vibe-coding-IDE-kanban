@@ -68,6 +68,11 @@ describe('classifyActivity', () => {
     expect(classifyActivity(act('tool-start', 'read', 'a'), { ...ctx, idleMs: 9000 }).activity).toBe('thinking');
   });
 
+  test('a tool-end never re-bubbles', () => {
+    expect(classifyActivity(act('tool-end', 'read', 'api.ts'), ctx).bubble).not.toBe('Reading api.ts');
+    expect(classifyActivity(act('tool-end', 'Thinking'), ctx).activity).toBe('tool');
+  });
+
   test('long summaries are truncated to 40 chars including the ellipsis', () => {
     const b = classifyActivity(act('tool-start', 'read', 'x'.repeat(80)), ctx).bubble;
     expect(b).toHaveLength(40);

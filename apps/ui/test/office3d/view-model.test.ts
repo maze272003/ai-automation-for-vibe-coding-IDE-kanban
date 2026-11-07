@@ -177,11 +177,20 @@ describe('office view-model', () => {
     }), T + 5);
     expect(s.lastActivity.get(1)).toMatchObject({ kind: 'message', summary: 'hello' });
     s = at(s, ev('run.activity', { runId: 1, role: 'implementer', storyKey: 'AIK-1', projectKey: 'AIK', events: [{ kind: 'tool-end', name: 'Read' }] }), T + 6);
-    expect(s.lastActivity.get(1)).toMatchObject({ kind: 'tool-end', name: 'Read' });
+    expect(s.lastActivity.get(1)).toMatchObject({ kind: 'message', summary: 'hello', at: T + 6 });
     const only = at(s, ev('run.activity', { runId: 1, role: 'implementer', storyKey: 'AIK-1', projectKey: 'AIK', events: [{ kind: 'usage' }] }), T);
     expect(only).toBe(s);
     s = at(s, finish(1, 'implementer', 'succeeded'), T);
     expect(s.lastActivity.has(1)).toBe(false);
+  });
+
+  test('tool-end keeps the tool-start summary and only refreshes the timestamp', () => {
+    let s = at(withRoom(), start(1, 'implementer'), T);
+    const act = (events: unknown[]) => ev('run.activity', { runId: 1, role: 'implementer', storyKey: 'AIK-1', projectKey: 'AIK', events });
+    s = at(s, act([{ kind: 'tool-start', name: 'read', summary: 'api.ts' }, { kind: 'tool-end', name: 'read' }]), T + 10);
+    expect(s.lastActivity.get(1)).toMatchObject({ kind: 'tool-start', name: 'read', summary: 'api.ts', at: T + 10 });
+    s = at(s, act([{ kind: 'tool-end', name: 'read' }]), T + 20);
+    expect(s.lastActivity.get(1)).toMatchObject({ kind: 'tool-start', name: 'read', summary: 'api.ts', at: T + 20 });
   });
 
   test('archiving a room drops its figures', () => {

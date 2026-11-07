@@ -225,10 +225,13 @@ function reduceEvent(s: OfficeState, e: EventEnvelope, nowMs: number): OfficeSta
       const roomId = resolveRoom(s, d.projectKey);
       if (runId === null || roomId === null || !Array.isArray(d.events)) return s;
       let act: ActivityView | null = null;
+      let ended: ActivityView | null = null; // a tool-end only refreshes the timestamp; it never replaces what the run was doing
       for (const raw of d.events) {
         if (!isObj(raw)) continue;
         const kind = raw.kind;
-        if (kind === 'tool-start' || kind === 'tool-end') {
+        if (kind === 'tool-end') {
+          ended = { runId, kind, at: nowMs, ...(str(raw.name) !== null ? { name: str(raw.name)! } : {}) };
+        } else if (kind === 'tool-start') {
           act = { runId, kind, at: nowMs, ...(str(raw.name) !== null ? { name: str(raw.name)! } : {}), ...(str(raw.summary) !== null ? { summary: str(raw.summary)! } : {}) };
         } else if (kind === 'message') {
           const text = str(raw.text);
@@ -236,6 +239,11 @@ function reduceEvent(s: OfficeState, e: EventEnvelope, nowMs: number): OfficeSta
         } else if (kind === 'subagent') {
           act = { runId, kind, at: nowMs, ...(str(raw.name) !== null ? { name: str(raw.name)! } : {}), ...(str(raw.phase) !== null ? { summary: str(raw.phase)! } : {}) };
         }
+      }
+      if (act) act = { ...act, at: nowMs };
+      else if (ended) {
+        const prior = s.lastActivity.get(runId);
+        act = prior ? { ...prior, at: nowMs } : ended;
       }
       if (!act) return s;
       const n = clone(s);
