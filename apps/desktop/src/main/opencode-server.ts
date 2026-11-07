@@ -36,6 +36,11 @@ export function readAppSettings(dataDir: string): AppSettings {
   }
 }
 
+/** Only an OpenCode mode change needs the running server stopped; office/other preferences never do. */
+export function needsOpencodeRestart(previous: AppSettings, next: AppSettings): boolean {
+  return previous.opencodeMode !== next.opencodeMode;
+}
+
 export function writeAppSettings(dataDir: string, settings: AppSettings): AppSettings {
   const next: AppSettings = { opencodeMode: settings.opencodeMode === 'personal' ? 'personal' : 'managed', agentOffice: settings.agentOffice === true, office3d: parseOfficePreferences(settings.office3d) };
   fs.mkdirSync(dataDir, { recursive: true });

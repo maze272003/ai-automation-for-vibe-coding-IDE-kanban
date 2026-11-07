@@ -359,13 +359,29 @@ export function SettingsPage() {
   const [office3d, setOffice3d] = useState<OfficePreferences>(DEFAULT_OFFICE_PREFERENCES);
   const [compactOpen, setCompactOpen] = useState(false);
   const settingsRef = useRef<AppSettings | null>(null);
+  const prefsRef = useRef<OfficePreferences>(DEFAULT_OFFICE_PREFERENCES);
+  const persistTimer = useRef<number | null>(null);
+  /** Writes the latest 3D office prefs; sliders and colour pickers call this debounced so a drag is one write. */
+  const persistOffice3d = () => {
+    persistTimer.current = null;
+    void window.api.setAppSettings({ ...settingsRef.current, office3d: prefsRef.current } as AppSettings).then((saved) => setSettings(saved), () => undefined);
+  };
+  const persistRef = useRef(persistOffice3d);
+  persistRef.current = persistOffice3d;
+  useEffect(() => () => {
+    if (persistTimer.current !== null) {
+      window.clearTimeout(persistTimer.current);
+      persistRef.current();
+    }
+  }, []);
   settingsRef.current = settings;
   useEffect(() => {
     void api.get<Health>('/health').then(setHealth, () => setHealth(null));
     void window.api.opencodeStatus().then(setOpencode, () => setOpencode(null));
     void window.api.getAppSettings().then((s) => {
       setSettings(s);
-      setOffice3d(s.office3d ?? DEFAULT_OFFICE_PREFERENCES);
+      prefsRef.current = s.office3d ?? DEFAULT_OFFICE_PREFERENCES;
+      setOffice3d(prefsRef.current);
       setMode(s.opencodeMode);
       setOffice(s.agentOffice);
     }, () => undefined);
@@ -392,10 +408,13 @@ export function SettingsPage() {
   };
 
   /** 3D office preferences apply immediately; the saved copy comes back from the desktop main process. */
-  const changeOffice3d = (patch: Partial<OfficePreferences>) => {
-    const next = { ...office3d, ...patch };
+  const changeOffice3d = (patch: Partial<OfficePreferences>, deferred = false) => {
+    const next = { ...prefsRef.current, ...patch };
+    prefsRef.current = next;
     setOffice3d(next);
-    void window.api.setAppSettings({ ...settingsRef.current, office3d: next } as AppSettings).then((saved) => setSettings(saved), () => undefined);
+    if (persistTimer.current !== null) window.clearTimeout(persistTimer.current);
+    if (deferred) persistTimer.current = window.setTimeout(persistOffice3d, 300);
+    else persistOffice3d();
   };
 
   const install = async () => {
@@ -494,9 +513,9 @@ export function SettingsPage() {
             <div className="mt-3 flex flex-col gap-3">
               <RadioRow name="office3d-view" label="Default view" testid="office3d-default-view" options={VIEW_OPTIONS} value={office3d.defaultView} onChange={(v) => changeOffice3d({ defaultView: v })} />
               <CheckRow label="Enable walk mode" testid="office3d-walk" checked={office3d.walkEnabled} onChange={(v) => changeOffice3d({ walkEnabled: v })} />
-              <RangeRow label="Mouse sensitivity" testid="office3d-sensitivity" min={0.2} max={3} step={0.1} value={office3d.mouseSensitivity} onChange={(v) => changeOffice3d({ mouseSensitivity: v })} />
-              <RangeRow label="Walk speed" testid="office3d-walk-speed" min={0.5} max={4} step={0.1} value={office3d.walkSpeed} onChange={(v) => changeOffice3d({ walkSpeed: v })} />
-              <RangeRow label="Fly speed" testid="office3d-fly-speed" min={0.25} max={3} step={0.05} value={office3d.flySpeed} onChange={(v) => changeOffice3d({ flySpeed: v })} />
+              <RangeRow label="Mouse sensitivity" testid="office3d-sensitivity" min={0.2} max={3} step={0.1} value={office3d.mouseSensitivity} onChange={(v) => changeOffice3d({ mouseSensitivity: v }, true)} />
+              <RangeRow label="Walk speed" testid="office3d-walk-speed" min={0.5} max={4} step={0.1} value={office3d.walkSpeed} onChange={(v) => changeOffice3d({ walkSpeed: v }, true)} />
+              <RangeRow label="Fly speed" testid="office3d-fly-speed" min={0.25} max={3} step={0.05} value={office3d.flySpeed} onChange={(v) => changeOffice3d({ flySpeed: v }, true)} />
               <RadioRow name="office3d-quality" label="Graphics quality" testid="office3d-quality" options={OFFICE_QUALITY.map((q) => [q, cap(q)] as const)} value={office3d.quality} onChange={(v) => changeOffice3d({ quality: v })} />
               <RadioRow name="office3d-movement" label="Agent movement" testid="office3d-movement" options={AGENT_MOVEMENT.map((m) => [m, cap(m)] as const)} value={office3d.agentMovement} onChange={(v) => changeOffice3d({ agentMovement: v })} />
               <CheckRow label="Show archived rooms" testid="office3d-archived" checked={office3d.showArchived} onChange={(v) => changeOffice3d({ showArchived: v })} />
@@ -518,7 +537,7 @@ export function SettingsPage() {
                         data-testid={`office3d-color-${st}`}
                         aria-label={`Status colour ${st}`}
                         value={effectiveStatusColor(st, office3d)}
-                        onChange={(e) => changeOffice3d({ statusColors: { ...office3d.statusColors, [st]: e.target.value } })}
+                        onChange={(e) => changeOffice3d({ statusColors: { ...prefsRef.current.statusColors, [st]: e.target.value } }, true)}
                       />
                       {st}
                     </label>

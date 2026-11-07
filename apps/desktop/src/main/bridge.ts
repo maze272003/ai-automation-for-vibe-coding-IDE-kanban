@@ -10,7 +10,7 @@ import { installOpencode, opencodeStatus } from './opencode.ts';
 import { refreshGatewayContext } from './gateway-context.ts';
 import { listOpencodeModels, opencodeChat, opencodeLoginStart, opencodeLoginWait, opencodeSignedIn, readAppSettings, writeAppSettings } from './opencode-server.ts';
 import { openTerminalCli, resolveOpenCliExe } from './open-cli.ts';
-import { stopOpencodeServer } from './opencode-server.ts';
+import { needsOpencodeRestart, stopOpencodeServer } from './opencode-server.ts';
 import type { DesktopPaths } from './paths.ts';
 import type { OrchestratorSupervisor } from './supervisor.ts';
 
@@ -244,7 +244,7 @@ export function registerBridge(deps: BridgeDeps): void {
       agentOffice: parsed.agentOffice ?? previous.agentOffice,
       office3d: parsed.office3d ?? previous.office3d,
     });
-    stopOpencodeServer(); // the next call starts a server in the new mode
+    if (needsOpencodeRestart(previous, next)) stopOpencodeServer(); // the next call starts a server in the new mode
     if (previous.agentOffice !== next.agentOffice) deps.onSettingsChanged?.(next);
     return next;
   });
