@@ -110,3 +110,72 @@ describe('redactor live secrets', () => {
     expect(r.redact('long-enough-secret')).toBe('long-enough-secret');
   });
 });
+
+describe('redactor credential-token rule (R12)', () => {
+  const r = createRedactor();
+
+  it('redacts raw access/refresh/id token JSON values, one-character values included', () => {
+    const input = '{"tokens":{"access_token":"eyJhbGciOiJIUzI1NiJ9.payload.sig","refresh_token":"rt-refreshtoken-1","id_token":"x"}}';
+    expect(r.redact(input)).toBe('{"tokens":{"access_token":"[REDACTED]","refresh_token":"[REDACTED]","id_token":"[REDACTED]"}}');
+  });
+
+  it('keeps the surrounding JSON parseable with its structure intact', () => {
+    const input = JSON.stringify({ path: '/home/u/.codex/auth.json', tokens: { access_token: 'eyJaa.bb.ccdd', refresh_token: 'rt-zz', id_token: 'q' } });
+    expect(JSON.parse(r.redact(input))).toEqual({
+      path: '/home/u/.codex/auth.json',
+      tokens: { access_token: '[REDACTED]', refresh_token: '[REDACTED]', id_token: '[REDACTED]' },
+    });
+  });
+
+  it('tolerates spaces around the colon', () => {
+    expect(r.redact('{"id_token" : "x"}')).toBe('{"id_token" : "[REDACTED]"}');
+  });
+
+  it('redacts the tokens JSON escaped inside a tool-output string, preserving the escaped quotes', () => {
+    const inner = 'tool output: {\\"tokens\\":{\\"access_token\\":\\"eyJhbGci.payload.sig\\",\\"refresh_token\\":\\"rt-1\\",\\"id_token\\":\\"x\\"}} end';
+    const expected = 'tool output: {\\"tokens\\":{\\"access_token\\":\\"[REDACTED]\\",\\"refresh_token\\":\\"[REDACTED]\\",\\"id_token\\":\\"[REDACTED]\\"}} end';
+    expect(r.redact(inner)).toBe(expected);
+  });
+
+  it('ends an escaped value at its own closing quote and leaves following keys intact', () => {
+    const inner = 'log {\\"access_token\\":\\"eyJaa\\",\\"session_id\\":\\"abc\\"}';
+    expect(r.redact(inner)).toBe('log {\\"access_token\\":\\"[REDACTED]\\",\\"session_id\\":\\"abc\\"}');
+  });
+
+  it('an empty escaped value does not swallow the following token key (single escape depth)', () => {
+    const inner = '{\\"id_token\\":\\"\\",\\"refresh_token\\":\\"rt-LEAKME-123\\"}';
+    expect(r.redact(inner)).toBe('{\\"id_token\\":\\"\\",\\"refresh_token\\":\\"[REDACTED]\\"}');
+  });
+
+  it('an empty escaped value does not swallow the following token key (double escape depth)', () => {
+    const leaf = '{\\"id_token\\":\\"\\",\\"refresh_token\\":\\"rt-LEAKME-123\\"}';
+    const line = JSON.stringify({ output: leaf });
+    const redacted = r.redact(line);
+    expect(redacted).not.toContain('rt-LEAKME-123');
+    expect(JSON.parse(redacted)).toEqual({ output: '{\\"id_token\\":\\"\\",\\"refresh_token\\":\\"[REDACTED]\\"}' });
+  });
+
+  it('redacts camelCase token keys as they appear in ~/.claude/.credentials.json', () => {
+    const input = JSON.stringify({ credentials: { accessToken: 'opaque-camel-token', refreshToken: 'rt-camel', idToken: 'z' } });
+    expect(JSON.parse(r.redact(input))).toEqual({ credentials: { accessToken: '[REDACTED]', refreshToken: '[REDACTED]', idToken: '[REDACTED]' } });
+  });
+
+  it('keeps an outer JSON line parseable when escaped tokens sit inside a string value', () => {
+    const line = JSON.stringify({ output: 'read {\\"access_token\\":\\"eyJaa\\"} done' });
+    expect(JSON.parse(r.redact(line))).toEqual({ output: 'read {\\"access_token\\":\\"[REDACTED]\\"} done' });
+  });
+
+  it('leaves non-credential JSON, empty values and bare field names alone', () => {
+    expect(r.redact('{"note":"access_token is a field name"}')).toBe('{"note":"access_token is a field name"}');
+    expect(r.redact('{"id_token":""}')).toBe('{"id_token":""}');
+    expect(r.redact('access_token=abc12345')).toBe('access_token=abc12345');
+    expect(r.redact('{"user":{"name":"ada","count":2}}')).toBe('{"user":{"name":"ada","count":2}}');
+  });
+
+  it('is idempotent in both the raw and the escaped form', () => {
+    const raw = r.redact('{"tokens":{"access_token":"eyJaa","refresh_token":"rt-1","id_token":"x"}}');
+    expect(r.redact(raw)).toBe(raw);
+    const escaped = r.redact('{\\"access_token\\":\\"eyJaa\\"}');
+    expect(r.redact(escaped)).toBe(escaped);
+  });
+});

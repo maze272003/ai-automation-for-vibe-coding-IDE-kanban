@@ -19,6 +19,18 @@ const RULES: Rule[] = [
     replace: (_m, prefix) => `${prefix}[REDACTED]`,
   },
   { re: /\b(https?:\/\/)[^\s/:@]+:[^\s/@]+@/gi, replace: (_m, scheme) => `${scheme}[REDACTED]@` },
+  // R12: OAuth credential-token values (access_token/refresh_token/id_token, snake_case as in
+  // ~/.codex/auth.json and camelCase as in ~/.claude/.credentials.json), also when that JSON appears
+  // escaped inside a tool-output string. The backreference (\2) pins ONE escape depth for the whole
+  // key/value triplet and the value can never cross a quote at its own depth: an empty value simply
+  // does not match (nothing to leak) and a following token key is never swallowed, so it stays
+  // redactable. Quotes and their backslashes are preserved so the surrounding JSON stays parseable;
+  // values as short as one character are redacted.
+  // Accepted residual (mirrors spec §6.2 R12's own "[^"]+"): values containing an escaped quote end the match at that quote — real OAuth tokens have none, and structured frames are guarded by key-based whole-value redaction in the run log.
+  {
+    re: /((\\*)"(?:access_token|refresh_token|id_token|accessToken|refreshToken|idToken)\2"\s*:\s*\2")((?:(?!\2")[^"])+)(\2")/g,
+    replace: (_m, open, _depth, _value, close) => `${open}[REDACTED]${close}`,
+  },
   // JWT: header.payload.signature, base64url, at least 10 chars per segment; header starts eyJ.
   {
     re: /\beyJ[A-Za-z0-9_-]{7,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}(?![A-Za-z0-9_-])/g,
