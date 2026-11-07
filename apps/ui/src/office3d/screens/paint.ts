@@ -116,8 +116,12 @@ export function paintWhiteboard(ctx: Ctx2D, entries: Array<{ storyKey: string; c
   });
 }
 
-/** Entrance sign: optional 8x8 pixel icon in the accent colour, then the text. */
-export function paintSign(ctx: Ctx2D, text: string, accent: string, icon: RoomIcon | null, w = 256, h = 32): void {
+/**
+ * Entrance sign: optional 8x8 pixel icon, then the text, both in the accent colour; an optional tag (the
+ * project key, spec §6.4) is drawn right-aligned in an accent box. Without a tag the text stays white
+ * (QA LAB / ARCHIVED / RECEPTION signs).
+ */
+export function paintSign(ctx: Ctx2D, text: string, accent: string, icon: RoomIcon | null, w = 256, h = 32, tag: string | null = null): void {
   ctx.clearRect(0, 0, w, h);
   rect(ctx, '#111827', 0, 0, w, h);
   rect(ctx, accent, 0, 0, w, 2);
@@ -131,8 +135,25 @@ export function paintSign(ctx: Ctx2D, text: string, accent: string, icon: RoomIc
     tx = 16;
   }
   const scale = 2;
-  const maxChars = Math.max(1, Math.floor((w - tx - 4) / (6 * scale)));
-  paintPixelText(ctx, fit(text, maxChars), tx, Math.floor((h - GLYPH_H * scale) / 2), scale, '#f8fafc');
+  let right = w - 4;
+  if (tag) {
+    const tw = measurePixelText(tag, scale) + 8;
+    const bx = w - 4 - tw;
+    rect(ctx, accent, bx, 4, tw, h - 8);
+    paintPixelText(ctx, tag, bx + 4, Math.floor((h - GLYPH_H * scale) / 2), scale, '#111827');
+    right = bx - 6;
+  }
+  const maxChars = Math.max(1, Math.floor((right - tx) / (6 * scale)));
+  paintPixelText(ctx, fit(text, maxChars), tx, Math.floor((h - GLYPH_H * scale) / 2), scale, tag ? accent : '#f8fafc');
+}
+
+/** Small "+N" overflow badge (spec §6.4): white pixel text on a red pill with a dark outline. */
+export function paintBadge(ctx: Ctx2D, text: string, w = 32, h = 16): void {
+  ctx.clearRect(0, 0, w, h);
+  rect(ctx, '#111827', 0, 0, w, h);
+  rect(ctx, '#dc2626', 1, 1, w - 2, h - 2);
+  const tw = measurePixelText(text, 1);
+  paintPixelText(ctx, text, Math.max(1, Math.floor((w - tw) / 2)), Math.floor((h - GLYPH_H) / 2), 1, '#f8fafc');
 }
 
 /** Speech bubble in the top-left of the canvas; returns its pixel size so the sprite can be scaled to fit. */

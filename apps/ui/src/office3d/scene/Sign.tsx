@@ -6,8 +6,10 @@ import { pixelCanvasTexture } from './materials.ts';
 
 
 /** A pixel-font sign (`paintSign` -> CanvasTexture); repainted only when its text, colour or icon changes. */
-export function Sign({ text, accent, icon = null, position, yaw, width, dim = false, px = 256 }: {
+export function Sign({ text, accent, icon = null, tag = null, position, yaw, width, dim = false, px = 256 }: {
   text: string;
+  /** Right-aligned tag in an accent box (the project key on the entrance sign). */
+  tag?: string | null;
   accent: string;
   icon?: (typeof ROOM_ICONS)[number] | null;
   position: [number, number, number];
@@ -23,10 +25,10 @@ export function Sign({ text, accent, icon = null, position, yaw, width, dim = fa
   const { ctx, texture } = useMemo(() => pixelCanvasTexture(pw, ph), [pw, ph]);
   const invalidate = useThree((s) => s.invalidate);
   useEffect(() => {
-    paintSign(ctx, text, accent, icon, pw, ph);
+    paintSign(ctx, text, accent, icon, pw, ph, tag);
     texture.needsUpdate = true;
     invalidate();
-  }, [ctx, texture, text, accent, icon, pw, ph, invalidate]);
+  }, [ctx, texture, text, accent, icon, tag, pw, ph, invalidate]);
   useEffect(() => () => texture.dispose(), [texture]);
   return (
     <mesh position={position} rotation={[0, yaw, 0]}>

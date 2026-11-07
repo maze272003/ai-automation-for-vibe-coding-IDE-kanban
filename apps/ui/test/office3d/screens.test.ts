@@ -4,7 +4,7 @@ import { PIXEL_FONT, measurePixelText, paintPixelText, type Ctx2D } from '../../
 import {
   activityScreen, dataSignature, formatCheckDuration, kanbanScreen, pmScreen, runsScreen, signText, testBoardScreen,
 } from '../../src/office3d/screens/data.ts';
-import { paintActivity, paintBubble, paintKanban, paintPm, paintRuns, paintSign, paintTestBoard, paintWhiteboard } from '../../src/office3d/screens/paint.ts';
+import { paintActivity, paintBadge, paintBubble, paintKanban, paintPm, paintRuns, paintSign, paintTestBoard, paintWhiteboard } from '../../src/office3d/screens/paint.ts';
 import type { StationView } from '../../src/office3d/state/selectors.ts';
 import type { ActivityView, QaRunView } from '../../src/office3d/state/model.ts';
 
@@ -148,5 +148,22 @@ describe('painters', () => {
     const a = fakeCtx(); const b = fakeCtx();
     paintSign(a, 'X', '#22d3ee', null); paintSign(b, 'X', '#22d3ee', 'star');
     expect(b.ops.length).toBeGreaterThan(a.ops.length);
+  });
+  test('sign paints the project key right-aligned in an accent tag', () => {
+    const plain = fakeCtx(); const tagged = fakeCtx();
+    paintSign(plain, 'ALPHA DEVELOPMENT OFFICE', '#22d3ee', null, 256, 32);
+    paintSign(tagged, 'ALPHA DEVELOPMENT OFFICE', '#22d3ee', null, 256, 32, 'ALP');
+    expect(tagged.ops.length).toBeGreaterThan(plain.ops.length);
+    // The tag box is accent-filled and sits against the right edge.
+    const tagBox = tagged.ops.find((o) => o.startsWith('F #22d3ee') && !o.endsWith(',256,2') && o.split(' ')[2]!.split(',')[0] !== '0');
+    expect(tagBox).toBeDefined();
+    const [x, , w] = tagBox!.split(' ')[2]!.split(',').map(Number);
+    expect(x! + w!).toBeGreaterThan(240);
+  });
+  test('paintBadge draws "+N" deterministically', () => {
+    const a = fakeCtx(); const b = fakeCtx();
+    paintBadge(a, '+3', 32, 16); paintBadge(b, '+3', 32, 16);
+    expect(a.ops).toEqual(b.ops);
+    expect(a.ops.some((o) => o.startsWith('F #f8fafc'))).toBe(true);
   });
 });

@@ -4,10 +4,11 @@ import { defaultRoomLayout } from '../../src/office3d/layout/room.ts';
 import { contains } from '../../src/office3d/layout/geometry.ts';
 import { emptyOfficeState, type OfficeState } from '../../src/office3d/state/model.ts';
 import { reduceOffice } from '../../src/office3d/state/reduce.ts';
-import { sceneModel } from '../../src/office3d/scene/derive.ts';
+import { overflowBadges, roomTint, sceneModel } from '../../src/office3d/scene/derive.ts';
+import { STATE_COLOR } from '../../src/office3d/screens/paint.ts';
 import { hubPlacements } from '../../src/office3d/scene/hub.ts';
 import { placeItem } from '../../src/office3d/scene/place.ts';
-import { itemParts, stationSeatOffsets } from '../../src/office3d/scene/props.ts';
+import { itemParts, pmDeskHitBox, stationSeatOffsets } from '../../src/office3d/scene/props.ts';
 import { ringSpecs } from '../../src/office3d/scene/StatusRings.tsx';
 import { emptyStructure, shellStructure, suiteStructure } from '../../src/office3d/scene/structure.ts';
 import { suiteFrame } from '../../src/office3d/scene/transform.ts';
@@ -57,6 +58,44 @@ describe('scene model', () => {
     const i = targets.findIndex((t) => t.role === 'implementer');
     expect(specs[i]!.color).toBe('#123456');
     expect(targets.filter((t) => t.role === 'implementer')).toHaveLength(2); // max(2, active) desks
+  });
+});
+
+describe('overflow badges, room tint, PM desk hit box', () => {
+  const runs = (s: OfficeState, role: string, n: number, from = 1): OfficeState => {
+    let out = s;
+    for (let i = from; i < from + n; i++) {
+      const e: EventEnvelope = { seq: i, topic: 'run.started', storyId: i, at: T, provenance: 'system', data: { runId: i, role, storyKey: `P1-${i}`, projectKey: 'P1' } };
+      out = reduceOffice(out, { type: 'event', event: e }, T);
+    }
+    return out;
+  };
+
+  test('a "+N" badge appears on the developer zone beyond 8 runs and on other stations beyond 2', () => {
+    let s = runs(withRooms([room(1)]), 'implementer', 10);
+    s = runs(s, 'planner', 3, 100);
+    const m = sceneModel(s, T, prefs).suites[0]!;
+    expect(m.overflow).toMatchObject({ implementer: 2, planner: 1, reviewer: 0 });
+    const badges = overflowBadges(m);
+    expect(badges.map((b) => [b.role, b.text])).toEqual([['planner', '+1'], ['implementer', '+2']]);
+    for (const b of badges) expect(contains(m.suite.dev, { x: b.x, z: b.z })).toBe(true);
+    expect(overflowBadges(sceneModel(runs(withRooms([room(1)]), 'implementer', 8), T, prefs).suites[0]!)).toEqual([]);
+  });
+
+  test('room tint follows the aggregate state (error > active > idle) and the colour overrides', () => {
+    const idle = sceneModel(withRooms([room(1)]), T, prefs).suites[0]!;
+    expect(roomTint(idle, {})).toEqual({ outline: STATE_COLOR.idle, wash: null });
+    const busy = sceneModel(runs(withRooms([room(1)]), 'implementer', 1), T, prefs).suites[0]!;
+    expect(roomTint(busy, { working: '#123456' })).toEqual({ outline: '#123456', wash: '#123456' });
+    const archived = sceneModel(withRooms([room(1, { state: 'archived' })]), T, { ...prefs, showArchived: true }).suites[0]!;
+    expect(roomTint(archived, {})).toBeNull();
+  });
+
+  test('PM desk hit box sits on the PM desk, in front of its chair', () => {
+    const pm = defaultRoomLayout().find((i) => i.role === 'pm')!;
+    const hb = pmDeskHitBox(pm)!;
+    expect(hb.z).toBeLessThan(stationSeatOffsets('pm', 1)[0]!.z);
+    expect(pmDeskHitBox(defaultRoomLayout().find((i) => i.role === 'planner')!)).toBeNull();
   });
 });
 

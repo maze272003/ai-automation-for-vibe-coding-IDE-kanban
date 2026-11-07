@@ -131,3 +131,12 @@ export function itemScreens(item: FurnitureItem): ScreenMount[] {
   if (item.kind === 'test-board') return [{ kind: 'test-board', x: 0, y: 1.71, z: 0.12, w: 4.7, h: 1.5 }];
   return [];
 }
+
+/**
+ * Click target over the PM desk (item-local centre and size, metres): covers the desk and monitor in front
+ * of the sitter, never the chair or its status ring (those keep their own click/hover). Null for other items.
+ */
+export function pmDeskHitBox(item: FurnitureItem): { x: number; z: number; w: number; d: number; h: number } | null {
+  if (item.kind !== 'station' || item.role !== 'pm') return null;
+  return { x: 0, z: -0.05, w: FOOTPRINTS['station:pm'].w, d: 0.9, h: DESK_TOP + 0.85 };
+}

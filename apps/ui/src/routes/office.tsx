@@ -115,6 +115,7 @@ export function OfficePage() {
                     selectedRoomId={selectedRoomId}
                     onSelectRoom={setSelectedRoom}
                     onStationClick={station.onStationClick}
+                    onOpenBoard={station.onOpenBoard}
                     walking={walking}
                     resetToken={resetToken}
                     onExitWalk={exitWalk}

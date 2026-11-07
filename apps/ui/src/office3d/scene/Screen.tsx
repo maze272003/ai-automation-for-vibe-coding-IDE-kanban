@@ -1,4 +1,4 @@
-import { useFrame, useThree } from '@react-three/fiber';
+import { useFrame, useThree, type ThreeEvent } from '@react-three/fiber';
 import { useEffect, useMemo, useRef } from 'react';
 import { Frustum, Matrix4, type Box3, type Camera } from 'three';
 import { dataSignature } from '../screens/data.ts';
@@ -29,6 +29,8 @@ export type ScreenProps<T> = {
   /** World bounds of the owning suite: off-screen suites defer repaints until they come into view. */
   bounds?: Box3;
   dim?: boolean;
+  /** Makes the screen clickable (a camera drag is not a click). */
+  onClick?: () => void;
 };
 
 /**
@@ -36,7 +38,7 @@ export type ScreenProps<T> = {
  * only while its suite is inside the camera frustum (a deferred repaint runs on the next rendered frame
  * that sees it, e.g. after the camera moves).
  */
-export function Screen<T>({ data, paint, px, size, position, yaw, bounds, dim = false }: ScreenProps<T>) {
+export function Screen<T>({ data, paint, px, size, position, yaw, bounds, dim = false, onClick }: ScreenProps<T>) {
   const [pw, ph] = px;
   const { ctx, texture } = useMemo(() => pixelCanvasTexture(pw, ph), [pw, ph]);
   const get = useThree((s) => s.get);
@@ -87,8 +89,16 @@ export function Screen<T>({ data, paint, px, size, position, yaw, bounds, dim = 
     [texture],
   );
 
+  const click = onClick
+    ? (e: ThreeEvent<MouseEvent>) => {
+        if (e.delta > 4) return;
+        e.stopPropagation();
+        onClick();
+      }
+    : undefined;
+
   return (
-    <mesh position={position} rotation={[0, yaw, 0]}>
+    <mesh position={position} rotation={[0, yaw, 0]} onClick={click}>
       <planeGeometry args={size} />
       <meshBasicMaterial map={texture} toneMapped={false} color={dim ? '#555555' : '#ffffff'} />
     </mesh>

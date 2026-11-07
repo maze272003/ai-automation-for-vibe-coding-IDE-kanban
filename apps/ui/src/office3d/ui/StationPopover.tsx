@@ -42,6 +42,8 @@ const ROLE_NAME: Record<StationRole, string> = { planner: 'Planner', implementer
  */
 export function useCanvasStationClick(state: OfficeState, now: number, onSelectRoom: (roomId: number) => void): {
   onStationClick: (roomId: number, role: StationRole) => void;
+  /** Kanban wall screen / PM desk: straight to the room's project board. */
+  onOpenBoard: (roomId: number) => void;
   popover: ReactNode;
 } {
   const navigate = useNavigate();
@@ -65,6 +67,10 @@ export function useCanvasStationClick(state: OfficeState, now: number, onSelectR
     else if (target.kind === 'popover') setOpen({ roomId, role, stories: target.stories });
     else goBoard(roomId);
   };
+  const onOpenBoard = (roomId: number) => {
+    onSelectRoom(roomId);
+    goBoard(roomId);
+  };
   const room = open ? state.rooms.get(open.roomId) : undefined;
   const popover =
     open && room ? (
@@ -81,5 +87,5 @@ export function useCanvasStationClick(state: OfficeState, now: number, onSelectR
         />
       </div>
     ) : null;
-  return { onStationClick, popover };
+  return { onStationClick, onOpenBoard, popover };
 }

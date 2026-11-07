@@ -1,5 +1,6 @@
 import { STATION_ROLES, type FurnitureItem, type OfficePreferences, type OfficeRoomDTO, type ROOM_ICONS, type ScreenToggles, type StationRole, type StoryStatus } from '@aik/contracts';
 import { buildingLayout, type BuildingLayout, type SuiteLayout } from '../layout/building.ts';
+import { localToRoom } from '../layout/footprints.ts';
 import { effectiveLayout } from '../layout/room.ts';
 import {
   activityScreen, kanbanScreen, pmScreen, runsScreen, signText, testBoardScreen,
@@ -8,6 +9,8 @@ import {
 import { STATE_COLOR } from '../screens/paint.ts';
 import type { ActivityView, OfficeState, QaRunView } from '../state/model.ts';
 import { pmView, roomAggregate, stationViews, type StationState } from '../state/selectors.ts';
+import { stationSeatOffsets } from './props.ts';
+import { roomToWorld, suiteFrame } from './transform.ts';
 
 /** Everything the scene draws for one suite; rebuilt from the view-model, compared by `dataSignature`. */
 export type SuiteModel = {
@@ -24,6 +27,8 @@ export type SuiteModel = {
   /** Seat states per station, in seat order (ring colours; seat counts drive desks shown). */
   seats: Record<StationRole, StationState[]>;
   stationState: Record<StationRole, StationState>;
+  /** Runs beyond the seats shown per station (developer zone > 8, others > 2): drawn as a "+N" badge. */
+  overflow: Record<StationRole, number>;
   aggregate: StationState;
   kanban: KanbanScreenData;
   activity: ActivityScreenData;
@@ -55,6 +60,36 @@ function roomActivity(s: OfficeState, roomId: number): Map<number, ActivityView>
   return out;
 }
 
+export type OverflowBadge = { key: string; role: StationRole; text: string; x: number; y: number; z: number };
+const BADGE_Y = 1.75;
+
+/** World positions of the "+N" badges: above the last seat shown at each overflowing station (layout order). */
+export function overflowBadges(m: Pick<SuiteModel, 'roomId' | 'suite' | 'layout' | 'seats' | 'overflow' | 'dim'>): OverflowBadge[] {
+  if (m.dim !== null) return [];
+  const f = suiteFrame(m.suite);
+  const out: OverflowBadge[] = [];
+  for (const item of m.layout) {
+    if (item.kind !== 'station' || !item.role || m.overflow[item.role] <= 0) continue;
+    const offs = stationSeatOffsets(item.role, m.seats[item.role].length);
+    const last = offs[offs.length - 1];
+    if (!last) continue;
+    const p = localToRoom(item, last.x, last.z);
+    const w = roomToWorld(f, item.area, p.x, p.z);
+    out.push({ key: `${m.roomId}:${item.role}`, role: item.role, text: `+${m.overflow[item.role]}`, x: w.x, y: BADGE_Y, z: w.z });
+  }
+  return out;
+}
+
+/**
+ * Overview tint of a suite by its aggregate state (spec §6.6: any error > any active > idle): an outline
+ * in the state colour, plus a faint floor wash unless idle. Dimmed (archived/unavailable) suites get none.
+ */
+export function roomTint(m: Pick<SuiteModel, 'aggregate' | 'dim'>, overrides: OfficePreferences['statusColors']): { outline: string; wash: string | null } | null {
+  if (m.dim !== null) return null;
+  const color = stateColor(m.aggregate, overrides);
+  return { outline: color, wash: m.aggregate === 'idle' ? null : color };
+}
+
 export function isRoomVisible(r: OfficeRoomDTO, prefs: Pick<OfficePreferences, 'showArchived'>): boolean {
   return r.slot !== null && (r.state === 'active' || prefs.showArchived);
 }
@@ -71,9 +106,11 @@ function suiteModel(s: OfficeState, room: OfficeRoomDTO, suite: SuiteLayout, now
   ];
   const seats = {} as Record<StationRole, StationState[]>;
   const stationState = {} as Record<StationRole, StationState>;
+  const overflow = {} as Record<StationRole, number>;
   for (const role of STATION_ROLES) {
     seats[role] = views[role].seats.map((x) => x.state);
     stationState[role] = views[role].state;
+    overflow[role] = views[role].overflow;
   }
   const c = room.customization;
   return {
@@ -88,6 +125,7 @@ function suiteModel(s: OfficeState, room: OfficeRoomDTO, suite: SuiteLayout, now
     screens: c.screens ?? prefs.screens,
     seats,
     stationState,
+    overflow,
     aggregate: roomAggregate(s, room.id, now),
     kanban: kanbanScreen(pm.board, topCards),
     activity: activityScreen(roomActivity(s, room.id)),

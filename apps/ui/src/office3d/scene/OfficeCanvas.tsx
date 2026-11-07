@@ -26,6 +26,8 @@ export type OfficeCanvasProps = {
   selectedRoomId: number | null;
   onSelectRoom(id: number | null): void;
   onStationClick(roomId: number, role: StationRole): void;
+  /** Kanban wall screen / PM desk click: open the room's project board (spec 6.6). */
+  onOpenBoard?(roomId: number): void;
   /** First-person walk mode (spec 6.6); the route owns the toggle (V) and exit (Esc). */
   walking?: boolean;
   /** Changes on "back to overview" (Esc) so the overview is re-framed even with no room selected. */
@@ -102,7 +104,7 @@ function useStableSuites(suites: SuiteModel[]): SuiteModel[] {
   return last.current;
 }
 
-export function OfficeCanvas({ state, now, prefs, selectedRoomId, onSelectRoom, onStationClick, walking = false, resetToken = 0, onExitWalk, children }: OfficeCanvasProps) {
+export function OfficeCanvas({ state, now, prefs, selectedRoomId, onSelectRoom, onStationClick, onOpenBoard, walking = false, resetToken = 0, onExitWalk, children }: OfficeCanvasProps) {
   const q = qualitySettings(prefs.quality);
   const low = prefs.quality === 'low';
   const scene = useMemo(() => sceneModel(state, now, prefs), [state, now, prefs]);
@@ -145,6 +147,9 @@ export function OfficeCanvas({ state, now, prefs, selectedRoomId, onSelectRoom, 
   const navBuilding = useMemo(() => ({ ...building, suites: suites.map((m) => m.suite) }), [building, suites]);
   const navLayouts = useMemo(() => new Map(suites.map((m) => [m.roomId, m.layout])), [suites]);
   const exitWalk = useStableCallback(onExitWalk);
+  const openBoardRef = useRef(onOpenBoard);
+  openBoardRef.current = onOpenBoard;
+  const openBoard = useCallback((roomId: number) => openBoardRef.current?.(roomId), []);
 
   return (
     <CanvasErrorBoundary>
@@ -164,7 +169,7 @@ export function OfficeCanvas({ state, now, prefs, selectedRoomId, onSelectRoom, 
         <VoxelInstances placements={placements} shadows={q.shadows} />
         <StatusRings suites={suites} statusColors={prefs.statusColors} onStationClick={onStationClick} />
         {suites.map((m) => (
-          <Suite key={m.roomId} model={m} prefs={prefs} selected={m.roomId === selectedRoomId} />
+          <Suite key={m.roomId} model={m} prefs={prefs} selected={m.roomId === selectedRoomId} onOpenBoard={onOpenBoard ? openBoard : undefined} />
         ))}
         <Whiteboards suites={suites} state={state} />
         <Agents state={state} now={now} suites={suites} prefs={prefs} selectedRoomId={selectedRoomId} figures={figures} onStationClick={onStationClick} />
