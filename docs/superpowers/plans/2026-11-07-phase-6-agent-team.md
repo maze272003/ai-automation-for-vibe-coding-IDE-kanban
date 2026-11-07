@@ -2130,3 +2130,20 @@ Other records to fill: 6.2-21's list of existing tests whose arrange steps chang
 | Task | Commit | Verification |
 |---|---|---|
 | P | | |
+
+## Execution record
+
+Approved (2026-11-07): user approved spec rev 10 (FINAL) and this 85-task plan, with all default answers:
+
+- P6 = (a) accepted risk; one-time warning recorded in Settings.
+- P2 = flag-only, no hard block.
+- P3 accepted (no steering from chat).
+- P4 not built (no chat on OpenCode roles).
+- P5: story stays NEW, with Retry planning on `planning_failed`.
+- P7 not built (no Codex-reviews-Claude's-plan step).
+- N2 as described (personal setup for the planner only; Codex always locked down).
+- N1: Codex model tiers confirmed by the user before the router lands (free probes may run meanwhile).
+
+Executor: Claude substitutes for [Codex]-tagged tasks until Codex credits return (plan executor note).
+
+Branch: `feat/phase-6-agent-team` created from `9df7973` on 2026-11-07.
