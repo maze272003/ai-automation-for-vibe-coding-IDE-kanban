@@ -5,6 +5,7 @@ import { and, eq, inArray } from 'drizzle-orm';
 import os from 'node:os';
 import path from 'node:path';
 import type { EventBus } from '../events/bus.ts';
+import { appendOutbox } from '../events/outbox.ts';
 import { git } from '../git/git.ts';
 import type { WorktreeManager } from '../git/worktree.ts';
 import { runCheckCommand, type CommandStatus, type SpawnedCheckProcess } from '../checks/run.ts';
@@ -147,6 +148,7 @@ export class VerificationRunner {
         worktreePath,
         story.baseSha,
         story.candidateSha,
+        { storyKey: story.key, projectKey: project.key },
       );
     } catch (err) {
       this.markRunError(run.id);
@@ -262,6 +264,7 @@ export class VerificationRunner {
           cleanroomWorktreePath,
           story.baseSha,
           story.candidateSha,
+          { storyKey: story.key, projectKey: project.key },
         );
 
         const cleanStatus = cleanMandatoryPassed ? 'passed' : 'failed';
@@ -371,6 +374,7 @@ export class VerificationRunner {
           worktreePath,
           story.baseSha,
           input.mergedSha,
+          { storyKey: story.key, projectKey: project.key },
         );
       } catch (err) {
         this.db
@@ -442,8 +446,26 @@ export class VerificationRunner {
     worktreePath: string,
     baseSha?: string | null,
     candidateSha?: string | null,
+    ids: { storyKey: string; projectKey: string } = { storyKey: '', projectKey: '' },
   ): Promise<boolean> {
     let allMandatoryPassed = true;
+    const emit = (
+      topic: 'check.started' | 'check.finished',
+      checkKey: string,
+      extra: { status?: string } = {},
+    ): void => {
+      const seq = appendOutbox(
+        this.db,
+        {
+          topic,
+          storyId,
+          provenance: topic === 'check.started' ? 'system' : 'command_completed',
+          data: { storyId, storyKey: ids.storyKey, projectKey: ids.projectKey, verificationRunId, checkKey, ...extra },
+        },
+        new Date(this.now()),
+      );
+      this.bus.notify(seq);
+    };
 
     // Verification has no agent run id; the registry slot exists only to make checks stoppable.
     let activeKillTree: SpawnedCheckProcess['killTree'] | null = null;
@@ -460,6 +482,7 @@ export class VerificationRunner {
 
     try {
       // Secrets scanning is always mandatory (EXE-9) and runs before any project check.
+      emit('check.started', 'secrets');
       const secretStarted = new Date(this.now());
       let secretHits: ReturnType<typeof scanWorktree> = [];
       let secretError: string | null = null;
@@ -486,9 +509,11 @@ export class VerificationRunner {
           endedAt: new Date(this.now()),
         })
         .run();
+      emit('check.finished', 'secrets', { status: secretStatus });
 
       // Vulnerability scanning (REL-3) runs when dependency lockfiles change
       if (settings.vulnerabilityScan?.enabled) {
+        emit('check.started', 'vulnerabilities');
         const vulnStarted = new Date(this.now());
         const vulnResult = await runVulnerabilityScan({
           cwd: worktreePath,
@@ -522,6 +547,7 @@ export class VerificationRunner {
               endedAt: new Date(this.now()),
             })
             .run();
+          emit('check.finished', 'vulnerabilities', { status });
         }
       }
 
@@ -532,7 +558,9 @@ export class VerificationRunner {
           allMandatoryPassed = false;
           break;
         }
+        emit('check.started', check.key);
         const row = await this.runOneCheck(verificationRunId, check, worktreePath, onSpawned);
+        emit('check.finished', check.key, { status: row });
         if (check.mandatory && row !== 'passed') allMandatoryPassed = false;
       }
       return allMandatoryPassed;
