@@ -4,6 +4,8 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { signText } from '../screens/data.ts';
 import type { OfficeState } from '../state/model.ts';
 import { roomAggregate, stationViews, type StationView } from '../state/selectors.ts';
+import { api } from '../../lib/api.ts';
+import { ConfirmAction } from './ConfirmAction.tsx';
 import { RoomSettingsDialog } from './RoomSettingsDialog.tsx';
 import { StationPopover } from './StationPopover.tsx';
 import { activeAgentCount, pmTarget, stationTarget } from './navigate.ts';
@@ -15,6 +17,7 @@ export function QuickJumpPanel({ state, now, onSelectRoom }: { state: OfficeStat
   const [query, setQuery] = useState('');
   const [popover, setPopover] = useState<{ roomId: number; stories: StationView['stories'] } | null>(null);
   const [settingsRoomId, setSettingsRoomId] = useState<number | null>(null);
+  const [deleteRoom, setDeleteRoom] = useState<OfficeRoomDTO | null>(null);
   const input = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -122,12 +125,30 @@ export function QuickJumpPanel({ state, now, onSelectRoom }: { state: OfficeStat
           <summary className="cursor-pointer font-semibold text-muted">Archived ({archived.length})</summary>
           <ul className="mt-1 flex flex-col gap-1">
             {archived.map((room) => (
-              <li key={room.id} data-testid={`office-archived-${room.projectKey}`} className="text-muted">
-                {room.projectKey} · {room.projectName}
+              <li key={room.id} data-testid={`office-archived-${room.projectKey}`} className="flex items-center justify-between gap-1 text-muted">
+                <span className="min-w-0 truncate">{room.projectKey} · {room.projectName}</span>
+                <button
+                  type="button"
+                  data-testid={`office-delete-${room.projectKey}`}
+                  className="shrink-0 rounded px-1 text-xs hover:bg-glass/60 hover:text-foreground"
+                  onClick={() => setDeleteRoom(room)}
+                >
+                  Delete permanently
+                </button>
               </li>
             ))}
           </ul>
         </details>
+      ) : null}
+      {deleteRoom ? (
+        <ConfirmAction
+          open
+          title={`Delete room ${deleteRoom.projectKey} permanently`}
+          message="This permanently deletes the room and its customization. Re-importing the repository will create a fresh room. Continue?"
+          confirmLabel="Delete permanently"
+          onConfirm={() => api.del(`/office/rooms/${deleteRoom.id}`).then(() => undefined)}
+          onClose={() => setDeleteRoom(null)}
+        />
       ) : null}
       {settingsRoom ? (
         <RoomSettingsDialog key={settingsRoom.id} room={settingsRoom} open onClose={() => setSettingsRoomId(null)} />

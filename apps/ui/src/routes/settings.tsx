@@ -9,6 +9,7 @@ import { Card } from '../components/ui/card.tsx';
 import { Label } from '../components/ui/label.tsx';
 import { Select } from '../components/ui/select.tsx';
 import { Textarea } from '../components/ui/textarea.tsx';
+import { ConfirmAction } from '../office3d/ui/ConfirmAction.tsx';
 import { effectiveStatusColor } from '../office3d/state/customization.ts';
 import { api } from '../lib/api.ts';
 import { cn } from '../lib/cn.ts';
@@ -356,6 +357,7 @@ export function SettingsPage() {
   const [office, setOffice] = useState(false);
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [office3d, setOffice3d] = useState<OfficePreferences>(DEFAULT_OFFICE_PREFERENCES);
+  const [compactOpen, setCompactOpen] = useState(false);
   const settingsRef = useRef<AppSettings | null>(null);
   settingsRef.current = settings;
   useEffect(() => {
@@ -526,7 +528,20 @@ export function SettingsPage() {
                   </Button>
                 </div>
               </fieldset>
+              <div>
+                <Button variant="secondary" size="sm" data-testid="office3d-compact" onClick={() => setCompactOpen(true)}>
+                  Compact layout
+                </Button>
+              </div>
             </div>
+            <ConfirmAction
+              open={compactOpen}
+              title="Compact layout"
+              message="Rooms will move to close gaps. Continue?"
+              confirmLabel="Compact layout"
+              onConfirm={() => api.post('/office/rooms/compact', {}).then(() => undefined)}
+              onClose={() => setCompactOpen(false)}
+            />
           </Card>
 
           <Card data-testid="settings-about" className="p-4">
