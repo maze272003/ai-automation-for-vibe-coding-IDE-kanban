@@ -195,13 +195,13 @@ function updateQa(f: FigureState, d: Desc, g: WaypointGraph, work: Map<string, F
     return;
   }
   f.bubble = want.bubble;
-  if (desk) return;
   if (want.activity !== f.activity && f.path.length === 0) {
-    const target = resolveSpot(f, ACTIVITY_SPOT[want.activity], g, work);
     f.activity = want.activity;
-    if (target !== f.spotId) walkTo(f, g, target);
-    else f.arrivedAt = nowMs;
+    f.arrivedAt = nowMs;
     f.leaveAt = null;
+    // Desk mode never moves: the flow (hold, acknowledge, leave) still runs, seated.
+    const target = desk ? f.spotId : resolveSpot(f, ACTIVITY_SPOT[want.activity], g, work);
+    if (target !== f.spotId) walkTo(f, g, target);
   }
   if (f.path.length === 0 && f.activity === 'qa-failure' && nowMs - f.arrivedAt >= FAILURE_HOLD_MS) {
     f.ackedFails = Object.entries(d.qa!.checks).filter(([, v]) => v === 'failed').map(([k]) => k);
@@ -277,7 +277,11 @@ export function stepFigures(
   return work;
 }
 
-/** Failed checks of stories whose latest verification has not passed (cleared once it passes). */
+/**
+ * Failed checks of stories whose latest verification has not passed (cleared once it passes).
+ * Approximation: OfficeState carries no story status, so "still in TESTING/REWORK" is taken as
+ * "latest verification not passed" (a story that left the flow without passing is not detected).
+ */
 export function whiteboardEntries(s: OfficeState, roomId: number): Array<{ storyKey: string; checkKey: string; summary: string }> {
   const out: Array<{ storyKey: string; checkKey: string; summary: string }> = [];
   for (const q of [...s.qa.values()].sort((a, b) => a.storyKey.localeCompare(b.storyKey))) {

@@ -260,6 +260,44 @@ describe('stepFigures', () => {
   });
 });
 
+describe('QA figures in desk mode', () => {
+  const desk = { agentMovement: 'desk' as const };
+  const mk = (): { s: OfficeState; q: QaRunView } => {
+    const s = base();
+    const q: QaRunView = { storyId: 3, storyKey: 'AIK-3', roomId: 1, verificationRunId: 1, checks: { lint: 'running' }, startedAt: 0, finishedAt: null, passed: null };
+    s.qa.set(3, q);
+    return { s, q };
+  };
+  test('passed verification: figure is removed after the hold', () => {
+    const { s, q } = mk();
+    let m = run(new Map(), s, 0, 1000, desk);
+    expect(m.get('qa:3')!.path).toHaveLength(0);
+    q.checks = { lint: 'passed' };
+    q.passed = true;
+    q.finishedAt = 1000;
+    m = run(m, s, 1100, 2000, desk);
+    expect(m.get('qa:3')!.bubble).toBe('All checks passed ✓');
+    m = run(m, s, 2100, 20_000, desk);
+    expect(m.has('qa:3')).toBe(false);
+  });
+  test('failed check: acknowledged after >= 5 s, then the normal flow continues', () => {
+    const { s, q } = mk();
+    let m = run(new Map(), s, 0, 1000, desk);
+    q.checks = { lint: 'failed', unit: 'running' };
+    m = run(m, s, 1100, 1200, desk);
+    expect(m.get('qa:3')!.bubble).toBe('Writing up: lint failed');
+    m = run(m, s, 1300, 5800, desk);
+    expect(m.get('qa:3')!.bubble).toBe('Writing up: lint failed');
+    m = run(m, s, 5900, 8000, desk);
+    expect(m.get('qa:3')!.bubble).toBe('Testing: unit');
+    q.checks = { lint: 'failed', unit: 'failed' };
+    q.passed = false;
+    q.finishedAt = 8000;
+    m = run(m, s, 8100, 30_000, desk);
+    expect(m.has('qa:3')).toBe(false);
+  });
+});
+
 describe('whiteboardEntries', () => {
   test('failed checks listed; cleared once the story passes', () => {
     const s = base();
