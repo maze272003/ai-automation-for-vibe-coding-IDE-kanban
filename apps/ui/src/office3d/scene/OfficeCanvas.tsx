@@ -2,7 +2,9 @@ import type { OfficePreferences, StationRole } from '@aik/contracts';
 import { Canvas, useThree } from '@react-three/fiber';
 import { Component, useEffect, useMemo, useRef, type ReactNode } from 'react';
 import { dataSignature } from '../screens/data.ts';
+import type { FigureState } from '../state/figures.ts';
 import type { OfficeState } from '../state/model.ts';
+import { Agents } from './Agents.tsx';
 import { BasicCamera } from './BasicCamera.tsx';
 import { Building, type OpsTile } from './Building.tsx';
 import { sceneModel, stateColor, type SuiteModel } from './derive.ts';
@@ -15,6 +17,7 @@ import { emptyStructure, shellStructure, suiteStructure, COLORS, type Structure 
 import { Suite } from './Suite.tsx';
 import { suiteFrame } from './transform.ts';
 import { VoxelInstances } from './VoxelInstances.tsx';
+import { Whiteboards } from './Whiteboard.tsx';
 
 export type OfficeCanvasProps = {
   state: OfficeState;
@@ -93,6 +96,8 @@ export function OfficeCanvas({ state, now, prefs, selectedRoomId, onSelectRoom, 
   const scene = useMemo(() => sceneModel(state, now, prefs), [state, now, prefs]);
   const suites = useStableSuites(scene.suites);
   const building = scene.building;
+  // The agent figures (spec 6.5a): advanced by Agents with stepFigures; kept across re-renders and Canvas re-creation.
+  const figures = useRef(new Map<string, FigureState>());
 
   // Static shell: recomputed only when geometry-relevant inputs change.
   const structureKey = dataSignature({
@@ -149,6 +154,8 @@ export function OfficeCanvas({ state, now, prefs, selectedRoomId, onSelectRoom, 
         {suites.map((m) => (
           <Suite key={m.roomId} model={m} prefs={prefs} selected={m.roomId === selectedRoomId} />
         ))}
+        <Whiteboards suites={suites} state={state} />
+        <Agents state={state} now={now} suites={suites} prefs={prefs} selectedRoomId={selectedRoomId} figures={figures} onStationClick={onStationClick} />
         <BasicCamera bounds={building.bounds} focus={focus} />
         {children}
       </Canvas>
