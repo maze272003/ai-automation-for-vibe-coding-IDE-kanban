@@ -9,6 +9,7 @@ export * from './files.ts';
 export * from './github.ts';
 export * from './git-view.ts';
 export * from './hints.ts';
+export * from './office.ts';
 export * from './opencode.ts';
 export * from './pixel-agents.ts';
 export * from './projects.ts';
