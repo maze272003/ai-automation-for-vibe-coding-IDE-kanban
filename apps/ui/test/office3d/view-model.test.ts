@@ -106,6 +106,43 @@ describe('office view-model', () => {
     expect(s.qa.get(1)!.checks.lint).toBe('failed');
   });
 
+  test('QA: a skipped/unsupported mandatory check never counts as passed', () => {
+    const base = { storyId: 1, storyKey: 'AIK-1', projectKey: 'AIK', verificationRunId: 7 };
+    for (const status of ['skipped', 'unsupported']) {
+      let s = at(withRoom(), ev('check.started', { ...base, checkKey: 'lint' }), T);
+      s = at(s, ev('check.finished', { ...base, checkKey: 'lint', status, mandatory: true }), T);
+      expect(s.qa.get(1)!.passed).toBe(false);
+      expect(stationViews(s, R, T).qa.state).toBe('error');
+      // Older orchestrators omit `mandatory`: treated as mandatory (secrets/vulnerability checks always are).
+      s = at(withRoom(), ev('check.finished', { ...base, checkKey: 'lint', status }), T);
+      expect(s.qa.get(1)!.passed).toBe(false);
+    }
+  });
+
+  test('QA: a non-mandatory check that did not pass does not fail verification (backend semantics)', () => {
+    const base = { storyId: 1, storyKey: 'AIK-1', projectKey: 'AIK', verificationRunId: 7 };
+    let s = at(withRoom(), ev('check.finished', { ...base, checkKey: 'lint', status: 'passed', mandatory: true }), T);
+    s = at(s, ev('check.finished', { ...base, checkKey: 'e2e', status: 'unsupported', mandatory: false }), T);
+    expect(s.qa.get(1)!.passed).toBe(true);
+  });
+
+  test('QA: check.finished records duration; snapshot carries duration, summary and mandatory', () => {
+    const base = { storyId: 1, storyKey: 'AIK-1', projectKey: 'AIK', verificationRunId: 7 };
+    let s = at(withRoom(), ev('check.finished', { ...base, checkKey: 'lint', status: 'failed', mandatory: true, durationMs: 12_000 }), T);
+    expect(s.qa.get(1)!.details?.lint).toMatchObject({ durationMs: 12_000, mandatory: true });
+    s = reduceOffice(withRoom(), {
+      type: 'snapshot',
+      snapshot: {
+        generatedAt: T,
+        rooms: [{
+          roomId: 1, projectId: 10, board: {} as never, blocked: [], doneToday: 0, activeRuns: [], lastFinished: [],
+          verification: [{ storyId: 4, storyKey: 'AIK-4', verificationRunId: 9, status: 'failed', checks: [{ checkKey: 'lint', status: 'failed', summary: 'eslint: 3 errors', durationMs: 4000, mandatory: true }] }],
+        }],
+      },
+    }, T);
+    expect(s.qa.get(4)!.details?.lint).toEqual({ durationMs: 4000, mandatory: true, summary: 'eslint: 3 errors' });
+  });
+
   test('QA failure persists through the next verification until it passes', () => {
     const base = { storyId: 1, storyKey: 'AIK-1', projectKey: 'AIK' };
     let s = at(withRoom(), ev('check.started', { ...base, verificationRunId: 7, checkKey: 'lint' }), T);

@@ -4,7 +4,7 @@ type AgentMovement = (typeof AGENT_MOVEMENT)[number];
 import type { Vec2 } from '../layout/geometry.ts';
 import { findPath, freeSpot, type SpotKind, type WaypointGraph } from '../layout/waypoints.ts';
 import { ACTIVITY_SPOT, classifyActivity, truncateBubble, type Activity } from './activity.ts';
-import { mapRole, type OfficeState, type QaRunView, type RunView } from './model.ts';
+import { isFailingCheck, mapRole, type OfficeState, type QaRunView, type RunView } from './model.ts';
 
 export const WALK_SPEED_MPS = 1.4;
 export const MOVE_AFTER_MS = 3000;
@@ -116,7 +116,7 @@ function startLeaving(f: FigureState, g: WaypointGraph, why: 'done' | 'failed', 
 function qaDesire(q: QaRunView, f: FigureState): { activity: Activity; bubble: string } | { leave: 'done' | 'failed' } {
   const entries = Object.entries(q.checks);
   if (q.passed === true) return { activity: 'qa-passed', bubble: 'All checks passed ✓' };
-  const unacked = entries.find(([k, v]) => v === 'failed' && !f.ackedFails.includes(k));
+  const unacked = entries.find(([k, v]) => isFailingCheck(v, q.details?.[k]) && !f.ackedFails.includes(k));
   if (unacked) return { activity: 'qa-failure', bubble: truncateBubble(`Writing up: ${unacked[0]} failed`) };
   const running = entries.find(([, v]) => v === 'running');
   if (running) return { activity: 'qa-testing', bubble: truncateBubble(`Testing: ${running[0]}`) };
@@ -204,7 +204,8 @@ function updateQa(f: FigureState, d: Desc, g: WaypointGraph, work: Map<string, F
     if (target !== f.spotId) walkTo(f, g, target);
   }
   if (f.path.length === 0 && f.activity === 'qa-failure' && nowMs - f.arrivedAt >= FAILURE_HOLD_MS) {
-    f.ackedFails = Object.entries(d.qa!.checks).filter(([, v]) => v === 'failed').map(([k]) => k);
+    const q = d.qa!;
+    f.ackedFails = Object.entries(q.checks).filter(([k, v]) => isFailingCheck(v, q.details?.[k])).map(([k]) => k);
   }
   if (f.path.length === 0 && f.activity === 'qa-passed') {
     if (f.leaveAt === null) f.leaveAt = nowMs + PASSED_HOLD_MS;
@@ -287,8 +288,20 @@ export function whiteboardEntries(s: OfficeState, roomId: number): Array<{ story
   for (const q of [...s.qa.values()].sort((a, b) => a.storyKey.localeCompare(b.storyKey))) {
     if (q.roomId !== roomId || q.passed === true) continue;
     for (const [checkKey, status] of Object.entries(q.checks).sort(([a], [b]) => a.localeCompare(b))) {
-      if (status === 'failed') out.push({ storyKey: q.storyKey, checkKey, summary: `${checkKey} failed` });
+      const detail = q.details?.[checkKey];
+      if (!isFailingCheck(status, detail)) continue;
+      out.push({ storyKey: q.storyKey, checkKey, summary: whiteboardReason(status, detail?.summary) });
     }
   }
   return out;
+}
+
+export const WHITEBOARD_REASON_MAX = 60;
+
+/** The check's recorded result line (already redacted server-side), truncated; else its status in words. */
+function whiteboardReason(status: string, recorded: string | undefined): string {
+  const line = (recorded ?? '').trim();
+  if (line === '') return status.replace(/_/g, ' ');
+  const chars = [...line];
+  return chars.length <= WHITEBOARD_REASON_MAX ? line : `${chars.slice(0, WHITEBOARD_REASON_MAX - 1).join('')}…`;
 }

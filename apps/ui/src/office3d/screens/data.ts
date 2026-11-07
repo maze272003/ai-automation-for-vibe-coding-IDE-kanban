@@ -64,9 +64,20 @@ export function activityScreen(lastActivity: Map<number, ActivityView>): Activit
   return { bars: items.map((a) => ({ kind: a.kind, height: KIND_HEIGHT[a.kind], at: a.at })) };
 }
 
-export type TestRow = { checkKey: string; status: 'running' | 'failed' | 'passed' | 'other' };
+export type TestRow = { checkKey: string; status: 'running' | 'failed' | 'passed' | 'other'; duration: string | null };
 export type TestBoardData = { storyKey: string | null; rows: TestRow[]; passed: boolean | null };
 export const MAX_TEST_ROWS = 8;
+
+/** Compact check duration for the test board: "<1s", "12s", "2m5s", "1m"; null when unknown. */
+export function formatCheckDuration(ms: number | null | undefined): string | null {
+  if (ms === null || ms === undefined || !Number.isFinite(ms) || ms < 0) return null;
+  if (ms < 1000) return '<1s';
+  const sec = Math.floor(ms / 1000);
+  if (sec < 60) return `${sec}s`;
+  const m = Math.floor(sec / 60);
+  const r = sec % 60;
+  return r === 0 ? `${m}m` : `${m}m${r}s`;
+}
 
 export function testBoardScreen(qa: QaRunView | null): TestBoardData {
   if (!qa) return { storyKey: null, rows: [], passed: null };
@@ -76,6 +87,7 @@ export function testBoardScreen(qa: QaRunView | null): TestBoardData {
     .map(([checkKey, v]): TestRow => ({
       checkKey,
       status: v === 'running' ? 'running' : v === 'failed' ? 'failed' : v === 'passed' ? 'passed' : 'other',
+      duration: v === 'running' ? null : formatCheckDuration(qa.details?.[checkKey]?.durationMs),
     }));
   return { storyKey: qa.storyKey, rows, passed: qa.passed };
 }

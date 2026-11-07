@@ -4,7 +4,7 @@ import { defaultRoomLayout } from '../../src/office3d/layout/room.ts';
 import { buildWaypointGraph, type WaypointGraph } from '../../src/office3d/layout/waypoints.ts';
 import { emptyOfficeState, type ActivityView, type OfficeState, type QaRunView, type RunView } from '../../src/office3d/state/model.ts';
 import { ACTIVITY_SPOT, classifyActivity, type Activity } from '../../src/office3d/state/activity.ts';
-import { stepFigures, whiteboardEntries, type FigureState } from '../../src/office3d/state/figures.ts';
+import { stepFigures, WHITEBOARD_REASON_MAX, whiteboardEntries, type FigureState } from '../../src/office3d/state/figures.ts';
 
 const graph = buildWaypointGraph(defaultRoomLayout(), { implementer: 4, reviewer: 2 });
 const graphs = new Map<number, WaypointGraph>([[1, graph]]);
@@ -308,10 +308,27 @@ describe('whiteboardEntries', () => {
     const s = base();
     const q: QaRunView = { storyId: 3, storyKey: 'AIK-3', roomId: 1, verificationRunId: 1, checks: { lint: 'failed', unit: 'passed' }, startedAt: 0, finishedAt: 5, passed: false };
     s.qa.set(3, q);
-    expect(whiteboardEntries(s, 1)).toEqual([{ storyKey: 'AIK-3', checkKey: 'lint', summary: 'lint failed' }]);
+    expect(whiteboardEntries(s, 1)).toEqual([{ storyKey: 'AIK-3', checkKey: 'lint', summary: 'failed' }]);
     expect(whiteboardEntries(s, 2)).toEqual([]);
     q.checks = { lint: 'passed', unit: 'passed' };
     q.passed = true;
     expect(whiteboardEntries(s, 1)).toEqual([]);
+  });
+
+  test('uses the recorded check summary as the short reason; error/timed-out/unsupported mandatory checks are listed', () => {
+    const s = base();
+    s.qa.set(3, {
+      storyId: 3, storyKey: 'AIK-3', roomId: 1, verificationRunId: 1, startedAt: 0, finishedAt: 5, passed: false,
+      checks: { lint: 'failed', unit: 'timed_out', e2e: 'unsupported', docs: 'unsupported', fmt: 'passed' },
+      details: { lint: { summary: 'src/a.ts: 3 errors' }, docs: { mandatory: false }, unit: { summary: '   ' } },
+    });
+    expect(whiteboardEntries(s, 1)).toEqual([
+      { storyKey: 'AIK-3', checkKey: 'e2e', summary: 'unsupported' },
+      { storyKey: 'AIK-3', checkKey: 'lint', summary: 'src/a.ts: 3 errors' },
+      { storyKey: 'AIK-3', checkKey: 'unit', summary: 'timed out' },
+    ]);
+    // The recorded line is truncated for the board.
+    s.qa.get(3)!.details!.lint = { summary: 'x'.repeat(200) };
+    expect(whiteboardEntries(s, 1).find((e) => e.checkKey === 'lint')!.summary).toBe(`${'x'.repeat(WHITEBOARD_REASON_MAX - 1)}…`);
   });
 });

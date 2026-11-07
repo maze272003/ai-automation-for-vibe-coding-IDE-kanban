@@ -1,7 +1,9 @@
 import { ROLE, type EventEnvelope, type Role, type StationRole } from '@aik/contracts';
 import {
   COMPLETED_WINDOW_MS,
+  isFailingCheck,
   mapRole,
+  type CheckDetail,
   type ActivityView,
   type OfficeInput,
   type OfficeState,
@@ -9,8 +11,6 @@ import {
   type RunView,
   type StoryInfo,
 } from './model.ts';
-
-const FAILED_CHECK = new Set(['failed', 'error', 'timed_out']);
 
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 const num = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : null);
@@ -150,10 +150,18 @@ function reduceSnapshot(s: OfficeState, snap: OfficeSnapshotInput): OfficeState 
     for (const v of room.verification) {
       learn(v.storyId, v.storyKey, null, null, 0);
       const checks: Record<string, string> = {};
-      for (const c of v.checks) checks[c.checkKey] = c.status;
+      const details: Record<string, CheckDetail> = {};
+      for (const c of v.checks) {
+        checks[c.checkKey] = c.status;
+        details[c.checkKey] = {
+          summary: c.summary,
+          ...(c.durationMs !== undefined ? { durationMs: c.durationMs } : {}),
+          ...(c.mandatory !== undefined ? { mandatory: c.mandatory } : {}),
+        };
+      }
       const running = v.status === 'running';
       n.qa.set(v.storyId, {
-        storyId: v.storyId, storyKey: v.storyKey, roomId: id, verificationRunId: v.verificationRunId, checks,
+        storyId: v.storyId, storyKey: v.storyKey, roomId: id, verificationRunId: v.verificationRunId, checks, details,
         startedAt: snap.generatedAt, finishedAt: running ? null : snap.generatedAt,
         passed: running ? null : v.status === 'passed',
       });
@@ -269,9 +277,17 @@ function reduceEvent(s: OfficeState, e: EventEnvelope, nowMs: number): OfficeSta
         q = { storyId, storyKey, roomId, verificationRunId: vrun, checks: {}, startedAt: nowMs, finishedAt: null, passed: null, ...(prevFailed ? { previousFailed: true } : {}) };
       }
       const checks = { ...q.checks, [checkKey]: status };
+      const detail: CheckDetail = {};
+      if (e.topic === 'check.finished') {
+        const mandatory = typeof d.mandatory === 'boolean' ? d.mandatory : null;
+        const durationMs = num(d.durationMs);
+        if (mandatory !== null) detail.mandatory = mandatory;
+        if (durationMs !== null) detail.durationMs = Math.max(0, durationMs);
+      }
+      const details = { ...q.details, [checkKey]: detail }; // a (re)start clears the previous result
       const anyRunning = Object.values(checks).some((v) => v === 'running');
-      const anyFailed = Object.values(checks).some((v) => FAILED_CHECK.has(v));
-      const next: QaRunView = { ...q, checks };
+      const anyFailed = Object.entries(checks).some(([k, v]) => isFailingCheck(v, details[k]));
+      const next: QaRunView = { ...q, checks, details };
       if (anyFailed) {
         next.passed = false;
         next.finishedAt = anyRunning ? null : nowMs;

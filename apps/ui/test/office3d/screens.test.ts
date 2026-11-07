@@ -2,7 +2,7 @@ import { describe, expect, test } from 'vitest';
 import { STORY_STATUS, type RoomCustomization, type StoryStatus } from '@aik/contracts';
 import { PIXEL_FONT, measurePixelText, paintPixelText, type Ctx2D } from '../../src/office3d/screens/pixel-font.ts';
 import {
-  activityScreen, dataSignature, kanbanScreen, pmScreen, runsScreen, signText, testBoardScreen,
+  activityScreen, dataSignature, formatCheckDuration, kanbanScreen, pmScreen, runsScreen, signText, testBoardScreen,
 } from '../../src/office3d/screens/data.ts';
 import { paintActivity, paintBubble, paintKanban, paintPm, paintRuns, paintSign, paintTestBoard, paintWhiteboard } from '../../src/office3d/screens/paint.ts';
 import type { StationView } from '../../src/office3d/state/selectors.ts';
@@ -93,6 +93,22 @@ describe('screen data', () => {
     const t = testBoardScreen({ storyId: 1, storyKey: 'S-1', roomId: 1, verificationRunId: 1, checks, startedAt: 0, finishedAt: null, passed: null });
     expect(t.rows.length).toBe(8);
     expect(testBoardScreen(null).rows).toEqual([]);
+  });
+  test('testBoardScreen shows each check duration ("12s"), blank while unknown', () => {
+    const t = testBoardScreen({
+      storyId: 1, storyKey: 'S-1', roomId: 1, verificationRunId: 1, startedAt: 0, finishedAt: null, passed: null,
+      checks: { lint: 'passed', unit: 'running', e2e: 'failed', slow: 'passed' },
+      details: { lint: { durationMs: 12_400 }, e2e: { durationMs: 300 }, slow: { durationMs: 125_000 } },
+    });
+    expect(t.rows.map((r) => [r.checkKey, r.duration])).toEqual([['e2e', '<1s'], ['lint', '12s'], ['slow', '2m5s'], ['unit', null]]);
+  });
+  test('formatCheckDuration', () => {
+    expect(formatCheckDuration(null)).toBeNull();
+    expect(formatCheckDuration(undefined)).toBeNull();
+    expect(formatCheckDuration(999)).toBe('<1s');
+    expect(formatCheckDuration(59_900)).toBe('59s');
+    expect(formatCheckDuration(60_000)).toBe('1m');
+    expect(formatCheckDuration(3_725_000)).toBe('62m5s');
   });
   test('pmScreen text', () => {
     const p = pmScreen({ board: { ...board, DONE: 12, NEW: 8 }, blocked: [], doneToday: 3, state: 'working' });

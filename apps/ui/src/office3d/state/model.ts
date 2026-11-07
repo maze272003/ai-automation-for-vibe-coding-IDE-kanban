@@ -18,12 +18,25 @@ export type StoryRoleOutcome = {
   reason?: string;
 };
 
+/** Per-check extras: duration (test board), recorded result line (whiteboard), mandatory flag (QA pass/fail). */
+export type CheckDetail = { durationMs?: number | null; summary?: string; mandatory?: boolean };
+
+/**
+ * Backend semantics (verify/runner.ts): verification passes only when every mandatory check passed, so a
+ * finished check fails it when its status is anything but 'passed' (failed, error, timed_out, skipped,
+ * unsupported). A check of unknown mandatoriness counts as mandatory (secrets/vulnerabilities always are).
+ */
+export function isFailingCheck(status: string, detail?: CheckDetail): boolean {
+  return status !== 'running' && status !== 'passed' && detail?.mandatory !== false;
+}
+
 export type QaRunView = {
   storyId: number;
   storyKey: string;
   roomId: number;
   verificationRunId: number;
   checks: Record<string, 'running' | string>;
+  details?: Record<string, CheckDetail>;
   startedAt: number;
   finishedAt: number | null;
   passed: boolean | null;

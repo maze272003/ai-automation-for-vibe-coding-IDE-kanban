@@ -16,7 +16,7 @@ type Entries = ReturnType<typeof whiteboardEntries>;
  * Board face of the audit whiteboard item (props.ts: the whiteboard model sits at item-local z = -0.15, 0.25 m
  * deep, scaled 1.3 x 1.2): the content plane covers its frame, just in front of it, facing item-local +z.
  */
-const BOARD = { z: 0.01, y: 0.9, w: 2.2, h: 1.1, px: [128, 64] as [number, number] };
+const BOARD = { z: 0.01, y: 0.9, w: 2.2, h: 1.1, px: [256, 128] as [number, number] };
 
 /** The audit whiteboard of one suite: the failed checks QA wrote up (§6.4a), repainted only when they change. */
 export const Whiteboard = memo(function Whiteboard({ model, entries }: { model: SuiteModel; entries: Entries }) {

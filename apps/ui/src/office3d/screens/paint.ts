@@ -84,7 +84,9 @@ export function paintTestBoard(ctx: Ctx2D, data: TestBoardData, w: number, h: nu
     const y = 2 + i * rowH;
     if (y + GLYPH_H > h) return;
     paintPixelText(ctx, CHECK_MARK[r.status]!, 3, y, 1, CHECK_COLOR[r.status]!);
-    paintPixelText(ctx, fit(r.checkKey, Math.max(1, Math.floor((w - 14) / 6))), 12, y, 1, TEXT);
+    const durW = r.duration ? measurePixelText(r.duration, 1) + 6 : 0;
+    paintPixelText(ctx, fit(r.checkKey, Math.max(1, Math.floor((w - 14 - durW) / 6))), 12, y, 1, TEXT);
+    if (r.duration) paintPixelText(ctx, r.duration, w - measurePixelText(r.duration, 1) - 3, y, 1, DIM);
   });
   if (data.passed !== null) rect(ctx, data.passed ? GREEN : RED, 0, h - 2, w, 2);
 }
@@ -101,14 +103,16 @@ export function paintPm(ctx: Ctx2D, data: PmScreenData, w: number, h: number): v
   void h;
 }
 
-export function paintWhiteboard(ctx: Ctx2D, entries: Array<{ storyKey: string; checkKey: string; summary: string }>, w = 128, h = 64): void {
+/** Audit whiteboard: per failed check, "<story> <check>" in red, then its short reason indented in slate. */
+export function paintWhiteboard(ctx: Ctx2D, entries: Array<{ storyKey: string; checkKey: string; summary: string }>, w = 256, h = 128): void {
   ctx.clearRect(0, 0, w, h);
   rect(ctx, '#f8fafc', 0, 0, w, h);
   const rowH = GLYPH_H + 3;
   entries.forEach((e, i) => {
-    const y = 2 + i * rowH;
-    if (y + GLYPH_H > h) return;
-    paintPixelText(ctx, fit(`${e.storyKey} ${e.summary}`, Math.max(1, Math.floor((w - 4) / 6))), 3, y, 1, '#dc2626');
+    const y = 2 + i * 2 * rowH;
+    if (y + rowH + GLYPH_H > h) return;
+    paintPixelText(ctx, fit(`${e.storyKey} ${e.checkKey}`, Math.max(1, Math.floor((w - 4) / 6))), 3, y, 1, '#dc2626');
+    paintPixelText(ctx, fit(e.summary, Math.max(1, Math.floor((w - 10) / 6))), 9, y + rowH, 1, '#334155');
   });
 }
 
