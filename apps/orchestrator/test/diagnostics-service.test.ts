@@ -32,10 +32,6 @@ function writeLog(dir: string, name: string, content: string): string {
   return file;
 }
 
-function line(ch: string, count: number, prefix = ''): string {
-  return `${prefix}${ch.repeat(count)}\n`;
-}
-
 /** Symlinks need Developer Mode/Administrator on Windows: probe once and skip if unavailable. */
 const symlinkProbeDir = makeTempDir('aik-symlink-probe-');
 let symlinkSupported = false;
@@ -204,9 +200,9 @@ describe('DiagnosticsService (IDE-7)', () => {
       expect(scannedFiles).toBe(2);
       expect(errors).toHaveLength(4);
       expect(errors.map((e) => e.level)).toEqual(['warn', 'fatal', 'error', 'warn']);
-      expect(errors[2].message).toBe('error epoch');
-      expect(errors[1].detail).toBe('stack line');
-      expect(errors[3].message).toBe('warn one');
+      expect(errors[2]?.message).toBe('error epoch');
+      expect(errors[1]?.detail).toBe('stack line');
+      expect(errors[3]?.message).toBe('warn one');
       expect(errors.some((e) => e.message === 'debug-ish info' || e.message === 'ignored info')).toBe(false);
 
       const all = service.recentErrors(50);
@@ -235,7 +231,7 @@ describe('DiagnosticsService (IDE-7)', () => {
       expect(dropped.some((e) => e.message.includes(FAKE_GITHUB_TOKEN))).toBe(false);
       expect(dropped.some((e) => e.message.includes(FAKE_AWS_KEY))).toBe(false);
       expect(dropped.map((e) => e.message)).toEqual(['ordinary failure']);
-      expect(dropped[0].detail).toBe('boom');
+      expect(dropped[0]?.detail).toBe('boom');
     });
 
     test('returns an empty list when logs are not configured', () => {
@@ -331,7 +327,7 @@ describe('DiagnosticsService (IDE-7)', () => {
       const listed = service.listBackups();
       expect(listed).toHaveLength(1);
       expect(listed[0]).toEqual({ name: result.name, size: result.size, modifiedAt: expect.any(String) });
-      expect(Number.isFinite(Date.parse(listed[0].modifiedAt))).toBe(true);
+      expect(Number.isFinite(Date.parse(listed[0]?.modifiedAt ?? ''))).toBe(true);
       expect(JSON.stringify(listed)).not.toContain(dir);
     });
 
@@ -386,7 +382,7 @@ describe('DiagnosticsService (IDE-7)', () => {
       expect(result.ok).toBe(true);
       const listed = service.listBackups();
       expect(listed).toHaveLength(DIAGNOSTICS_MAX_BACKUPS);
-      expect(listed[0].name).toBe(backupFileName(new Date('2026-07-01T00:00:00.000Z')));
+      expect(listed[0]?.name).toBe(backupFileName(new Date('2026-07-01T00:00:00.000Z')));
     });
 
     test('never throws and maps failures to stable reasons', async () => {

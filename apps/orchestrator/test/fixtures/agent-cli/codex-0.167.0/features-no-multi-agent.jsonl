@@ -1,0 +1,5 @@
+daemon_auto_start stable false
+apps stable true
+multi_agent stable false
+hooks stable true
+web_search_cached deprecated false

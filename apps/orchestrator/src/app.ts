@@ -75,16 +75,32 @@ export interface OrchestratorOptions {
    * bridge; absence means the feature is off and no office wiring exists at all.
    */
   agentOffice?: OfficeConfig;
+  /**
+   * The environment the orchestrator reads its settings from (default `process.env`). Later
+   * tasks resolve agent binaries and detection from it, so tests pass an explicit environment
+   * instead of stubbing the global one.
+   */
+  env?: NodeJS.ProcessEnv;
+}
+
+/**
+ * Read-only test seam (composition-root rule, plan 6.1a-21): the objects `startOrchestrator()`
+ * actually built, so `app-wiring.test.ts` inspects the real composition — nothing re-created.
+ */
+export interface OrchestratorWiring {
+  readonly runner: AgentRunner;
 }
 
 export interface RunningOrchestrator {
   port: number;
   /** Loopback port of the model gateway; null when the orchestrator runs without one. */
   gatewayPort: number | null;
+  readonly wiring: OrchestratorWiring;
   close(): Promise<void>;
 }
 
 export async function startOrchestrator(opts: OrchestratorOptions): Promise<RunningOrchestrator> {
+  const env = opts.env ?? process.env;
   const paths = dataPaths(opts.dataDir);
   fs.mkdirSync(paths.logs, { recursive: true });
   const redactor = createRedactor();
@@ -242,7 +258,7 @@ export async function startOrchestrator(opts: OrchestratorOptions): Promise<Runn
   officeBridge?.start();
   // How many repositories may be worked on at the same time (spec ADV-1). The cap keeps one
   // machine from running more model sessions and test suites at once than it can carry.
-  const maxConcurrentLanes = Number.parseInt(process.env.AIK_MAX_CONCURRENT_LANES ?? '', 10);
+  const maxConcurrentLanes = Number.parseInt(env.AIK_MAX_CONCURRENT_LANES ?? '', 10);
   const runner = new AgentRunner({
     db,
     queue,
@@ -254,6 +270,8 @@ export async function startOrchestrator(opts: OrchestratorOptions): Promise<Runn
     reviewer,
     merger,
     remoteMerger: githubMerge,
+    logger,
+    redact: redactor.redact,
     ...(Number.isInteger(maxConcurrentLanes) && maxConcurrentLanes > 0 ? { maxConcurrentLanes } : {}),
   });
   runner.start();
@@ -322,6 +340,7 @@ export async function startOrchestrator(opts: OrchestratorOptions): Promise<Runn
   return {
     port,
     gatewayPort: gateway?.port ?? null,
+    wiring: Object.freeze({ runner }),
     close: async () => {
       clearInterval(pollTimer);
       if (gateway) await gateway.close();

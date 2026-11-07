@@ -1,9 +1,10 @@
 import { ProjectSettings, type BlockedReason } from '@aik/contracts';
-import { durableJobs, mergeApprovals, plans, projects, reviews, userStories, verificationRuns, agentRuns, type AikDb } from '@aik/db';
+import { durableJobs, mergeApprovals, plans, projects, reviews, storyEvents, userStories, verificationRuns, agentRuns, type AikDb } from '@aik/db';
 import { and, desc, eq, inArray, isNull } from 'drizzle-orm';
 import type { EventBus } from '../events/bus.ts';
 import { heavyLane } from '../jobs/lane.ts';
-import type { JobQueue, LeasedJob } from '../jobs/queue.ts';
+import type { JobKind, JobQueue, LeasedJob } from '../jobs/queue.ts';
+import { createRedactor } from '../secrets/redactor.ts';
 import { systemClock, type Clock } from '../time.ts';
 import type { VerificationRunner } from '../verify/runner.ts';
 import type { WorkflowService } from '../workflow/service.ts';
@@ -28,6 +29,17 @@ const MAX_PLANNING_ATTEMPTS = 3;
  */
 const DEFAULT_MAX_CONCURRENT_LANES = 3;
 
+/**
+ * The slice of the app logger the runner needs. Structurally satisfied by the pino logger that
+ * `app.ts` passes; tests may pass spies.
+ */
+export interface RunnerLogger {
+  error(obj: Record<string, unknown>, msg: string): void;
+  warn(obj: Record<string, unknown>, msg: string): void;
+}
+
+type JobHandler = (job: LeasedJob) => Promise<void>;
+
 export interface AgentRunnerDeps {
   db: AikDb;
   queue: JobQueue;
@@ -45,6 +57,17 @@ export interface AgentRunnerDeps {
   heartbeatMs?: number;
   /** How many lanes may run a heavy job at the same time (spec ADV-1: parallel projects). */
   maxConcurrentLanes?: number;
+  /**
+   * Where the runner reports wiring problems (an unwired job kind, a merge job without a merger).
+   * Optional so existing constructions stay unchanged; the default writes redacted JSON lines
+   * to stderr. `app.ts` passes its pino logger.
+   */
+  logger?: RunnerLogger;
+  /**
+   * Redacts text before the runner persists it (story activity lines). Defaults to the
+   * pattern-only redactor; `app.ts` passes the app redactor, which also knows the run's secrets.
+   */
+  redact?: (text: string) => string;
 }
 
 export class AgentRunner {
@@ -62,6 +85,14 @@ export class AgentRunner {
   private readonly pollIntervalMs: number;
   private readonly heartbeatMs: number;
   private readonly maxConcurrentLanes: number;
+  private readonly logger: RunnerLogger;
+  private readonly redact: (text: string) => string;
+  /**
+   * The dispatch table (composition-root rule, plan 6.1a-21): one entry per job kind whose
+   * handler deps were passed to the constructor. A claimed job whose kind has no entry is failed
+   * with `unwired_job_kind`, never completed silently.
+   */
+  private readonly handlers: Partial<Record<JobKind, JobHandler>>;
 
   private running = false;
   private isTicking = false;
@@ -85,6 +116,22 @@ export class AgentRunner {
     this.pollIntervalMs = deps.pollIntervalMs ?? 1000;
     this.heartbeatMs = deps.heartbeatMs ?? 20_000;
     this.maxConcurrentLanes = deps.maxConcurrentLanes ?? DEFAULT_MAX_CONCURRENT_LANES;
+    this.redact = deps.redact ?? createRedactor().redact;
+    this.logger = deps.logger ?? stderrLogger(this.redact);
+    // planner, implementer, verification and reviewer are required deps; merge is always wired
+    // because its handler keeps the explicit no-merger branch (completes, with a warning).
+    this.handlers = {
+      plan: (job) => this.handlePlanJob(job),
+      implement: (job) => this.handleImplementJob(job),
+      verify: (job) => this.handleVerifyJob(job),
+      review: (job) => this.handleReviewJob(job),
+      merge: (job) => this.handleMergeJob(job),
+    };
+  }
+
+  /** The job kinds this runner can dispatch (read-only introspection for the wiring test). */
+  wiredJobKinds(): ReadonlySet<JobKind> {
+    return new Set(Object.keys(this.handlers) as JobKind[]);
   }
 
   start(): void {
@@ -402,29 +449,49 @@ export class AgentRunner {
   }
 
   private async handleJob(job: LeasedJob): Promise<void> {
-    switch (job.kind) {
-      case 'plan':
-        await this.handlePlanJob(job);
-        return;
-      case 'implement':
-        await this.handleImplementJob(job);
-        return;
-      case 'verify':
-        await this.handleVerifyJob(job);
-        return;
-      case 'review':
-        await this.handleReviewJob(job);
-        return;
-      case 'merge':
-        await this.handleMergeJob(job);
-        return;
-      default:
-        this.queue.complete(job.id, job.leaseToken);
+    // Own-property lookup only: a kind string read from the database must never resolve to an
+    // inherited Object.prototype member.
+    const handler = Object.hasOwn(this.handlers, job.kind) ? this.handlers[job.kind] : undefined;
+    if (handler) {
+      await handler(job);
+      return;
+    }
+    this.failUnwired(job);
+  }
+
+  /**
+   * No silent complete (composition-root rule): a job kind without a handler is a wiring bug.
+   * The job ends `failed` (terminal, no retry), the error is logged, and the story — when the job
+   * names one — gets one redacted activity line so the stall is visible on the board.
+   */
+  private failUnwired(job: LeasedJob): void {
+    const kind = String(job.kind);
+    this.queue.fail(job.id, job.leaseToken, `unwired_job_kind: ${kind}`, { retry: false });
+    this.logger.error({ jobId: job.id, kind }, 'unwired job kind');
+    const payloadStoryId = job.payload.storyId;
+    const storyId = job.storyId ?? (typeof payloadStoryId === 'number' && Number.isInteger(payloadStoryId) ? payloadStoryId : null);
+    if (storyId === null) return;
+    try {
+      const story = this.db.select({ id: userStories.id }).from(userStories).where(eq(userStories.id, storyId)).get();
+      if (!story) return;
+      this.db
+        .insert(storyEvents)
+        .values({
+          storyId,
+          type: 'internal_error',
+          actor: 'system',
+          payload: { message: this.redact(`internal error: no handler for job kind ${kind}`), jobId: job.id },
+          createdAt: new Date(this.now()),
+        })
+        .run();
+    } catch (err) {
+      this.logger.warn({ jobId: job.id, storyId, err: this.redact(err instanceof Error ? err.message : String(err)) }, 'could not record unwired job kind on the story');
     }
   }
 
   private async handleMergeJob(job: LeasedJob): Promise<void> {
     if (!job.storyId || !this.merger) {
+      if (!this.merger) this.logger.warn({ jobId: job.id, kind: job.kind }, 'merge job completed without merging: no merger configured');
       this.complete(job);
       return;
     }
@@ -592,4 +659,16 @@ export class AgentRunner {
     if (!current || !['IN_PROGRESS', 'TESTING', 'READY_FOR_REVIEW', 'REWORK', 'AWAITING_MERGE'].includes(current.status)) return;
     this.workflow.transition({ storyId, event: { type: 'fail', reason, detail }, actor: 'system' });
   }
+}
+
+/** The default runner logger: one redacted JSON line per entry on stderr. */
+function stderrLogger(redact: (text: string) => string): RunnerLogger {
+  const write = (level: 'error' | 'warn', obj: Record<string, unknown>, msg: string): void => {
+    process.stderr.write(`${redact(JSON.stringify({ level, msg, ...obj }))}
+`);
+  };
+  return {
+    error: (obj, msg) => write('error', obj, msg),
+    warn: (obj, msg) => write('warn', obj, msg),
+  };
 }

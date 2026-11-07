@@ -1,0 +1,12 @@
+Manage Codex sandbox settings
+
+Usage: codex sandbox <command> [options]
+
+Commands:
+  status   Print the active sandbox policy
+  set      Change the sandbox policy for this workspace
+
+Options:
+  -h, --help   Show this help
+
+Policies: read-only, workspace-write, danger-full-access

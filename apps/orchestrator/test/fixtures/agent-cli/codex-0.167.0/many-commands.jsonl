@@ -1,0 +1,10 @@
+{"type":"session.configured","model":"gpt-6.1-sol"}
+{"type":"command","id":"c1"}
+{"type":"command","id":"c2"}
+{"type":"command","id":"c3"}
+{"type":"command","id":"c4"}
+{"type":"command","id":"c5"}
+{"type":"command","id":"c6"}
+{"type":"command","id":"c7"}
+{"type":"command","id":"c8"}
+{"type":"turn.completed","usage":{"input_tokens":10,"cached_input_tokens":0,"output_tokens":5}}

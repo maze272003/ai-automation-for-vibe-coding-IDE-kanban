@@ -17,8 +17,25 @@ export const BLOCKED_REASON = [
 ] as const;
 export type BlockedReason = (typeof BLOCKED_REASON)[number];
 
-export const ROLE = ['planner', 'implementer', 'reviewer'] as const;
+/** Agent roles. The UI labels `implementer` "Coder" (`ROLE_LABELS`); `coder` is never persisted. */
+export const ROLE = ['planner', 'implementer', 'reviewer', 'qa', 'security'] as const;
 export type Role = (typeof ROLE)[number];
+
+/** Agent runtimes a role can be routed to (spec §5.1, §5.5). */
+export const RUNTIME_KIND = ['opencode', 'claude-code', 'codex'] as const;
+export type RuntimeKind = (typeof RUNTIME_KIND)[number];
+
+/** Reasoning efforts. `max` and `ultra` are explicit per-role overrides only (spec §5.6, R16). */
+export const EFFORT = ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'] as const;
+export type Effort = (typeof EFFORT)[number];
+
+/** Efforts the model router may choose on its own; never `max` or `ultra`. */
+export const AUTO_EFFORTS = ['low', 'medium', 'high', 'xhigh'] as const satisfies readonly Effort[];
+export type AutoEffort = (typeof AUTO_EFFORTS)[number];
+
+/** Normalized failure classes of a CLI runtime run (spec §5.1). */
+export const RUNTIME_FAILURE = ['auth', 'quota', 'not_installed', 'timeout', 'budget', 'crashed', 'invalid_output'] as const;
+export type RuntimeFailure = (typeof RUNTIME_FAILURE)[number];
 
 export const PRIORITY = ['P0', 'P1', 'P2', 'P3'] as const;
 export type Priority = (typeof PRIORITY)[number];

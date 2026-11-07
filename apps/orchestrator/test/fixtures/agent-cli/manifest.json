@@ -1,0 +1,462 @@
+{
+  "claude-2.1.319/version-ok": {
+    "file": "version-ok.jsonl",
+    "cli": "claude",
+    "cliVersion": "2.1.319",
+    "provenance": "synthetic",
+    "sha256": "synthetic",
+    "exitCode": 0
+  },
+  "claude-2.1.319/version-old": {
+    "file": "version-old.jsonl",
+    "cli": "claude",
+    "cliVersion": "2.1.319",
+    "provenance": "synthetic",
+    "sha256": "synthetic",
+    "exitCode": 0
+  },
+  "claude-2.1.319/auth-signed-in": {
+    "file": "auth-signed-in.jsonl",
+    "cli": "claude",
+    "cliVersion": "2.1.319",
+    "provenance": "synthetic",
+    "sha256": "synthetic",
+    "exitCode": 0
+  },
+  "claude-2.1.319/auth-signed-out": {
+    "file": "auth-signed-out.jsonl",
+    "cli": "claude",
+    "cliVersion": "2.1.319",
+    "provenance": "synthetic",
+    "sha256": "synthetic",
+    "exitCode": 0
+  },
+  "claude-2.1.319/auth-expiring": {
+    "file": "auth-expiring.jsonl",
+    "cli": "claude",
+    "cliVersion": "2.1.319",
+    "provenance": "synthetic",
+    "sha256": "synthetic",
+    "exitCode": 0
+  },
+  "claude-2.1.319/purge-ok": {
+    "file": "purge-ok.jsonl",
+    "cli": "claude",
+    "cliVersion": "2.1.319",
+    "provenance": "synthetic",
+    "sha256": "synthetic",
+    "exitCode": 0
+  },
+  "claude-2.1.319/success": {
+    "file": "success.jsonl",
+    "cli": "claude",
+    "cliVersion": "2.1.319",
+    "provenance": "synthetic",
+    "sha256": "synthetic",
+    "exitCode": 0
+  },
+  "claude-2.1.319/structured-ok": {
+    "file": "structured-ok.jsonl",
+    "cli": "claude",
+    "cliVersion": "2.1.319",
+    "provenance": "synthetic",
+    "sha256": "synthetic",
+    "exitCode": 0,
+    "writesOutput": true
+  },
+  "claude-2.1.319/structured-invalid": {
+    "file": "structured-invalid.jsonl",
+    "cli": "claude",
+    "cliVersion": "2.1.319",
+    "provenance": "synthetic",
+    "sha256": "synthetic",
+    "exitCode": 0,
+    "writesOutput": true
+  },
+  "claude-2.1.319/auth": {
+    "file": "auth.jsonl",
+    "cli": "claude",
+    "cliVersion": "2.1.319",
+    "provenance": "synthetic",
+    "sha256": "synthetic",
+    "exitCode": 1
+  },
+  "claude-2.1.319/quota": {
+    "file": "quota.jsonl",
+    "cli": "claude",
+    "cliVersion": "2.1.319",
+    "provenance": "synthetic",
+    "sha256": "synthetic",
+    "exitCode": 1
+  },
+  "claude-2.1.319/budget": {
+    "file": "budget.jsonl",
+    "cli": "claude",
+    "cliVersion": "2.1.319",
+    "provenance": "synthetic",
+    "sha256": "synthetic",
+    "exitCode": 1
+  },
+  "claude-2.1.319/crash": {
+    "file": "crash.jsonl",
+    "cli": "claude",
+    "cliVersion": "2.1.319",
+    "provenance": "synthetic",
+    "sha256": "synthetic",
+    "exitCode": 1
+  },
+  "claude-2.1.319/hang": {
+    "file": "hang.jsonl",
+    "cli": "claude",
+    "cliVersion": "2.1.319",
+    "provenance": "synthetic",
+    "sha256": "synthetic",
+    "exitCode": 0
+  },
+  "claude-2.1.319/exit-on-stop": {
+    "file": "exit-on-stop.jsonl",
+    "cli": "claude",
+    "cliVersion": "2.1.319",
+    "provenance": "synthetic",
+    "sha256": "synthetic",
+    "exitCode": 0
+  },
+  "claude-2.1.319/malformed": {
+    "file": "malformed.jsonl",
+    "cli": "claude",
+    "cliVersion": "2.1.319",
+    "provenance": "synthetic",
+    "sha256": "synthetic",
+    "exitCode": 0
+  },
+  "claude-2.1.319/writes-file": {
+    "file": "writes-file.jsonl",
+    "cli": "claude",
+    "cliVersion": "2.1.319",
+    "provenance": "synthetic",
+    "sha256": "synthetic",
+    "exitCode": 0
+  },
+  "claude-2.1.319/code-writes-file": {
+    "file": "code-writes-file.jsonl",
+    "cli": "claude",
+    "cliVersion": "2.1.319",
+    "provenance": "synthetic",
+    "sha256": "synthetic",
+    "exitCode": 0
+  },
+  "claude-2.1.319/subagents": {
+    "file": "subagents.jsonl",
+    "cli": "claude",
+    "cliVersion": "2.1.319",
+    "provenance": "synthetic",
+    "sha256": "synthetic",
+    "exitCode": 0
+  },
+  "claude-2.1.319/many-commands": {
+    "file": "many-commands.jsonl",
+    "cli": "claude",
+    "cliVersion": "2.1.319",
+    "provenance": "synthetic",
+    "sha256": "synthetic",
+    "exitCode": 0
+  },
+  "claude-2.1.319/usage-at-end": {
+    "file": "usage-at-end.jsonl",
+    "cli": "claude",
+    "cliVersion": "2.1.319",
+    "provenance": "synthetic",
+    "sha256": "synthetic",
+    "exitCode": 0
+  },
+  "claude-2.1.319/plan-ok": {
+    "file": "plan-ok.jsonl",
+    "cli": "claude",
+    "cliVersion": "2.1.319",
+    "provenance": "synthetic",
+    "sha256": "synthetic",
+    "exitCode": 0,
+    "writesOutput": true,
+    "contract": "PlanV1"
+  },
+  "claude-2.1.319/plan-invalid": {
+    "file": "plan-invalid.jsonl",
+    "cli": "claude",
+    "cliVersion": "2.1.319",
+    "provenance": "synthetic",
+    "sha256": "synthetic",
+    "exitCode": 0,
+    "writesOutput": true,
+    "contract": "PlanV1"
+  },
+  "claude-2.1.319/review-approve": {
+    "file": "review-approve.jsonl",
+    "cli": "claude",
+    "cliVersion": "2.1.319",
+    "provenance": "synthetic",
+    "sha256": "synthetic",
+    "exitCode": 0,
+    "writesOutput": true,
+    "contract": "ReviewV1"
+  },
+  "claude-2.1.319/review-changes": {
+    "file": "review-changes.jsonl",
+    "cli": "claude",
+    "cliVersion": "2.1.319",
+    "provenance": "synthetic",
+    "sha256": "synthetic",
+    "exitCode": 0,
+    "writesOutput": true,
+    "contract": "ReviewV1"
+  },
+  "claude-2.1.319/ask-ok": {
+    "file": "ask-ok.jsonl",
+    "cli": "claude",
+    "cliVersion": "2.1.319",
+    "provenance": "synthetic",
+    "sha256": "synthetic",
+    "exitCode": 0
+  },
+  "codex-0.167.0/version-ok": {
+    "file": "version-ok.jsonl",
+    "cli": "codex",
+    "cliVersion": "0.167.0",
+    "provenance": "synthetic",
+    "sha256": "synthetic",
+    "exitCode": 0
+  },
+  "codex-0.167.0/auth-signed-in": {
+    "file": "auth-signed-in.jsonl",
+    "cli": "codex",
+    "cliVersion": "0.167.0",
+    "provenance": "synthetic",
+    "sha256": "synthetic",
+    "exitCode": 0
+  },
+  "codex-0.167.0/auth-signed-out": {
+    "file": "auth-signed-out.jsonl",
+    "cli": "codex",
+    "cliVersion": "0.167.0",
+    "provenance": "synthetic",
+    "sha256": "synthetic",
+    "exitCode": 0
+  },
+  "codex-0.167.0/auth-expiring": {
+    "file": "auth-expiring.jsonl",
+    "cli": "codex",
+    "cliVersion": "0.167.0",
+    "provenance": "synthetic",
+    "sha256": "synthetic",
+    "exitCode": 0
+  },
+  "codex-0.167.0/models": {
+    "file": "models.jsonl",
+    "cli": "codex",
+    "cliVersion": "0.167.0",
+    "provenance": "synthetic",
+    "sha256": "synthetic",
+    "exitCode": 0
+  },
+  "codex-0.167.0/features": {
+    "file": "features.jsonl",
+    "cli": "codex",
+    "cliVersion": "0.167.0",
+    "provenance": "synthetic",
+    "sha256": "synthetic",
+    "exitCode": 0
+  },
+  "codex-0.167.0/features-no-multi-agent": {
+    "file": "features-no-multi-agent.jsonl",
+    "cli": "codex",
+    "cliVersion": "0.167.0",
+    "provenance": "synthetic",
+    "sha256": "synthetic",
+    "exitCode": 0
+  },
+  "codex-0.167.0/delete-ok": {
+    "file": "delete-ok.jsonl",
+    "cli": "codex",
+    "cliVersion": "0.167.0",
+    "provenance": "synthetic",
+    "sha256": "synthetic",
+    "exitCode": 0
+  },
+  "codex-0.167.0/sandbox-help-ok": {
+    "file": "sandbox-help-ok.jsonl",
+    "cli": "codex",
+    "cliVersion": "0.167.0",
+    "provenance": "synthetic",
+    "sha256": "synthetic",
+    "exitCode": 0
+  },
+  "codex-0.167.0/success": {
+    "file": "success.jsonl",
+    "cli": "codex",
+    "cliVersion": "0.167.0",
+    "provenance": "synthetic",
+    "sha256": "synthetic",
+    "exitCode": 0
+  },
+  "codex-0.167.0/structured-ok": {
+    "file": "structured-ok.jsonl",
+    "cli": "codex",
+    "cliVersion": "0.167.0",
+    "provenance": "synthetic",
+    "sha256": "synthetic",
+    "exitCode": 0,
+    "writesOutput": true
+  },
+  "codex-0.167.0/structured-invalid": {
+    "file": "structured-invalid.jsonl",
+    "cli": "codex",
+    "cliVersion": "0.167.0",
+    "provenance": "synthetic",
+    "sha256": "synthetic",
+    "exitCode": 0,
+    "writesOutput": true
+  },
+  "codex-0.167.0/auth": {
+    "file": "auth.jsonl",
+    "cli": "codex",
+    "cliVersion": "0.167.0",
+    "provenance": "synthetic",
+    "sha256": "synthetic",
+    "exitCode": 1
+  },
+  "codex-0.167.0/quota": {
+    "file": "quota.jsonl",
+    "cli": "codex",
+    "cliVersion": "0.167.0",
+    "provenance": "synthetic",
+    "sha256": "synthetic",
+    "exitCode": 1
+  },
+  "codex-0.167.0/budget": {
+    "file": "budget.jsonl",
+    "cli": "codex",
+    "cliVersion": "0.167.0",
+    "provenance": "synthetic",
+    "sha256": "synthetic",
+    "exitCode": 1
+  },
+  "codex-0.167.0/crash": {
+    "file": "crash.jsonl",
+    "cli": "codex",
+    "cliVersion": "0.167.0",
+    "provenance": "synthetic",
+    "sha256": "synthetic",
+    "exitCode": 1
+  },
+  "codex-0.167.0/hang": {
+    "file": "hang.jsonl",
+    "cli": "codex",
+    "cliVersion": "0.167.0",
+    "provenance": "synthetic",
+    "sha256": "synthetic",
+    "exitCode": 0
+  },
+  "codex-0.167.0/exit-on-stop": {
+    "file": "exit-on-stop.jsonl",
+    "cli": "codex",
+    "cliVersion": "0.167.0",
+    "provenance": "synthetic",
+    "sha256": "synthetic",
+    "exitCode": 0
+  },
+  "codex-0.167.0/malformed": {
+    "file": "malformed.jsonl",
+    "cli": "codex",
+    "cliVersion": "0.167.0",
+    "provenance": "synthetic",
+    "sha256": "synthetic",
+    "exitCode": 0
+  },
+  "codex-0.167.0/writes-file": {
+    "file": "writes-file.jsonl",
+    "cli": "codex",
+    "cliVersion": "0.167.0",
+    "provenance": "synthetic",
+    "sha256": "synthetic",
+    "exitCode": 0
+  },
+  "codex-0.167.0/code-writes-file": {
+    "file": "code-writes-file.jsonl",
+    "cli": "codex",
+    "cliVersion": "0.167.0",
+    "provenance": "synthetic",
+    "sha256": "synthetic",
+    "exitCode": 0
+  },
+  "codex-0.167.0/subagents": {
+    "file": "subagents.jsonl",
+    "cli": "codex",
+    "cliVersion": "0.167.0",
+    "provenance": "synthetic",
+    "sha256": "synthetic",
+    "exitCode": 0
+  },
+  "codex-0.167.0/many-commands": {
+    "file": "many-commands.jsonl",
+    "cli": "codex",
+    "cliVersion": "0.167.0",
+    "provenance": "synthetic",
+    "sha256": "synthetic",
+    "exitCode": 0
+  },
+  "codex-0.167.0/usage-at-end": {
+    "file": "usage-at-end.jsonl",
+    "cli": "codex",
+    "cliVersion": "0.167.0",
+    "provenance": "synthetic",
+    "sha256": "synthetic",
+    "exitCode": 0
+  },
+  "codex-0.167.0/plan-ok": {
+    "file": "plan-ok.jsonl",
+    "cli": "codex",
+    "cliVersion": "0.167.0",
+    "provenance": "synthetic",
+    "sha256": "synthetic",
+    "exitCode": 0,
+    "writesOutput": true,
+    "contract": "PlanV1"
+  },
+  "codex-0.167.0/plan-invalid": {
+    "file": "plan-invalid.jsonl",
+    "cli": "codex",
+    "cliVersion": "0.167.0",
+    "provenance": "synthetic",
+    "sha256": "synthetic",
+    "exitCode": 0,
+    "writesOutput": true,
+    "contract": "PlanV1"
+  },
+  "codex-0.167.0/review-approve": {
+    "file": "review-approve.jsonl",
+    "cli": "codex",
+    "cliVersion": "0.167.0",
+    "provenance": "synthetic",
+    "sha256": "synthetic",
+    "exitCode": 0,
+    "writesOutput": true,
+    "contract": "ReviewV1"
+  },
+  "codex-0.167.0/review-changes": {
+    "file": "review-changes.jsonl",
+    "cli": "codex",
+    "cliVersion": "0.167.0",
+    "provenance": "synthetic",
+    "sha256": "synthetic",
+    "exitCode": 0,
+    "writesOutput": true,
+    "contract": "ReviewV1"
+  },
+  "codex-0.167.0/ask-ok": {
+    "file": "ask-ok.jsonl",
+    "cli": "codex",
+    "cliVersion": "0.167.0",
+    "provenance": "synthetic",
+    "sha256": "synthetic",
+    "exitCode": 0
+  }
+}
