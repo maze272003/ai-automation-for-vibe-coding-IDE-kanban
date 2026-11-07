@@ -201,8 +201,10 @@ export function evaluate(s: StorySnapshot, e: Evidence, ev: WorkflowEvent): Tran
       return stateGuard(s, ev, ['AWAITING_MERGE']) ?? deny([attemptsRemain(s)]) ?? allow(s, 'T12', 'REWORK');
 
     case 'fail':
+      // RE0: a story that cannot plan or cannot start implementing is blocked too, so `fail`
+      // is legal from NEW and READY as well as the ACTIVE_STATUSES.
       return (
-        stateGuard(s, ev, ACTIVE_STATUSES) ??
+        stateGuard(s, ev, [...ACTIVE_STATUSES, 'NEW', 'READY']) ??
         deny([[ev.detail.trim().length > 0, 'detail', 'A blocked story needs a detail message']]) ??
         allow(
           s, 'T13', 'BLOCKED',

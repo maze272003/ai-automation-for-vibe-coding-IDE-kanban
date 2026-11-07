@@ -13,6 +13,7 @@ import type { GitHubMergeService } from '../github/merge-service.ts';
 import type { ImplementerAgent } from './implementer.ts';
 import type { PlannerAgent } from './planner.ts';
 import type { ReviewerAgent } from './reviewer.ts';
+import { enqueueStage, sweepStuckStories, type StageDeps, type StageKind, type StageStory } from './stuck-stories.ts';
 
 /**
  * How many times a story may fail planning before the runner stops retrying it. A failed plan
@@ -87,6 +88,8 @@ export class AgentRunner {
   private readonly maxConcurrentLanes: number;
   private readonly logger: RunnerLogger;
   private readonly redact: (text: string) => string;
+  /** Feeds the shared stage-enqueue/sweep helpers (stuck-stories.ts) with this runner's deps. */
+  private readonly stageDeps: StageDeps;
   /**
    * The dispatch table (composition-root rule, plan 6.1a-21): one entry per job kind whose
    * handler deps were passed to the constructor. A claimed job whose kind has no entry is failed
@@ -118,6 +121,7 @@ export class AgentRunner {
     this.maxConcurrentLanes = deps.maxConcurrentLanes ?? DEFAULT_MAX_CONCURRENT_LANES;
     this.redact = deps.redact ?? createRedactor().redact;
     this.logger = deps.logger ?? stderrLogger(this.redact);
+    this.stageDeps = { db: deps.db, queue: deps.queue, workflow: deps.workflow, redact: this.redact, now: this.now };
     // planner, implementer, verification and reviewer are required deps; merge is always wired
     // because its handler keeps the explicit no-merger branch (completes, with a warning).
     this.handlers = {
@@ -200,6 +204,12 @@ export class AgentRunner {
   async tick(): Promise<void> {
     this.discoverAndEnqueueJobs();
     this.startJobs();
+    try {
+      sweepStuckStories(this.stageDeps);
+    } catch (err) {
+      // The sweep is integrity maintenance: its failure must never kill the tick that hosts it.
+      this.logger.warn({ err: this.redact(err instanceof Error ? err.message : String(err)) }, 'stuck-story sweep failed');
+    }
   }
 
   /** Awaits the jobs this runner started. Used by the tests and by a graceful shutdown. */
@@ -313,13 +323,7 @@ export class AgentRunner {
         this.block(story.id, 'retry_limit', `Attempt budget exhausted (${story.attempts}/${story.maxAttempts})`);
         continue;
       }
-      this.queue.enqueue({
-        kind: 'implement',
-        slot: heavyLane(story.repoPath),
-        storyId: story.id,
-        sideEffecting: true,
-        idempotencyKey: `implement_${story.id}_${story.statusVersion}`,
-      });
+      this.enqueueStage(story, 'implement', `implement_${story.id}`, { sideEffecting: true });
     }
   }
 
@@ -328,6 +332,7 @@ export class AgentRunner {
       .select({
         id: userStories.id,
         candidateSha: userStories.candidateSha,
+        statusVersion: userStories.statusVersion,
         attemptCount: userStories.attemptCount,
         maxAttempts: userStories.maxAttempts,
         activeRunId: userStories.activeRunId,
@@ -350,25 +355,8 @@ export class AgentRunner {
         .limit(1)
         .get();
 
-      if (!verification) {
-        this.queue.enqueue({
-          kind: 'verify',
-          slot: heavyLane(story.repoPath),
-          storyId: story.id,
-          sideEffecting: false,
-          idempotencyKey: `verify_${story.id}_${story.candidateSha}`,
-        });
-        continue;
-      }
-
-      if (verification.status === 'running') {
-        this.queue.enqueue({
-          kind: 'verify',
-          slot: heavyLane(story.repoPath),
-          storyId: story.id,
-          sideEffecting: false,
-          idempotencyKey: `verify_${story.id}_${story.candidateSha}_${verification.id}`,
-        });
+      if (!verification || verification.status === 'running') {
+        this.enqueueStage(story, 'verify', `verify_${story.id}_${story.candidateSha}`, { sideEffecting: false });
         continue;
       }
 
@@ -377,20 +365,14 @@ export class AgentRunner {
           this.block(story.id, 'retry_limit', `Attempt budget exhausted (${story.attemptCount}/${story.maxAttempts}) after failed verification`);
           continue;
         }
-        this.queue.enqueue({
-          kind: 'implement',
-          slot: heavyLane(story.repoPath),
-          storyId: story.id,
-          sideEffecting: true,
-          idempotencyKey: `rework_verify_${story.id}_${story.candidateSha}_${story.attemptCount}`,
-        });
+        this.enqueueStage(story, 'rework', `rework_${story.id}_${story.candidateSha}`, { sideEffecting: true });
       }
     }
   }
 
   private discoverReview(): void {
     const stories = this.db
-      .select({ id: userStories.id, candidateSha: userStories.candidateSha, repoPath: projects.repoPath })
+      .select({ id: userStories.id, candidateSha: userStories.candidateSha, statusVersion: userStories.statusVersion, repoPath: projects.repoPath })
       .from(userStories)
       .innerJoin(projects, eq(projects.id, userStories.projectId))
       .where(and(eq(userStories.status, 'READY_FOR_REVIEW'), isNull(userStories.cancelledAt), isNull(userStories.activeRunId)))
@@ -405,14 +387,17 @@ export class AgentRunner {
         .where(and(eq(reviews.storyId, story.id), eq(reviews.commitSha, story.candidateSha)))
         .get();
       if (existing) continue;
-      this.queue.enqueue({
-        kind: 'review',
-        slot: heavyLane(story.repoPath),
-        storyId: story.id,
-        sideEffecting: false,
-        idempotencyKey: `review_${story.id}_${story.candidateSha}`,
-      });
+      this.enqueueStage(story, 'review', `review_${story.id}_${story.candidateSha}`, { sideEffecting: false });
     }
+  }
+
+  /**
+   * Enqueues a stage job through the shared round-scoped helper (stuck-stories.ts, RE1/RE2):
+   * the key carries the retry round for the current statusVersion, retries past the budget
+   * block the story, and retry-tier enqueues leave an informational story event (RE4).
+   */
+  private enqueueStage(story: StageStory, stage: StageKind, base: string, opts: { sideEffecting: boolean }): void {
+    enqueueStage(this.stageDeps, story, stage, base, opts);
   }
 
   private hasActiveJob(storyId: number, kind: 'plan' | 'implement' | 'verify' | 'review'): boolean {
@@ -573,15 +558,14 @@ export class AgentRunner {
     // I9: a completion that did not land (lease lost mid-handler) must never enqueue
     // follow-up work — another worker owns the story now.
     if (!this.complete(job)) return;
-    const updated = this.db.select().from(userStories).where(eq(userStories.id, story.id)).get();
+    const updated = this.db
+      .select({ id: userStories.id, status: userStories.status, statusVersion: userStories.statusVersion, repoPath: projects.repoPath })
+      .from(userStories)
+      .innerJoin(projects, eq(projects.id, userStories.projectId))
+      .where(eq(userStories.id, story.id))
+      .get();
     if (updated?.status === 'READY' && !this.hasActiveJob(updated.id, 'implement')) {
-      this.queue.enqueue({
-        kind: 'implement',
-        slot: this.laneForStory(updated.id),
-        storyId: updated.id,
-        sideEffecting: true,
-        idempotencyKey: `implement_${updated.id}_${updated.statusVersion}`,
-      });
+      this.enqueueStage(updated, 'implement', `implement_${updated.id}`, { sideEffecting: true });
     }
   }
 

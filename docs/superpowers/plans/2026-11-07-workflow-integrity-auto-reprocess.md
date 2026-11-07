@@ -1,0 +1,36 @@
+# Implementation plan: workflow integrity + readable agent terminal
+
+Status: GLM SATISFIED (round 3, 2026-11-07) — implementation may proceed per this plan and its [specification](../specs/2026-11-07-workflow-integrity-auto-reprocess.md).
+
+## Ranked continuation
+
+1. Workflow integrity (S1–S4 + RE0 machine extension + sweep): high user impact — the board currently strands stories silently; medium effort; risks (retry storms, double transitions, recover ping-pong) bounded by round-scoped keys and RE2. Selected.
+2. Terminal readability (RE5): high visibility, low risk, presentational only. Selected alongside.
+3. Phase 6 6.1a-08 runtime adapter: blocked on agent-team contract reconciliation (failing baseline) — next cycle.
+
+## Review and execution
+
+1. Coordinator (GLM 5.3, Codex handoff) writes spec + plan; an independent GLM child reviews until SATISFIED (round 1: CHANGES REQUIRED, 2 blockers + 2 highs + 6 minors, all incorporated; round 2: all ten resolved, 2 LOW doc fixes — incorporated here). Implementation starts only after approval. Baseline provenance: recorded 2026-11-08 in `docs/superpowers/plans/2026-11-07-phase-6-next-runtime-events.md` (lint 1 and tests 36 pre-existing; failing files `spawn-streaming.test.ts`, `agent-env.test.ts` — nonexistent `src/process/*` imports — and `packages/contracts/test/agent-team.test.ts`; typecheck failures are the same pre-existing set, exact count re-recorded at integration); the integration step re-records counts before classifying anything.
+2. **Backend worker (W1)** owns: `packages/workflow/src/machine.ts` (RE0: `fail` stateGuard `[...ACTIVE_STATUSES, 'NEW', 'READY']` only), `packages/workflow/test/fixtures.ts` (`ALLOWED_FROM.fail` → `[...ACTIVE, 'NEW', 'READY']` so the data-driven matrix suite re-covers every status automatically), `packages/workflow/test/guards.test.ts` (RE0 cases: fail legal from NEW/READY, still illegal from DONE/CANCELLED, `blockedFrom` recorded), `apps/orchestrator/src/agents/runner.ts` (RE1 keys: bases `implement_<id>` / `rework_<id>_<sha>` / `verify_<id>_<sha>` / `review_<id>_<sha>` + `_<statusVersion>_r<n>`, n = failed/dead count matching that base+round; RE2 predicate: enqueue iff n <= 2 else `fail` with redacted `lastError` detail; RE4 informational storyEvents row on every r>=1 enqueue, discoverer or sweep; `handleVerifyJob` unchanged), new `apps/orchestrator/src/agents/stuck-stories.ts` (RE3 state table incl. the three IN_PROGRESS shapes with run-marked-interrupted + `emitRunFinished`, attempts-guard → `fail(retry_limit)`, other re-fire guard failures → one storyEvents row + in-memory per-process skip-set), wiring `sweepStuckStories` into `tick()` after the discoverers, new `apps/orchestrator/test/stuck-stories.test.ts` (golden scenarios + exemptions), and an appended describe in `apps/orchestrator/test/runner.test.ts` (re-enqueue under `_r1`, budget block at n>2, recover resets round via statusVersion).
+3. **Frontend worker (W2)** owns `apps/ui/src/components/kanban/terminal-modal.tsx` only. Implements RE5 inside the terminal tab: a small presentational event renderer (friendly tool label + one-line summary + status chip + duration; prose font for text/user events; dimmed collapsible reasoning past a threshold; "Show raw JSON" toggle for tool input; clamp-and-expand for long text). Keeps every existing `data-testid`, the filter pills, auto-scroll, and keyboard behavior identical; no new dependencies.
+4. Coordinator integrates, reviews the combined diff, runs verification via a Claude runner delegate: targeted suites (`stuck-stories`, `runner`, `workflow-service`, machine/workflow package tests, `stories`, `planner`, `implementer`, `reviewer`, `run-interruption`), then `npm run check:pins`, `npm run lint`, `npm run typecheck`, `npm test`, `npm run build` — re-recording failure counts and classifying against the cited baseline. No new dependencies; exact pins only.
+5. Independent GLM review delegate reviews the slice against the spec (SATISFIED / findings); small findings are fixed by the coordinator; any blocker re-runs the affected worker scope. The completion record below is updated with evidence. No commit unless the user asks.
+
+## Validation and traceability
+
+RE0 → machine tests (legal/illegal sources, blockedFrom). RE1/RE2 → runner.test.ts (re-enqueue `_r1`; block at n>2; recover resets the round). RE3/RE4 → stuck-stories.test.ts golden scenarios (S2 re-fires, S3 planning block, S4 three IN_PROGRESS shapes, exemptions, storyEvents rows on r>=1 only). RE5 → typecheck + build (UI has no unit harness; e2e selectors unchanged). All tests use `apps/orchestrator/test/helpers/temp.ts`-backed DB helpers; fake clocks; no repository, network, or CLI access.
+
+## Completion record
+
+Completed 2026-11-07 (GLM 5.3 executor per Codex handoff; spec/plan review loop: 3 rounds to SATISFIED; implementation review: SATISFIED, 0 blockers):
+
+- RE0: `machine.ts` `fail` now legal from NEW/READY (one guard change; matrix fixtures + 2 guards cases).
+- RE1/RE2: all stage enqueues (implement/rework/verify/review) share `enqueueStage` in `agents/stuck-stories.ts` — keys `<base>_<statusVersion>_r<n>`, round budget r0+r1+r2 then honest BLOCKED with redacted lastError; `recover()` resets rounds via statusVersion (runner test RTY-3).
+- RE3: `sweepStuckStories` runs in `tick()` after the discoverers, try/catch-guarded; covers missed verification_passed/review re-fires, planning-budget exhaustion, and all three orphaned-IN_PROGRESS shapes; busy-set shields any story with a queued/leased job (pinned by the leased-job test); AWAITING_MERGE/hold/cancelled exempt; attempts-guard → retry_limit, other re-fire guard failures → one info row + per-process skip.
+- RE4: informational storyEvents rows exactly on created r≥1 enqueues; r0 silent.
+- RE5: terminal-modal agent events render via `AgentEventCard` (friendly tool labels + summaries + status chips + durations, prose text, dimmed collapsible reasoning, raw JSON behind a toggle); all testids/behavior unchanged.
+- Verification (Claude runner): stuck-stories 10/10 PASS; targeted regressions (runner, guards, matrix, workflow-service, run-interruption, app) 289/289 PASS; `check:pins` PASS; `build` PASS; typecheck 27 errors + npm test 36 failures + 2 unloadable suites — all the recorded pre-existing baseline (`src/process/*` imports, agent-team contracts); passing tests grew 1259 → 1274 with this slice.
+- Implementation-review notes carried forward (info-level): `enqueueStage` ignores the budget-block transition outcome (self-heals next tick); the orphaned-run interrupted marking precedes the fail commit by design; `ClampableText` clamps by newline count (a single wrapped long line never clamps); `runner.ts block()`'s status allowlist still excludes NEW/READY — extend it if a NEW/READY call site is ever added.
+- Coordinator fixes during integration: three seed bugs in stuck-stories.test.ts (NOT NULL `evidence`, try/finally leak-proofing, rework key base missing the candidateSha) and the review's leased-job shield test.
+
+Not done by design: no commit (working deviation), no `handleVerifyJob` change, no state-machine change beyond RE0, no agent-team contracts (still the failing baseline; next cycle). Do not mark Phase 6 or the broader board complete.
