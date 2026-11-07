@@ -1,6 +1,6 @@
 import { STATION_ROLES, type FurnitureItem, type OfficePreferences, type OfficeRoomDTO, type ROOM_ICONS, type ScreenToggles, type StationRole, type StoryStatus } from '@aik/contracts';
 import { buildingLayout, type BuildingLayout, type SuiteLayout } from '../layout/building.ts';
-import { defaultRoomLayout } from '../layout/room.ts';
+import { effectiveLayout } from '../layout/room.ts';
 import {
   activityScreen, kanbanScreen, pmScreen, runsScreen, signText, testBoardScreen,
   type ActivityScreenData, type KanbanScreenData, type PmScreenData, type RunsScreenData, type TestBoardData,
@@ -80,7 +80,7 @@ function suiteModel(s: OfficeState, room: OfficeRoomDTO, suite: SuiteLayout, now
     roomId: room.id,
     projectKey: room.projectKey,
     suite,
-    layout: c.layout ?? defaultRoomLayout(),
+    layout: effectiveLayout(c.layout),
     accent: c.accentColor,
     icon: c.icon,
     sign: signText(c, room.projectName),

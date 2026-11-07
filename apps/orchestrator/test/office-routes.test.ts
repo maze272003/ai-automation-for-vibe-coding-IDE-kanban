@@ -36,6 +36,17 @@ describe('/office routes', () => {
     expect(json(good).customization.signName).toBe('Hello');
   });
 
+  it('PATCH rejects a semantically invalid layout (role-less station) with 400', async () => {
+    const { inject } = await buildTestApp();
+    await inject('POST', '/projects', { name: 'Alpha', key: 'ALPHA', repoPath: makeTempRepo({ name: 'alpha-layout' }) });
+    const [room] = json(await inject('GET', '/office/rooms'));
+    const layout = [{ id: 's1', kind: 'station', area: 'dev', x: 2, z: 2, rotationY: 0 }];
+    const bad = await inject('PATCH', `/office/rooms/${room.id}`, { customization: { ...room.customization, layout } });
+    expect(bad.statusCode).toBe(400);
+    expect(json(bad).error.code).toBe('VALIDATION_FAILED');
+    expect(json(bad).error.message).toMatch(/station has no role/);
+  });
+
   it('busy project delete (409) leaves the room active', async () => {
     const { inject, t } = await buildTestApp();
     const created = await inject('POST', '/projects', { name: 'Alpha', key: 'ALPHA', repoPath: makeTempRepo({ name: 'alpha3' }) });

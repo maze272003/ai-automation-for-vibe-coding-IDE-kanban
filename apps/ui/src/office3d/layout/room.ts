@@ -140,3 +140,20 @@ export function validateLayout(items: FurnitureItem[]): { ok: boolean; errors: s
   }
   return { ok: errors.length === 0, errors };
 }
+
+const effectiveCache = new WeakMap<FurnitureItem[], FurnitureItem[]>();
+
+/**
+ * The layout to draw/edit for a stored customization: the stored one when it passes validateLayout,
+ * otherwise the default (null, or a semantically invalid layout written by an API client). Memoized
+ * per stored array, since room DTOs keep their layout reference until the next refetch.
+ */
+export function effectiveLayout(stored: FurnitureItem[] | null): FurnitureItem[] {
+  if (stored === null) return defaultRoomLayout();
+  let out = effectiveCache.get(stored);
+  if (!out) {
+    out = validateLayout(stored).ok ? stored : defaultRoomLayout();
+    effectiveCache.set(stored, out);
+  }
+  return out;
+}

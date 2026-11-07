@@ -5,6 +5,7 @@ import { ApiHttpError } from '../api/errors.ts';
 import type { EventBus } from '../events/bus.ts';
 import { appendOutbox } from '../events/outbox.ts';
 import { systemClock, type Clock } from '../time.ts';
+import { layoutInvariantErrors } from './layout-invariants.ts';
 import { normalizeRepoPath } from './normalize-path.ts';
 
 type RoomRow = typeof officeRooms.$inferSelect;
@@ -100,6 +101,10 @@ export class OfficeRoomService {
   }
 
   patch(id: number, req: PatchOfficeRoomRequest): OfficeRoomDTO {
+    const layoutErrors = layoutInvariantErrors(req.customization.layout);
+    if (layoutErrors.length > 0) {
+      throw new ApiHttpError(400, 'VALIDATION_FAILED', `Invalid room layout: ${layoutErrors.slice(0, 5).join('; ')}`, { details: layoutErrors });
+    }
     this.write((tx, now) => {
       this.require(tx, id);
       tx.update(officeRooms).set({ customization: req.customization, updatedAt: now }).where(eq(officeRooms.id, id)).run();

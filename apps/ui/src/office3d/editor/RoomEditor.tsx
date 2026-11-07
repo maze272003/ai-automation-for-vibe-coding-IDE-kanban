@@ -5,7 +5,7 @@ import { Button } from '../../components/ui/button.tsx';
 import { api } from '../../lib/api.ts';
 import { DEV_LENGTH, LAB_LENGTH, SLOT_DEPTH } from '../layout/dimensions.ts';
 import { rectOf } from '../layout/footprints.ts';
-import { defaultRoomLayout, snapToGrid, validateLayout } from '../layout/room.ts';
+import { effectiveLayout, snapToGrid, validateLayout } from '../layout/room.ts';
 import { editorReduce, initialEditorState } from './editor-state.ts';
 import { ConfirmAction } from '../ui/ConfirmAction.tsx';
 import { Palette, type EditorArea } from './Palette.tsx';
@@ -34,7 +34,7 @@ function findFreeSpot(items: FurnitureItem[], kind: FurnitureItem['kind'], area:
 type Drag = { id: string; x: number; z: number; dx: number; dz: number; ok: boolean };
 
 export function RoomEditor({ room, onClose, onSaved }: { room: OfficeRoomDTO; onClose: () => void; onSaved?: () => void }) {
-  const initial = useMemo(() => room.customization.layout ?? defaultRoomLayout(), [room.customization.layout]);
+  const initial = useMemo(() => effectiveLayout(room.customization.layout), [room.customization.layout]);
   const [s, dispatch] = useReducer(editorReduce, undefined, () => initialEditorState(room.id, initial));
   const [area, setArea] = useState<EditorArea>('dev');
   const [drag, setDrag] = useState<Drag | null>(null);
@@ -153,7 +153,8 @@ export function RoomEditor({ room, onClose, onSaved }: { room: OfficeRoomDTO; on
               </g>
             ))}
             {shown.map((i) => {
-              const r = rectOf(i)!;
+              const r = rectOf(i);
+              if (!r) return null; // role-less station: nothing to draw (effectiveLayout keeps these out)
               const off = i.area === 'lab' ? LAB_OFFSET : 0;
               const bad = drag?.id === i.id && !drag.ok;
               return (

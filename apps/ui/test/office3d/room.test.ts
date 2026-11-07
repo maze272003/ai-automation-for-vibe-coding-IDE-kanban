@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest';
 import type { FurnitureItem } from '@aik/contracts';
-import { defaultRoomLayout, devZoneSeats, snapToGrid, stationSeats, validateLayout } from '../../src/office3d/layout/room.ts';
+import { defaultRoomLayout, devZoneSeats, effectiveLayout, snapToGrid, stationSeats, validateLayout } from '../../src/office3d/layout/room.ts';
 import { buildWaypointGraph, findPath, isConnected } from '../../src/office3d/layout/waypoints.ts';
 
 const desk = (id: string, x: number, z: number, rotationY = 0, area: 'dev' | 'lab' = 'dev'): FurnitureItem => ({
@@ -84,5 +84,20 @@ describe('validateLayout', () => {
     const r = validateLayout(boxed);
     expect(r.ok).toBe(false);
     expect(r.errors.join()).toMatch(/unreachable/);
+  });
+});
+
+describe('effectiveLayout', () => {
+  test('null falls back to the default layout', () => {
+    expect(effectiveLayout(null)).toEqual(defaultRoomLayout());
+  });
+  test('a valid stored layout is used as-is', () => {
+    const stored = defaultRoomLayout().map((i) => (i.id === 'lab-plant' ? { ...i, x: 6.8 } : i));
+    expect(validateLayout(stored).ok).toBe(true);
+    expect(effectiveLayout(stored)).toBe(stored);
+  });
+  test('a semantically invalid stored layout (role-less station) falls back to the default', () => {
+    const stored: FurnitureItem[] = [{ id: 's1', kind: 'station', area: 'dev', x: 2, z: 2, rotationY: 0 }];
+    expect(effectiveLayout(stored)).toEqual(defaultRoomLayout());
   });
 });

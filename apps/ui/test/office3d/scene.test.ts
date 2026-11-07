@@ -42,6 +42,12 @@ describe('scene model', () => {
     expect(m.suites[0]!.layout).toEqual(defaultRoomLayout());
   });
 
+  test('a semantically invalid stored layout is drawn as the default layout', () => {
+    const bad = { signName: null, accentColor: '#60a5fa', icon: null, screens: null, layout: [{ id: 's1', kind: 'station' as const, area: 'dev' as const, x: 2, z: 2, rotationY: 0 }] };
+    const m = sceneModel(withRooms([room(1, { customization: bad })]), T, prefs);
+    expect(m.suites[0]!.layout).toEqual(defaultRoomLayout());
+  });
+
   test('a running implementer colours its seat ring with the status override', () => {
     const ev: EventEnvelope = { seq: 1, topic: 'run.started', storyId: 7, at: T, provenance: 'system', data: { runId: 9, role: 'implementer', storyKey: 'P1-7', projectKey: 'P1' } };
     const s = reduceOffice(withRooms([room(1)]), { type: 'event', event: ev }, T);
