@@ -1,7 +1,7 @@
 # 3D Agent Office — Design
 
 Date: 2026-11-08
-Status: approved (user, 2026-11-08) · plan: `docs/superpowers/plans/2026-11-08-3d-office.md` (awaiting plan review)
+Status: implemented on branch feat/3d-office (2026-11-08) · plan: `docs/superpowers/plans/2026-11-08-3d-office.md`
 Supersedes (on completion): `2026-11-04-pixel-agents-office-design.md`, `2026-11-04-office-agent-activity-design.md` (the embedded Pixel Agents office)
 
 ## 1. Intent
