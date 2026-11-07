@@ -52,7 +52,10 @@ describe('verifier check events', () => {
       ]),
     );
     const fin = events.find((e) => e.topic === 'check.finished' && (e.data as { checkKey: string }).checkKey === 'unit');
-    expect(fin?.data).toMatchObject({ status: 'failed', projectKey: project.key, storyKey: 'VCE-1', storyId: story.id });
+    expect(fin?.data).toMatchObject({ status: 'failed', mandatory: true, projectKey: project.key, storyKey: 'VCE-1', storyId: story.id });
+    expect((fin?.data as { durationMs: unknown }).durationMs).toEqual(expect.any(Number));
+    const secretsFin = events.find((e) => e.topic === 'check.finished' && (e.data as { checkKey: string }).checkKey === 'secrets');
+    expect(secretsFin?.data).toMatchObject({ status: 'passed', mandatory: true, durationMs: expect.any(Number) });
     expect(fin?.provenance).toBe('command_completed');
     // Balance: every started has a later finished, and the last event per key is a finish.
     const keys = new Set(events.map((e) => (e.data as { checkKey: string }).checkKey));

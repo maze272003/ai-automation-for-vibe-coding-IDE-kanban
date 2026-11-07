@@ -452,7 +452,7 @@ export class VerificationRunner {
     const emit = (
       topic: 'check.started' | 'check.finished',
       checkKey: string,
-      extra: { status?: string } = {},
+      extra: { status?: string; mandatory?: boolean; durationMs?: number } = {},
     ): void => {
       const seq = appendOutbox(
         this.db,
@@ -493,6 +493,7 @@ export class VerificationRunner {
       }
       const secretStatus = secretError ? 'error' : secretHits.length > 0 ? 'failed' : 'passed';
       if (secretStatus !== 'passed') allMandatoryPassed = false;
+      const secretEnded = new Date(this.now());
       this.db
         .insert(verificationChecks)
         .values({
@@ -506,10 +507,10 @@ export class VerificationRunner {
           outputTail: this.redact(secretError ?? describeHits(secretHits)),
           logPath: null,
           startedAt: secretStarted,
-          endedAt: new Date(this.now()),
+          endedAt: secretEnded,
         })
         .run();
-      emit('check.finished', 'secrets', { status: secretStatus });
+      emit('check.finished', 'secrets', { status: secretStatus, mandatory: true, durationMs: secretEnded.getTime() - secretStarted.getTime() });
 
       // Vulnerability scanning (REL-3) runs when dependency lockfiles change
       if (settings.vulnerabilityScan?.enabled) {
@@ -534,6 +535,7 @@ export class VerificationRunner {
                 ? 'error'
                 : 'failed';
           if (status !== 'passed') allMandatoryPassed = false;
+          const vulnEnded = new Date(this.now());
           this.db
             .insert(verificationChecks)
             .values({
@@ -547,10 +549,10 @@ export class VerificationRunner {
               outputTail: this.redact(vulnResult.summary),
               logPath: null,
               startedAt: vulnStarted,
-              endedAt: new Date(this.now()),
+              endedAt: vulnEnded,
             })
             .run();
-          if (vulnWillRun) emit('check.finished', 'vulnerabilities', { status });
+          if (vulnWillRun) emit('check.finished', 'vulnerabilities', { status, mandatory: true, durationMs: vulnEnded.getTime() - vulnStarted.getTime() });
         }
       }
 
@@ -562,8 +564,8 @@ export class VerificationRunner {
           break;
         }
         emit('check.started', check.key);
-        const row = await this.runOneCheck(verificationRunId, check, worktreePath, onSpawned);
-        emit('check.finished', check.key, { status: row });
+        const { status: row, durationMs } = await this.runOneCheck(verificationRunId, check, worktreePath, onSpawned);
+        emit('check.finished', check.key, { status: row, mandatory: check.mandatory, durationMs });
         if (check.mandatory && row !== 'passed') allMandatoryPassed = false;
       }
       return allMandatoryPassed;
@@ -577,7 +579,7 @@ export class VerificationRunner {
     check: CheckConfig,
     worktreePath: string,
     onSpawned?: (info: SpawnedCheckProcess) => void,
-  ): Promise<'passed' | 'failed' | 'error' | 'timed_out' | 'unsupported'> {
+  ): Promise<{ status: 'passed' | 'failed' | 'error' | 'timed_out' | 'unsupported'; durationMs: number }> {
     const startedAt = new Date(this.now());
     const logPath = path.join(this.logsDir, `verify-${verificationRunId}-${check.key}.log`);
     const result = await runCheckCommand({
@@ -589,6 +591,7 @@ export class VerificationRunner {
       onSpawned,
     });
     const status = checkStatus(result.status);
+    const endedAt = new Date(this.now());
     this.db
       .insert(verificationChecks)
       .values({
@@ -602,9 +605,9 @@ export class VerificationRunner {
         outputTail: this.redact(result.error ? `${result.error}\n${result.output}` : result.output),
         logPath,
         startedAt,
-        endedAt: new Date(this.now()),
+        endedAt,
       })
       .run();
-    return status;
+    return { status, durationMs: endedAt.getTime() - startedAt.getTime() };
   }
 }

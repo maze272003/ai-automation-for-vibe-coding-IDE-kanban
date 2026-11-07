@@ -90,6 +90,8 @@ describe('buildOfficeSnapshot', () => {
     expect(v[0]!.checks.find((c) => c.checkKey === 'lint')).toMatchObject({ status: 'failed' });
     expect(v[0]!.checks.find((c) => c.checkKey === 'lint')!.summary).toBe('e'.repeat(200));
     expect(v[0]!.checks.find((c) => c.checkKey === 'test')!.summary).toBe('');
+    // Duration (endedAt - startedAt) and mandatory flag ride along for the QA test board / QA state.
+    expect(v[0]!.checks.find((c) => c.checkKey === 'lint')).toMatchObject({ durationMs: 1000, mandatory: true });
   });
 
   it('ignores verification for stories not in TESTING or REWORK', () => {

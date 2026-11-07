@@ -122,6 +122,10 @@ export const OfficeRoomSnapshot = z.object({
       checkKey: z.string(),
       status: z.string(),
       summary: z.string().max(200),
+      /** endedAt - startedAt of the recorded check; optional for older orchestrators. */
+      durationMs: z.number().int().nonnegative().nullable().optional(),
+      /** A non-passed mandatory check fails verification; optional for older orchestrators (treat as mandatory). */
+      mandatory: z.boolean().optional(),
     })),
   })),
 });

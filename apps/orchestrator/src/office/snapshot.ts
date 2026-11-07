@@ -60,7 +60,10 @@ function roomSnapshot(db: AikDb, roomId: number, projectId: number, now: number,
       const checks = db.select().from(verificationChecks).where(eq(verificationChecks.verificationRunId, vr.id)).orderBy(asc(verificationChecks.id)).all();
       verification.push({
         storyId: s.id, storyKey: s.key, verificationRunId: vr.id, status: vr.status,
-        checks: checks.map((c) => ({ checkKey: c.checkKey, status: c.status, summary: lastLine(c.outputTail) })),
+        checks: checks.map((c) => ({
+          checkKey: c.checkKey, status: c.status, summary: lastLine(c.outputTail), mandatory: c.mandatory,
+          durationMs: Math.max(0, c.endedAt.getTime() - c.startedAt.getTime()),
+        })),
       });
     }
   }
