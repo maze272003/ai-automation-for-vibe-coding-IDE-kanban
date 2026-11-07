@@ -1,6 +1,7 @@
 import { DEFAULT_OFFICE_PREFERENCES, type OfficePreferences } from '@aik/contracts';
 import { useEffect, useState } from 'react';
 import { TopBar } from '../components/shell/top-bar.tsx';
+import { RoomEditor } from '../office3d/editor/RoomEditor.tsx';
 import { OfficeCanvas } from '../office3d/scene/OfficeCanvas.tsx';
 import { useOffice } from '../office3d/state/use-office.ts';
 import { QuickJumpPanel } from '../office3d/ui/QuickJumpPanel.tsx';
@@ -9,6 +10,8 @@ import { QuickJumpPanel } from '../office3d/ui/QuickJumpPanel.tsx';
 export function OfficePage() {
   const { state, now, ready, error } = useOffice();
   const [selectedRoomId, setSelectedRoom] = useState<number | null>(null);
+  const [editRoomId, setEditRoomId] = useState<number | null>(null);
+  const editRoom = editRoomId === null ? null : (state.rooms.get(editRoomId) ?? null);
   const [prefs, setPrefs] = useState<OfficePreferences>(DEFAULT_OFFICE_PREFERENCES);
   const hasProjects = [...state.rooms.values()].some((r) => r.state === 'active');
 
@@ -56,10 +59,11 @@ export function OfficePage() {
                 </p>
               )}
             </div>
-            <QuickJumpPanel state={state} now={now} onSelectRoom={setSelectedRoom} />
+            <QuickJumpPanel state={state} now={now} onSelectRoom={setSelectedRoom} onEditRoom={setEditRoomId} />
           </div>
         )}
       </div>
+      {editRoom ? <RoomEditor key={editRoom.id} room={editRoom} onClose={() => setEditRoomId(null)} /> : null}
     </div>
   );
 }

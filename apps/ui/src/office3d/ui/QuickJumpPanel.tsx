@@ -12,7 +12,14 @@ import { activeAgentCount, pmTarget, stationTarget } from './navigate.ts';
 
 const ROLE_LABEL: Record<StationRole, string> = { planner: 'Planner', implementer: 'Developers', reviewer: 'Reviewer', pm: 'PM', qa: 'QA lab' };
 
-export function QuickJumpPanel({ state, now, onSelectRoom }: { state: OfficeState; now: number; onSelectRoom: (roomId: number) => void }) {
+export function QuickJumpPanel({
+  state, now, onSelectRoom, onEditRoom,
+}: {
+  state: OfficeState;
+  now: number;
+  onSelectRoom: (roomId: number) => void;
+  onEditRoom?: (roomId: number) => void;
+}) {
   const navigate = useNavigate();
   const [query, setQuery] = useState('');
   const [popover, setPopover] = useState<{ roomId: number; stories: StationView['stories'] } | null>(null);
@@ -151,7 +158,20 @@ export function QuickJumpPanel({ state, now, onSelectRoom }: { state: OfficeStat
         />
       ) : null}
       {settingsRoom ? (
-        <RoomSettingsDialog key={settingsRoom.id} room={settingsRoom} open onClose={() => setSettingsRoomId(null)} />
+        <RoomSettingsDialog
+          key={settingsRoom.id}
+          room={settingsRoom}
+          open
+          onClose={() => setSettingsRoomId(null)}
+          onEditRoom={
+            onEditRoom
+              ? () => {
+                  setSettingsRoomId(null);
+                  onEditRoom(settingsRoom.id);
+                }
+              : undefined
+          }
+        />
       ) : null}
     </aside>
   );
