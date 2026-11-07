@@ -41,8 +41,25 @@ test('delete works, special items are protected, and Reset to default clears the
   await page.keyboard.press('Delete');
   await expect(page.getByTestId('editor-error')).toContainText('moved but not removed');
   await page.getByTestId('room-editor-reset').click();
+  await page.getByTestId('confirm-action').click();
   await expect(page.getByTestId('room-editor')).toBeHidden();
   const rooms = (await apiCall<OfficeRoomDTO[]>(page, 'GET', '/office/rooms')).body;
   expect(rooms.find((r) => r.projectKey === 'BETA')!.customization.layout).toBeNull();
+  await app.close();
+});
+
+test('Escape closes the editor without saving', async () => {
+  const { app, page } = await launchApp(makeTempDir());
+  await waitReady(page);
+  await apiCall(page, 'POST', '/projects', { name: 'Gamma', key: 'GAMMA', repoPath: makeTempRepo({ name: 'gamma' }) });
+  await page.getByRole('link', { name: 'Office' }).click();
+  await page.getByTestId('office-room-settings-GAMMA').click();
+  await page.getByTestId('room-edit-layout').click();
+  await expect(page.getByRole('dialog', { name: 'Edit room: GAMMA' })).toBeVisible();
+  await page.getByTestId('editor-add-plant').click();
+  await page.keyboard.press('Escape');
+  await expect(page.getByTestId('room-editor')).toBeHidden();
+  const rooms = (await apiCall<OfficeRoomDTO[]>(page, 'GET', '/office/rooms')).body;
+  expect(rooms.find((r) => r.projectKey === 'GAMMA')!.customization.layout).toBeNull();
   await app.close();
 });

@@ -1,4 +1,5 @@
 import type { FURNITURE_KINDS, FurnitureItem, OfficeRoomDTO, RoomCustomization } from '@aik/contracts';
+import * as DialogPrimitive from '@radix-ui/react-dialog';
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import { Button } from '../../components/ui/button.tsx';
 import { api } from '../../lib/api.ts';
@@ -6,6 +7,7 @@ import { DEV_LENGTH, LAB_LENGTH, SLOT_DEPTH } from '../layout/dimensions.ts';
 import { rectOf } from '../layout/footprints.ts';
 import { defaultRoomLayout, snapToGrid, validateLayout } from '../layout/room.ts';
 import { editorReduce, initialEditorState } from './editor-state.ts';
+import { ConfirmAction } from '../ui/ConfirmAction.tsx';
 import { Palette, type EditorArea } from './Palette.tsx';
 
 /** Top-down 2D SVG plan of one suite (metres); the lab sits to the right of the dev office. */
@@ -39,6 +41,7 @@ export function RoomEditor({ room, onClose, onSaved }: { room: OfficeRoomDTO; on
   const [busy, setBusy] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [noSpace, setNoSpace] = useState(false);
+  const [confirmReset, setConfirmReset] = useState(false);
   const svg = useRef<SVGSVGElement>(null);
 
   const toPlan = useCallback((e: { clientX: number; clientY: number }) => {
@@ -118,15 +121,16 @@ export function RoomEditor({ room, onClose, onSaved }: { room: OfficeRoomDTO; on
   const error = saveError ?? s.lastError ?? (noSpace ? 'No free space for that item in this area' : null);
 
   return (
-    <div
-      role="dialog"
-      aria-label={`Edit room: ${room.projectKey}`}
-      data-testid="room-editor"
-      className="fixed inset-0 z-50 flex items-center justify-center bg-[rgb(4_7_16/0.70)] p-4 backdrop-blur-[3px]"
-    >
-      <div className="flex max-h-full w-full max-w-5xl flex-col gap-3 rounded-panel border border-glass-border bg-overlay-fill p-4 text-foreground shadow-panel">
+    <DialogPrimitive.Root open onOpenChange={(next) => { if (!next) onClose(); }}>
+      <DialogPrimitive.Portal>
+        <DialogPrimitive.Overlay className="fixed inset-0 z-50 bg-[rgb(4_7_16/0.70)] backdrop-blur-[3px]" />
+        <DialogPrimitive.Content
+          aria-describedby={undefined}
+          data-testid="room-editor"
+          className="fixed left-1/2 top-1/2 z-50 flex max-h-[95vh] w-[64rem] max-w-[95vw] -translate-x-1/2 -translate-y-1/2 flex-col gap-3 rounded-panel border border-glass-border bg-overlay-fill p-4 text-foreground shadow-panel backdrop-blur-[22px]"
+        >
         <div className="flex items-center justify-between">
-          <h2 className="text-base font-bold">Edit room: {room.projectKey}</h2>
+          <DialogPrimitive.Title className="text-base font-bold">Edit room: {room.projectKey}</DialogPrimitive.Title>
           <span className="text-xs text-muted">Drag to move. R rotates 90 degrees, Shift+R 15. Delete removes.</span>
         </div>
         <div className="flex min-h-0 gap-3">
@@ -200,10 +204,7 @@ export function RoomEditor({ room, onClose, onSaved }: { room: OfficeRoomDTO; on
             variant="danger"
             data-testid="room-editor-reset"
             disabled={busy}
-            onClick={() => {
-              dispatch({ type: 'reset' });
-              void patch(null);
-            }}
+            onClick={() => setConfirmReset(true)}
           >
             Reset to default
           </Button>
@@ -216,7 +217,22 @@ export function RoomEditor({ room, onClose, onSaved }: { room: OfficeRoomDTO; on
             </Button>
           </div>
         </div>
-      </div>
-    </div>
+        {confirmReset ? (
+          <ConfirmAction
+            open
+            title="Reset room layout"
+            message="This discards your custom furniture layout and restores the default. Continue?"
+            confirmLabel="Reset to default"
+            onConfirm={async () => {
+              await api.patch(`/office/rooms/${room.id}`, { customization: { ...room.customization, layout: null } });
+              onSaved?.();
+              onClose();
+            }}
+            onClose={() => setConfirmReset(false)}
+          />
+        ) : null}
+        </DialogPrimitive.Content>
+      </DialogPrimitive.Portal>
+    </DialogPrimitive.Root>
   );
 }
