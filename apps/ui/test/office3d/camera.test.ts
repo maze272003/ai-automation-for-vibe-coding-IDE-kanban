@@ -172,6 +172,12 @@ describe('officeKeyAction', () => {
     expect(officeKeyAction(key('v', { ctrlKey: true }), ctx)).toBeNull();
   });
 
+  test('key auto-repeat never re-fires a toggle (holding V or Esc)', () => {
+    expect(officeKeyAction(key('v', { repeat: true }), ctx)).toBeNull();
+    expect(officeKeyAction(key('Escape', { repeat: true }), ctx)).toBeNull();
+    expect(officeKeyAction(key('v', { repeat: false }), ctx)).toBe('walk');
+  });
+
   test('Escape goes back to the overview; "/" is left to the quick-jump panel', () => {
     expect(officeKeyAction(key('Escape'), ctx)).toBe('back');
     expect(officeKeyAction(key('/'), ctx)).toBeNull();
