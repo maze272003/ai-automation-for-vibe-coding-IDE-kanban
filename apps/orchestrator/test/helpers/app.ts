@@ -9,6 +9,9 @@ import { WorkspaceFileService } from '../../src/files/service.ts';
 import { GitViewService } from '../../src/git/view-service.ts';
 import { WorktreeManager } from '../../src/git/worktree.ts';
 import { EventBus } from '../../src/events/bus.ts';
+import { registerOfficeRoutes } from '../../src/api/routes/office.ts';
+import { OfficeRoomService } from '../../src/office/room-service.ts';
+import { buildOfficeSnapshot } from '../../src/office/snapshot.ts';
 import { projectBusyReason } from '../../src/projects/busy.ts';
 import { ProjectService } from '../../src/projects/service.ts';
 import { createRedactor } from '../../src/secrets/redactor.ts';
@@ -32,8 +35,10 @@ export async function buildTestApp(
   const worktrees = options?.worktrees ?? makeTempDir('aikanban-test-wt-');
   const purgeLines: string[] = [];
   const worktreeManager = new WorktreeManager({ rootDir: worktrees, db: t.db, now });
+  const rooms = new OfficeRoomService({ db: t.db, bus, now });
   const projects = new ProjectService({
     db: t.db,
+    rooms,
     now,
     worktreePurge: (input) => worktreeManager.purgeForProject(input),
     purgeLog: (line) => purgeLines.push(line),
@@ -44,6 +49,7 @@ export async function buildTestApp(
   const files = new WorkspaceFileService({ projects, busy });
   const app = createApiServer({ token: TOKEN, getPort: () => PORT });
   registerProjectRoutes(app, { db: t.db, now, projects });
+  registerOfficeRoutes(app, { db: t.db, now, rooms, snapshot: () => buildOfficeSnapshot(t.db, now) });
   registerGitViewRoutes(app, { db: t.db, now, gitView });
   registerFileRoutes(app, { db: t.db, now, files });
   registerStoryRoutes(app, { db: t.db, now, stories });
@@ -55,5 +61,5 @@ export async function buildTestApp(
       payload,
       headers: { host: `127.0.0.1:${PORT}`, authorization: `Bearer ${TOKEN}`, ...(method === 'GET' ? {} : { 'idempotency-key': key }) },
     });
-  return { t, app, inject, bus, purgeLines, worktrees, services: { workflow, projects, stories, gitView, files } };
+  return { t, app, inject, bus, purgeLines, worktrees, services: { rooms, workflow, projects, stories, gitView, files } };
 }

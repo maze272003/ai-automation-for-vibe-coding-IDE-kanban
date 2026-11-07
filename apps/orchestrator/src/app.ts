@@ -42,6 +42,9 @@ import { WorktreeManager } from './git/worktree.ts';
 import { JobQueue } from './jobs/queue.ts';
 import { createLogger } from './logging/logger.ts';
 import { PixelAgentsBridge } from './office/bridge.ts';
+import { registerOfficeRoutes } from './api/routes/office.ts';
+import { buildOfficeSnapshot } from './office/snapshot.ts';
+import { OfficeRoomService } from './office/room-service.ts';
 import { ProjectService } from './projects/service.ts';
 import { projectBusyReason } from './projects/busy.ts';
 import { ProviderService } from './providers/service.ts';
@@ -150,8 +153,10 @@ export async function startOrchestrator(opts: OrchestratorOptions): Promise<Runn
   // app-generated worktrees via the same manager used for isolation before the DB purge runs
   // (their workspaces rows go first, so purgeForProject must run before purgeProjectData).
   const worktreeManager = new WorktreeManager({ rootDir: paths.worktrees, db });
+  const rooms = new OfficeRoomService({ db, bus });
   const projects = new ProjectService({
     db,
+    rooms,
     worktreePurge: (input) => worktreeManager.purgeForProject(input),
     // Spec §4.3: every sanctioned purge leaves an audit line in logs/audit-purge.log. The line
     // carries counts/keys only (built in ProjectService.delete), never secrets; the logs dir is
@@ -293,6 +298,7 @@ export async function startOrchestrator(opts: OrchestratorOptions): Promise<Runn
   const app = createApiServer({ token: opts.token, getPort: () => port, logger });
   registerHealthRoutes(app, { db, versions: { ...opts.versions, node: process.versions.node }, dataDir: opts.dataDir });
   registerProjectRoutes(app, { db, now: systemClock, projects });
+  registerOfficeRoutes(app, { db, now: systemClock, rooms, snapshot: () => buildOfficeSnapshot(db, systemClock) });
   registerGitViewRoutes(app, { db, now: systemClock, gitView });
   registerFileRoutes(app, { db, now: systemClock, files });
   // Root-relative `/providers` + `/settings/default-model` routes; only wired in managed mode.

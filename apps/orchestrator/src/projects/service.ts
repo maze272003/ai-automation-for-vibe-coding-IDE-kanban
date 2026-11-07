@@ -7,6 +7,7 @@ import path from 'node:path';
 import { ApiHttpError } from '../api/errors.ts';
 import { git, stripCredentials } from '../git/git.ts';
 import { systemClock, type Clock } from '../time.ts';
+import type { OfficeRoomService } from '../office/room-service.ts';
 import { projectBusyReason } from './busy.ts';
 import { purgeProjectData } from './purge-repo.ts';
 
@@ -32,6 +33,7 @@ export interface ProjectServiceDeps {
   now?: Clock;
   worktreePurge?: (input: { projectId: number; repoPath: string }) => Promise<string[]>;
   purgeLog?: (line: string) => void;
+  rooms?: OfficeRoomService;
 }
 
 export class ProjectService {
@@ -78,7 +80,9 @@ export class ProjectService {
       .values({ key: input.key, name: input.name, repoPath: root, baseBranch, remoteUrl, settings: defaultProjectSettings(), status: 'active', createdAt: now, updatedAt: now })
       .returning()
       .get();
-    return toDTO(row);
+    const dto = toDTO(row);
+    this.deps.rooms?.onProjectCreated(dto);
+    return dto;
   }
 
   patch(id: number, input: PatchProjectRequest): ProjectDTO {
@@ -109,6 +113,7 @@ export class ProjectService {
         throw new ApiHttpError(500, 'PROJECT_PURGE_FAILED', `Could not remove app-generated worktrees: ${detail}`, { retryable: true });
       }
     }
+    this.deps.rooms?.onProjectDeleted(id);
     const result = purgeProjectData(this.db, id);
     this.deps.purgeLog?.(
       `${new Date(this.now()).toISOString()} purge project=${project.key} id=${id} stories=${result.stories} worktrees=${discardedWorktrees.length} ok=true`,
