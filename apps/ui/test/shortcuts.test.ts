@@ -68,6 +68,9 @@ describe('shortcut registry', () => {
       ['view.terminal', 'mod+`', 'code', 'View'],
       ['scm.commit', 'mod+enter', 'local', 'Local'],
       ['dialog.close', 'escape', 'local', 'Local'],
+      ['office.walk', 'v', 'local', 'Local'],
+      ['office.search', '/', 'local', 'Local'],
+      ['office.back', 'escape', 'local', 'Local'],
     ];
     expect(SHORTCUTS.map(({ id, chord, scope, group }) => [id, chord, scope, group])).toEqual(expected);
     expect(SHORTCUTS.every((shortcut) => shortcut.label.trim().length > 0)).toBe(true);
@@ -82,7 +85,7 @@ describe('shortcut registry', () => {
   });
 
   test('scope partitions match the spec', () => {
-    expect(SHORTCUTS).toHaveLength(12);
+    expect(SHORTCUTS).toHaveLength(15);
     expect(GLOBAL_SHORTCUTS.map((shortcut) => shortcut.id)).toEqual([
       'nav.projects',
       'nav.usage',

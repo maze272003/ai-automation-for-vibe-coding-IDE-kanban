@@ -5,10 +5,11 @@ import { and, eq, inArray } from 'drizzle-orm';
 import os from 'node:os';
 import path from 'node:path';
 import type { EventBus } from '../events/bus.ts';
+import { appendOutbox } from '../events/outbox.ts';
 import { git } from '../git/git.ts';
 import type { WorktreeManager } from '../git/worktree.ts';
 import { runCheckCommand, type CommandStatus, type SpawnedCheckProcess } from '../checks/run.ts';
-import { runVulnerabilityScan } from '../security/vulnerability.ts';
+import { detectLockfilesChanged, runVulnerabilityScan } from '../security/vulnerability.ts';
 import { describeHits, scanWorktree } from '../secrets/scan.ts';
 import { systemClock, type Clock } from '../time.ts';
 import type { RunInterruptRegistry } from '../agents/interrupts.ts';
@@ -147,6 +148,7 @@ export class VerificationRunner {
         worktreePath,
         story.baseSha,
         story.candidateSha,
+        { storyKey: story.key, projectKey: project.key },
       );
     } catch (err) {
       this.markRunError(run.id);
@@ -262,6 +264,7 @@ export class VerificationRunner {
           cleanroomWorktreePath,
           story.baseSha,
           story.candidateSha,
+          { storyKey: story.key, projectKey: project.key },
         );
 
         const cleanStatus = cleanMandatoryPassed ? 'passed' : 'failed';
@@ -371,6 +374,7 @@ export class VerificationRunner {
           worktreePath,
           story.baseSha,
           input.mergedSha,
+          { storyKey: story.key, projectKey: project.key },
         );
       } catch (err) {
         this.db
@@ -440,10 +444,28 @@ export class VerificationRunner {
     verificationRunId: number,
     settings: ProjectSettings,
     worktreePath: string,
-    baseSha?: string | null,
-    candidateSha?: string | null,
+    baseSha: string | null | undefined,
+    candidateSha: string | null | undefined,
+    ids: { storyKey: string; projectKey: string },
   ): Promise<boolean> {
     let allMandatoryPassed = true;
+    const emit = (
+      topic: 'check.started' | 'check.finished',
+      checkKey: string,
+      extra: { status?: string; mandatory?: boolean; durationMs?: number } = {},
+    ): void => {
+      const seq = appendOutbox(
+        this.db,
+        {
+          topic,
+          storyId,
+          provenance: topic === 'check.started' ? 'system' : 'command_completed',
+          data: { storyId, storyKey: ids.storyKey, projectKey: ids.projectKey, verificationRunId, checkKey, ...extra },
+        },
+        new Date(this.now()),
+      );
+      this.bus.notify(seq);
+    };
 
     // Verification has no agent run id; the registry slot exists only to make checks stoppable.
     let activeKillTree: SpawnedCheckProcess['killTree'] | null = null;
@@ -460,6 +482,7 @@ export class VerificationRunner {
 
     try {
       // Secrets scanning is always mandatory (EXE-9) and runs before any project check.
+      emit('check.started', 'secrets');
       const secretStarted = new Date(this.now());
       let secretHits: ReturnType<typeof scanWorktree> = [];
       let secretError: string | null = null;
@@ -470,6 +493,7 @@ export class VerificationRunner {
       }
       const secretStatus = secretError ? 'error' : secretHits.length > 0 ? 'failed' : 'passed';
       if (secretStatus !== 'passed') allMandatoryPassed = false;
+      const secretEnded = new Date(this.now());
       this.db
         .insert(verificationChecks)
         .values({
@@ -483,12 +507,17 @@ export class VerificationRunner {
           outputTail: this.redact(secretError ?? describeHits(secretHits)),
           logPath: null,
           startedAt: secretStarted,
-          endedAt: new Date(this.now()),
+          endedAt: secretEnded,
         })
         .run();
+      emit('check.finished', 'secrets', { status: secretStatus, mandatory: true, durationMs: secretEnded.getTime() - secretStarted.getTime() });
 
       // Vulnerability scanning (REL-3) runs when dependency lockfiles change
       if (settings.vulnerabilityScan?.enabled) {
+        // Announce only when the scan will really execute (lockfiles changed), so every started
+        // event is matched by a finished event.
+        const vulnWillRun = detectLockfilesChanged(worktreePath, baseSha, candidateSha).length > 0;
+        if (vulnWillRun) emit('check.started', 'vulnerabilities');
         const vulnStarted = new Date(this.now());
         const vulnResult = await runVulnerabilityScan({
           cwd: worktreePath,
@@ -506,6 +535,7 @@ export class VerificationRunner {
                 ? 'error'
                 : 'failed';
           if (status !== 'passed') allMandatoryPassed = false;
+          const vulnEnded = new Date(this.now());
           this.db
             .insert(verificationChecks)
             .values({
@@ -519,9 +549,10 @@ export class VerificationRunner {
               outputTail: this.redact(vulnResult.summary),
               logPath: null,
               startedAt: vulnStarted,
-              endedAt: new Date(this.now()),
+              endedAt: vulnEnded,
             })
             .run();
+          if (vulnWillRun) emit('check.finished', 'vulnerabilities', { status, mandatory: true, durationMs: vulnEnded.getTime() - vulnStarted.getTime() });
         }
       }
 
@@ -532,7 +563,9 @@ export class VerificationRunner {
           allMandatoryPassed = false;
           break;
         }
-        const row = await this.runOneCheck(verificationRunId, check, worktreePath, onSpawned);
+        emit('check.started', check.key);
+        const { status: row, durationMs } = await this.runOneCheck(verificationRunId, check, worktreePath, onSpawned);
+        emit('check.finished', check.key, { status: row, mandatory: check.mandatory, durationMs });
         if (check.mandatory && row !== 'passed') allMandatoryPassed = false;
       }
       return allMandatoryPassed;
@@ -546,7 +579,7 @@ export class VerificationRunner {
     check: CheckConfig,
     worktreePath: string,
     onSpawned?: (info: SpawnedCheckProcess) => void,
-  ): Promise<'passed' | 'failed' | 'error' | 'timed_out' | 'unsupported'> {
+  ): Promise<{ status: 'passed' | 'failed' | 'error' | 'timed_out' | 'unsupported'; durationMs: number }> {
     const startedAt = new Date(this.now());
     const logPath = path.join(this.logsDir, `verify-${verificationRunId}-${check.key}.log`);
     const result = await runCheckCommand({
@@ -558,6 +591,7 @@ export class VerificationRunner {
       onSpawned,
     });
     const status = checkStatus(result.status);
+    const endedAt = new Date(this.now());
     this.db
       .insert(verificationChecks)
       .values({
@@ -571,9 +605,9 @@ export class VerificationRunner {
         outputTail: this.redact(result.error ? `${result.error}\n${result.output}` : result.output),
         logPath,
         startedAt,
-        endedAt: new Date(this.now()),
+        endedAt,
       })
       .run();
-    return status;
+    return { status, durationMs: endedAt.getTime() - startedAt.getTime() };
   }
 }

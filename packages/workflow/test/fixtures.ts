@@ -97,7 +97,7 @@ export const ALLOWED_FROM: Record<EventType, StoryStatus[]> = {
   candidate_head_changed: ['AWAITING_MERGE'],
   request_changes: ['AWAITING_MERGE'],
   merge_conflict: ['AWAITING_MERGE'],
-  fail: ACTIVE,
+  fail: [...ACTIVE, 'NEW', 'READY'],
   stop_run: ACTIVE,
   recover: ['BLOCKED'],
   cancel: NON_TERMINAL,

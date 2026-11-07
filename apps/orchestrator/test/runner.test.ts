@@ -1,4 +1,4 @@
-import { agentRuns, durableJobs, mergeApprovals, userStories } from '@aik/db';
+import { agentRuns, durableJobs, mergeApprovals, storyEvents, userStories } from '@aik/db';
 import { and, eq } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, test, vi } from 'vitest';
 import type { ImplementerAgent } from '../src/agents/implementer.ts';
@@ -937,6 +937,180 @@ describe('AgentRunner', () => {
     } finally {
       vi.useRealTimers();
       heartbeatSpy.mockRestore();
+      dbHolder.db.update(userStories).set({ cancelledAt: new Date() }).where(eq(userStories.id, story.id)).run();
+    }
+  });
+});
+
+describe('stage retry rounds', () => {
+  // Fresh database: the retry tests tick repeatedly, and stories left behind by the harness
+  // above (seeded with legacy manual job keys) would be rediscovered under the new round keys.
+  let dbHolder: ReturnType<typeof createTestDb>;
+  let bus: EventBus;
+  let workflow: WorkflowService;
+  let queue: JobQueue;
+
+  beforeAll(() => {
+    dbHolder = createTestDb();
+    bus = new EventBus();
+    workflow = new WorkflowService({ db: dbHolder.db, bus });
+    queue = new JobQueue(dbHolder.db);
+  });
+
+  afterAll(() => {
+    dbHolder.close();
+  });
+
+  const runnerWith = (opts: { implementer?: Partial<ImplementerAgent>; redact?: (text: string) => string } = {}) =>
+    new AgentRunner({
+      db: dbHolder.db,
+      queue,
+      workflow,
+      bus,
+      planner: { planStory: vi.fn().mockResolvedValue({ ok: true }) } as unknown as PlannerAgent,
+      implementer: { implementStory: vi.fn().mockResolvedValue({ ok: true, candidateSha: 'c'.repeat(40) }), ...opts.implementer } as unknown as ImplementerAgent,
+      verification: { verifyStory: vi.fn().mockResolvedValue({ status: 'passed' }) } as unknown as VerificationRunner,
+      reviewer: { reviewStory: vi.fn().mockResolvedValue({ ok: true }) } as unknown as ReviewerAgent,
+      redact: opts.redact,
+    });
+
+  const implementJobs = (storyId: number) =>
+    dbHolder.db.select().from(durableJobs).where(and(eq(durableJobs.storyId, storyId), eq(durableJobs.kind, 'implement'))).all();
+
+  const retryEventRows = (storyId: number) =>
+    dbHolder.db
+      .select()
+      .from(storyEvents)
+      .where(and(eq(storyEvents.storyId, storyId), eq(storyEvents.type, 'internal_error')))
+      .all();
+
+  test('re-enqueues a failed implement job under the _r1 key and records exactly one retry event', async () => {
+    const project = seedProject(dbHolder.db, { repoPath: 'C:/repos/retry-r1' });
+    const story = seedStory(dbHolder.db, project.id, { key: 'RTY-1', title: 'Fails once', status: 'READY', planningStatus: 'plan_approved' });
+    const implementStory = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: false, error: 'The story worktree is not clean; refusing to start an implementation run' })
+      .mockResolvedValue({ ok: true, candidateSha: 'd'.repeat(40) });
+    const runner = runnerWith({ implementer: { implementStory } as unknown as ImplementerAgent });
+
+    try {
+      await runner.tick();
+      await runner.drain();
+
+      // r0 failed (pre-claim ok:false); no retry may appear in the same tick that is still leasing it.
+      expect(dbHolder.db.select().from(durableJobs).where(eq(durableJobs.idempotencyKey, `implement_${story.id}_0_r0`)).get()?.status).toBe('failed');
+
+      await runner.tick();
+      await runner.drain();
+
+      expect(implementStory).toHaveBeenCalledTimes(2);
+      expect(dbHolder.db.select().from(durableJobs).where(eq(durableJobs.idempotencyKey, `implement_${story.id}_0_r1`)).get()?.status).toBe('succeeded');
+      const rows = retryEventRows(story.id);
+      expect(rows).toHaveLength(1);
+      expect(rows[0]?.payload).toMatchObject({ message: 'stage retried: implement r1', stage: 'implement', ordinal: 1 });
+    } finally {
+      dbHolder.db.update(userStories).set({ cancelledAt: new Date() }).where(eq(userStories.id, story.id)).run();
+    }
+  });
+
+  test('blocks with environment after the retry budget, with the redacted last error in the detail', async () => {
+    const project = seedProject(dbHolder.db, { repoPath: 'C:/repos/retry-budget' });
+    const story = seedStory(dbHolder.db, project.id, { key: 'RTY-2', title: 'Always fails', status: 'READY', planningStatus: 'plan_approved' });
+    const implementStory = vi.fn().mockResolvedValue({ ok: false, error: 'provider exploded with token hunter2-value' });
+    const runner = runnerWith({
+      implementer: { implementStory } as unknown as ImplementerAgent,
+      redact: (text) => text.replaceAll('hunter2-value', '[REDACTED]'),
+    });
+
+    try {
+      for (let i = 0; i < 4; i += 1) {
+        await runner.tick();
+        await runner.drain();
+      }
+
+      const updated = dbHolder.db.select().from(userStories).where(eq(userStories.id, story.id)).get();
+      expect(updated).toMatchObject({ status: 'BLOCKED', blockedReason: 'environment', blockedFrom: 'READY' });
+      expect(updated?.blockedDetail).toContain('r3');
+      expect(updated?.blockedDetail).toContain('[REDACTED]');
+      expect(updated?.blockedDetail).not.toContain('hunter2-value');
+      const jobs = implementJobs(story.id);
+      expect(jobs.map((j) => j.idempotencyKey).sort()).toEqual([
+        `implement_${story.id}_0_r0`,
+        `implement_${story.id}_0_r1`,
+        `implement_${story.id}_0_r2`,
+      ]);
+      expect(jobs.every((j) => j.status === 'failed')).toBe(true);
+      // r0 is silent normal operation; exactly the two retries leave their RE4 trace.
+      expect(retryEventRows(story.id)).toHaveLength(2);
+    } finally {
+      dbHolder.db.update(userStories).set({ cancelledAt: new Date() }).where(eq(userStories.id, story.id)).run();
+    }
+  });
+
+  test('recover() bumps statusVersion so the next implement enqueue starts at r0 again', async () => {
+    const project = seedProject(dbHolder.db, { repoPath: 'C:/repos/retry-recover' });
+    const story = seedStory(dbHolder.db, project.id, {
+      key: 'RTY-3',
+      title: 'Human recover',
+      status: 'REWORK',
+      candidateSha: 'e'.repeat(40),
+      candidateTree: 'f'.repeat(40),
+    });
+    for (const round of [0, 1, 2]) {
+      const now = new Date();
+      dbHolder.db
+        .insert(durableJobs)
+        .values({
+          kind: 'implement',
+          slot: 'heavy',
+          storyId: story.id,
+          payload: {},
+          sideEffecting: true,
+          status: 'failed',
+          runAfter: now,
+          idempotencyKey: `implement_${story.id}_0_r${round}`,
+          lastError: `failure ${round}`,
+          createdAt: now,
+          updatedAt: now,
+        })
+        .run();
+    }
+    seedPlan(dbHolder.db, story.id, { status: 'approved' });
+    const implementStory = vi.fn().mockResolvedValue({ ok: true, candidateSha: 'e'.repeat(40) });
+    const runner = runnerWith({ implementer: { implementStory } as unknown as ImplementerAgent });
+
+    try {
+      await runner.tick();
+      await runner.drain();
+
+      // Three failed rounds at statusVersion 0: the stage budget is spent, the story blocks honestly.
+      expect(dbHolder.db.select().from(userStories).where(eq(userStories.id, story.id)).get()).toMatchObject({
+        status: 'BLOCKED',
+        blockedReason: 'environment',
+        blockedFrom: 'REWORK',
+      });
+
+      const recovered = workflow.transition({
+        storyId: story.id,
+        event: { type: 'recover', target: 'READY', extraAttempts: 0, causeResolved: true },
+        actor: 'human',
+      });
+      expect(recovered.ok).toBe(true);
+
+      await runner.tick();
+      await runner.drain();
+
+      const updated = dbHolder.db.select().from(userStories).where(eq(userStories.id, story.id)).get();
+      const freshRound = dbHolder.db
+        .select()
+        .from(durableJobs)
+        .where(eq(durableJobs.idempotencyKey, `implement_${story.id}_${updated?.statusVersion}_r0`))
+        .get();
+      expect(freshRound).toMatchObject({ kind: 'implement' });
+      expect(implementStory).toHaveBeenCalledTimes(1);
+      // The fresh r0 is a first attempt under the new statusVersion: no retry event, no ping-pong.
+      expect(retryEventRows(story.id)).toHaveLength(0);
+    } finally {
       dbHolder.db.update(userStories).set({ cancelledAt: new Date() }).where(eq(userStories.id, story.id)).run();
     }
   });

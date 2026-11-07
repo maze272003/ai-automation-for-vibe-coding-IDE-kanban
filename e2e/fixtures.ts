@@ -59,7 +59,7 @@ export function resolveOpencodeExe(): string | null {
 }
 
 /** Calls the orchestrator through the same bridge the UI uses. */
-export function apiCall<T = unknown>(page: Page, method: 'GET' | 'POST' | 'PATCH', p: string, body?: unknown): Promise<BridgeResponse & { body: T }> {
+export function apiCall<T = unknown>(page: Page, method: 'GET' | 'POST' | 'PATCH' | 'DELETE', p: string, body?: unknown): Promise<BridgeResponse & { body: T }> {
   return page.evaluate(
     ([m, url, b]) => {
       const api = (window as unknown as { api: AikWindowApi }).api;

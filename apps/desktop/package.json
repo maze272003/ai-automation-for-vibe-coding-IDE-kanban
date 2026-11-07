@@ -28,13 +28,6 @@
         "filter": [
           "**/*"
         ]
-      },
-      {
-        "from": "assets/pixel-agents-runtime",
-        "to": "pixel-agents-runtime",
-        "filter": [
-          "**/*"
-        ]
       }
     ],
     "win": {

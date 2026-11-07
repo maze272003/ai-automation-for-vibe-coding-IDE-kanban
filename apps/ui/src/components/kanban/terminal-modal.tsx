@@ -2,6 +2,7 @@
 import { ACTIVE_STATUSES, type PlanV1, type StoryDTO } from '@aik/contracts';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ApiRequestError, api } from '../../lib/api.ts';
+import { baseName } from '../../lib/files.ts';
 import { STATUS_THEME } from '../../lib/status-theme.ts';
 import { answerClarifications, performEvent, rejectPlan, type ClarificationAnswer } from '../../lib/transitions.ts';
 import { useToast } from '../ui/toast.tsx';
@@ -85,6 +86,174 @@ interface StoryDetailsResponse {
     }[];
   } | null;
   diff: string | null;
+}
+
+// RE5: friendly rendering of one terminal event. Presentational only — data shaping,
+// filtering, polling, keys and testids stay in TerminalModal.
+const EVENT_RAILS: Record<'reasoning' | 'tool' | 'text' | 'user', string> = {
+  reasoning: '#a78bfa',
+  tool: '#22d3ee',
+  user: '#94a3b8',
+  text: '#34d399',
+};
+
+const TOOL_LABELS: Record<string, string> = {
+  read: 'Read',
+  edit: 'Edit',
+  write: 'Write',
+  bash: 'Bash',
+  grep: 'Grep',
+  glob: 'Glob',
+};
+
+interface TerminalEvent {
+  key: string;
+  type: 'reasoning' | 'tool' | 'text' | 'user';
+  content: OpenCodeMessageContent;
+  role?: string;
+}
+
+/** Middle truncation keeps the start and the end of a long command or path readable. */
+function middleTruncate(value: string, max = 64): string {
+  if (value.length <= max) return value;
+  const keep = Math.floor((max - 1) / 2);
+  return `${value.slice(0, keep)}…${value.slice(value.length - keep)}`;
+}
+
+function toolLabel(name: string | undefined): string {
+  if (!name) return 'Tool';
+  return TOOL_LABELS[name.toLowerCase()] ?? name.charAt(0).toUpperCase() + name.slice(1);
+}
+
+function toolSummary(content: OpenCodeMessageContent): string | null {
+  const input = content.state?.input;
+  if (!input) return null;
+  if (typeof input.command === 'string' && input.command) return input.command;
+  const path = input.path ?? input.file_path;
+  if (typeof path === 'string' && path) return baseName(path);
+  return null;
+}
+
+function ToolStatusChip({ status }: { status: string | undefined }) {
+  if (status === 'running') {
+    return (
+      <span className="flex items-center gap-1 rounded bg-accent/20 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-accent-foreground">
+        <span className="h-1.5 w-1.5 rounded-full bg-accent" aria-hidden="true" />
+        running
+      </span>
+    );
+  }
+  if (status === 'completed') {
+    return (
+      <span className="rounded bg-success/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-success">
+        ✓ completed
+      </span>
+    );
+  }
+  if (status === 'failed') {
+    return (
+      <span className="rounded bg-danger/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-danger">
+        ✕ failed
+      </span>
+    );
+  }
+  if (status) {
+    return (
+      <span className="rounded bg-surface-2 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted-2">
+        {status}
+      </span>
+    );
+  }
+  return null;
+}
+
+function ClampableText({
+  text,
+  maxLines,
+  lineHeightRem,
+  className,
+}: {
+  text: string;
+  maxLines: number;
+  lineHeightRem: number;
+  className: string;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const isLong = text.split('\n').length > maxLines;
+  const clamped = isLong && !expanded;
+  return (
+    <div>
+      <div
+        className={`${className} whitespace-pre-wrap break-words${clamped ? ' overflow-hidden' : ''}`}
+        style={clamped ? { maxHeight: `${maxLines * lineHeightRem}rem` } : undefined}
+      >
+        {text}
+      </div>
+      {isLong && (
+        <button
+          type="button"
+          onClick={() => setExpanded((v) => !v)}
+          className="mt-1 cursor-pointer text-[11px] font-semibold text-accent hover:underline"
+        >
+          {expanded ? 'Show less' : 'Show more'}
+        </button>
+      )}
+    </div>
+  );
+}
+
+function AgentEventCard({ ev }: { ev: TerminalEvent }) {
+  const rail = EVENT_RAILS[ev.type];
+  const label = ev.type === 'reasoning' ? 'Thinking' : ev.type === 'tool' ? toolLabel(ev.content.name) : ev.type;
+  const created = ev.content.time?.created;
+  const completed = ev.content.time?.completed;
+  const duration =
+    created && completed && completed >= created ? `${((completed - created) / 1000).toFixed(1)}s` : null;
+  const summary = ev.type === 'tool' ? toolSummary(ev.content) : null;
+  const text = ev.content.text ?? '';
+
+  return (
+    <div className="rounded-card border border-border bg-surface-3 p-3" style={{ borderLeft: `2px solid ${rail}` }}>
+      <div className="mb-1.5 flex items-center justify-between gap-2 border-b border-border/60 pb-1.5 text-[11px] text-muted-2">
+        <span className="font-semibold uppercase tracking-wider" style={{ color: rail }}>
+          {label}
+        </span>
+        <span className="flex shrink-0 items-center gap-2">
+          {ev.type === 'tool' && <ToolStatusChip status={ev.content.state?.status} />}
+          {ev.type === 'tool' && duration && <span className="font-mono">{duration}</span>}
+          {created && <span>{new Date(created).toLocaleTimeString()}</span>}
+        </span>
+      </div>
+      {ev.type === 'tool' && (
+        <div className="space-y-1.5">
+          {summary && (
+            <div className="truncate font-mono text-xs text-foreground" title={summary}>
+              {middleTruncate(summary)}
+            </div>
+          )}
+          <details>
+            <summary className="cursor-pointer select-none text-[11px] text-muted-2 transition-colors hover:text-foreground">
+              Show raw JSON
+            </summary>
+            <pre className="mt-1.5 overflow-x-auto rounded border border-border bg-surface-2 p-2 font-mono text-[11px] text-muted">
+              {JSON.stringify(ev.content.state?.input ?? ev.content.state?.content ?? '', null, 2)}
+            </pre>
+          </details>
+        </div>
+      )}
+      {ev.type === 'reasoning' && (
+        <ClampableText text={text} maxLines={6} lineHeightRem={1} className="font-sans text-xs italic text-muted-2" />
+      )}
+      {(ev.type === 'text' || ev.type === 'user') && (
+        <ClampableText
+          text={text}
+          maxLines={40}
+          lineHeightRem={1.25}
+          className={`font-sans text-sm ${ev.type === 'user' ? 'text-muted' : 'text-foreground'}`}
+        />
+      )}
+    </div>
+  );
 }
 
 export function TerminalModal({
@@ -329,12 +498,7 @@ export function TerminalModal({
   };
 
   // Flatten events for terminal display
-  const allEvents: Array<{
-    key: string;
-    type: 'reasoning' | 'tool' | 'text' | 'user';
-    content: OpenCodeMessageContent;
-    role?: string;
-  }> = [];
+  const allEvents: TerminalEvent[] = [];
 
   for (const [msgIdx, msg] of (data?.messages ?? []).entries()) {
     if (msg.role === 'user') {
@@ -652,22 +816,9 @@ export function TerminalModal({
                     </p>
                   </div>
                 )}
-                {filteredEvents.map((ev) => {
-                  const rail = ev.type === 'reasoning' ? '#a78bfa' : ev.type === 'tool' ? '#22d3ee' : ev.type === 'user' ? '#94a3b8' : '#34d399';
-                  return (
-                    <div key={ev.key} className="rounded-card border border-border bg-surface-3 p-3" style={{ borderLeft: `2px solid ${rail}` }}>
-                      <div className="mb-1.5 flex items-center justify-between border-b border-border/60 pb-1.5 text-[11px] text-muted-2">
-                        <span className="font-semibold uppercase tracking-wider" style={{ color: rail }}>
-                          {ev.type}
-                        </span>
-                        {ev.content.time?.created && <span>{new Date(ev.content.time.created).toLocaleTimeString()}</span>}
-                      </div>
-                      <div className="whitespace-pre-wrap font-mono text-xs text-muted">
-                        {ev.content.text || JSON.stringify(ev.content.state?.input ?? ev.content.state?.content ?? '', null, 2)}
-                      </div>
-                    </div>
-                  );
-                })}
+                {filteredEvents.map((ev) => (
+                  <AgentEventCard key={ev.key} ev={ev} />
+                ))}
               </div>
             </div>
           )}

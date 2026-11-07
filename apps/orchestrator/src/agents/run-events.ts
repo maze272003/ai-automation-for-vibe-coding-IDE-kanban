@@ -1,6 +1,6 @@
 // apps/orchestrator/src/agents/run-events.ts
-// Emits the run.started/run.finished outbox topics (spec 2026-11-04 Pixel Agents office).
-// The payload carries story/project context so consumers (the office bridge) need no extra joins.
+// Emits the run.started/run.finished outbox topics (consumed by the 3D office).
+// The payload carries story/project context so consumers (the 3D office) need no extra joins.
 import type { Role } from '@aik/contracts';
 import { agentRuns, outboxEvents, projects, userStories, type AikDbOrTx } from '@aik/db';
 import { and, eq, gt, sql } from 'drizzle-orm';
@@ -62,7 +62,7 @@ export function emitRunFinished(db: AikDbOrTx, now: Date, runId: number, status:
   }, now);
 }
 
-/** Max `run.activity` rows per run (spec 2026-11-04-office-agent-activity); drops silently after. */
+/** Max `run.activity` rows per run (feeds the 3D office bubbles); drops silently after. */
 export const RUN_ACTIVITY_ROW_CAP = 300;
 
 /** Max characters of a redacted activity summary. */
@@ -71,6 +71,24 @@ const SUMMARY_MAX = 120;
 /** Applied after redaction, so a secret straddling the boundary is redacted whole before truncating. */
 export function truncateSummary(text: string): string {
   return text.length > SUMMARY_MAX ? `${text.slice(0, SUMMARY_MAX)}…` : text;
+}
+
+function persistedActivity(event: RunActivityEvent, redact: (text: string) => string): RunActivityEvent {
+  const safe = (text: string) => truncateSummary(redact(text));
+  switch (event.kind) {
+    case 'tool-start':
+    case 'tool-end':
+      return { kind: event.kind, name: safe(event.name),
+        ...(event.summary !== undefined ? { summary: safe(event.summary) } : {}) };
+    case 'message':
+      return { kind: event.kind, text: safe(event.text) };
+    case 'subagent':
+      return { kind: event.kind, phase: event.phase, id: safe(event.id), name: safe(event.name),
+        ...(event.ok !== undefined ? { ok: event.ok } : {}) };
+    case 'usage':
+      return { kind: event.kind, inputTokens: event.inputTokens, cachedInputTokens: event.cachedInputTokens,
+        outputTokens: event.outputTokens, costUsd: event.costUsd };
+  }
 }
 
 /** One outbox row per activity batch: `{runId, role, storyKey, projectKey, events}`; summaries redacted, then truncated.
@@ -109,7 +127,7 @@ export function appendRunActivity(
         role: info.role,
         storyKey: info.storyKey,
         projectKey: info.projectKey,
-        events: events.map((e) => ({ kind: e.kind, name: e.name, ...(e.summary !== undefined ? { summary: truncateSummary(redact(e.summary)) } : {}) })),
+        events: events.map((event) => persistedActivity(event, redact)),
       },
     },
     now,

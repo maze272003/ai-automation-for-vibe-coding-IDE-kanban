@@ -1,5 +1,5 @@
 // apps/desktop/src/main/terminal-ipc.ts — guarded `aik:terminal-*` invoke handlers
-// (Phase 5.3 spec §Component design 3). Mirrors registerOfficeIpc's silent untrusted
+// (Phase 5.3 spec §Component design 3). Uses a silent untrusted-sender
 // guard (spec T-12) but on `ipcMain.handle`, because the preload calls `invoke`:
 // every refusal is RETURNED as the resolved value (the silent error shape), never
 // thrown. Thin by design — the manager is unit-tested, this path is e2e-covered.

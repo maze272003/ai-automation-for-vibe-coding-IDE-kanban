@@ -20,7 +20,10 @@ export type ShortcutId =
   | 'editor.search'
   | 'view.terminal'
   | 'scm.commit'
-  | 'dialog.close';
+  | 'dialog.close'
+  | 'office.walk'
+  | 'office.search'
+  | 'office.back';
 
 export type Platform = 'win32' | 'darwin' | 'linux';
 
@@ -57,6 +60,10 @@ export const SHORTCUTS: readonly Shortcut[] = [
   { id: 'view.terminal', chord: 'mod+`', label: 'Toggle the integrated terminal', scope: 'code', group: 'View' },
   { id: 'scm.commit', chord: 'mod+enter', label: 'Commit from the Git panel', scope: 'local', group: 'Local' },
   { id: 'dialog.close', chord: 'escape', label: 'Close the focused dialog', scope: 'local', group: 'Local' },
+  // Office (3D view) keys: fixed in v1 (the registry has no rebinding), handled by the office route only.
+  { id: 'office.walk', chord: 'v', label: 'Office: toggle walk mode', scope: 'local', group: 'Local' },
+  { id: 'office.search', chord: '/', label: 'Office: search rooms', scope: 'local', group: 'Local' },
+  { id: 'office.back', chord: 'escape', label: 'Office: back to the overview', scope: 'local', group: 'Local' },
 ];
 
 export const GLOBAL_SHORTCUTS: readonly Shortcut[] = SHORTCUTS.filter((shortcut) => shortcut.scope === 'global');

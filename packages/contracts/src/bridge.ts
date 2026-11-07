@@ -1,6 +1,6 @@
 import type { DiagnosticsExportResult } from './diagnostics.ts';
 import type { EventEnvelope } from './events.ts';
-import type { OfficeBounds } from './pixel-agents.ts';
+import type { OfficePreferences } from './office.ts';
 
 export type HttpMethod = 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE';
 export interface BridgeResponse {
@@ -46,8 +46,8 @@ export type OpencodeLoginWaitResult = { ok: true } | { ok: false; error: string 
 export type OpencodeMode = 'managed' | 'personal';
 export interface AppSettings {
   opencodeMode: OpencodeMode;
-  /** Show running agents as pixel-art characters in the embedded Pixel Agents office (spec 2026-11-04). Off by default. */
-  agentOffice: boolean;
+  /** 3D Agent Office preferences (spec 2026-11-08). */
+  office3d: OfficePreferences;
 }
 
 /** Result of `aik:terminal-open` (Phase 5.3 spec §IPC contract): a live session id, or why it was refused. */
@@ -103,14 +103,6 @@ export interface AikWindowApi {
   /** Opens the story's OpenCode session in an external console. Main looks up the worktree and
    *  session id from the orchestrator and spawns argv only — never a shell (spec §6.3). */
   openTerminalCli(storyId: number): Promise<OpenCliResult>;
-  office: {
-    /** Tell main whether the office view should be visible (office route active + feature on). */
-    setVisible(visible: boolean): void;
-    /** Report the office container's viewport bounds (CSS px == DIP at zoom 1) so main can position the embedded view. */
-    setBounds(bounds: OfficeBounds): void;
-    /** Fired when the user clicks a character in the embedded office (label = `${storyKey} ${role}`). */
-    onAgentClick(listener: (label: string) => void): () => void;
-  };
   events: { subscribe(listener: (event: EventEnvelope) => void): () => void };
   system: { subscribe(listener: (state: SystemState) => void): () => void };
   terminal: {

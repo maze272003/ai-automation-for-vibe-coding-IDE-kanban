@@ -132,7 +132,7 @@ describe('OrchestratorSupervisor', () => {
     const old = last();
     sup.restart();
     // The old child gets a shutdown; the replacement spawns after its exit and
-    // receives the init message again (e.g. a toggled agent-office config).
+    // receives the init message again (e.g. a restored backup).
     expect(old.sent.at(-1)).toEqual({ type: 'shutdown' });
     await new Promise((r) => setTimeout(r, 0)); // FakeChild exits on shutdown via microtask
     expect(children.length).toBe(2);

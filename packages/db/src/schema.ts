@@ -1,6 +1,6 @@
 import {
-  BLOCKED_REASON, PLANNING_STATUS, PRIORITY, ROLE, STORY_STATUS,
-  type PlanV1, type ProjectSettings, type ReviewV1,
+  BLOCKED_REASON, OFFICE_SIDES, OFFICE_WINGS, PLANNING_STATUS, PRIORITY, ROLE, STORY_STATUS,
+  type PlanV1, type ProjectSettings, type ReviewV1, type RoomCustomization,
 } from '@aik/contracts';
 import { sql } from 'drizzle-orm';
 import {
@@ -407,6 +407,27 @@ export const outboxEvents = sqliteTable('outbox_events', {
   payload: text('payload', { mode: 'json' }).$type<OutboxPayload>().notNull(),
   createdAt: ts('created_at').notNull(),
 });
+
+export const officeRooms = sqliteTable('office_rooms', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  repoPathNorm: text('repo_path_norm').notNull(),
+  // Deliberately no FK: a room outlives its project (archived, then re-adoptable by repo path).
+  projectId: integer('project_id'),
+  projectKeySnapshot: text('project_key_snapshot').notNull(),
+  projectNameSnapshot: text('project_name_snapshot').notNull(),
+  state: text('state', { enum: ['active', 'archived'] }).notNull().default('active'),
+  wing: text('wing', { enum: OFFICE_WINGS }),
+  slotIndex: integer('slot_index'),
+  side: text('side', { enum: OFFICE_SIDES }),
+  customization: text('customization', { mode: 'json' }).$type<RoomCustomization>().notNull(),
+  createdAt: ts('created_at').notNull(),
+  updatedAt: ts('updated_at').notNull(),
+  archivedAt: ts('archived_at'),
+}, (t) => [
+  uniqueIndex('office_rooms_repo_uq').on(t.repoPathNorm),
+  uniqueIndex('office_rooms_slot_uq').on(t.wing, t.slotIndex, t.side).where(sql.raw('wing IS NOT NULL')),
+  uniqueIndex('office_rooms_project_uq').on(t.projectId).where(sql.raw('project_id IS NOT NULL')),
+]);
 
 export const durableJobs = sqliteTable('durable_jobs', {
   id: integer('id').primaryKey({ autoIncrement: true }),

@@ -1,4 +1,4 @@
-import type { AppSettings, BridgeResponse, DiagnosticsExportResult, OpenCliResult, SystemState } from '@aik/contracts';
+import { OfficePreferences, type BridgeResponse, type DiagnosticsExportResult, type OpenCliResult, type SystemState } from '@aik/contracts';
 import { listBackups, restoreBackup } from '@aik/db/backup';
 import { BrowserWindow, dialog, ipcMain, shell, type IpcMainInvokeEvent } from 'electron';
 import { writeFile } from 'node:fs/promises';
@@ -10,7 +10,7 @@ import { installOpencode, opencodeStatus } from './opencode.ts';
 import { refreshGatewayContext } from './gateway-context.ts';
 import { listOpencodeModels, opencodeChat, opencodeLoginStart, opencodeLoginWait, opencodeSignedIn, readAppSettings, writeAppSettings } from './opencode-server.ts';
 import { openTerminalCli, resolveOpenCliExe } from './open-cli.ts';
-import { stopOpencodeServer } from './opencode-server.ts';
+import { needsOpencodeRestart, stopOpencodeServer } from './opencode-server.ts';
 import type { DesktopPaths } from './paths.ts';
 import type { OrchestratorSupervisor } from './supervisor.ts';
 
@@ -20,8 +20,6 @@ export interface BridgeDeps {
   paths: DesktopPaths;
   opencodeAssetsDir: string;
   isTrustedSender: (url: string) => boolean;
-  /** Fires when a settings write flipped agentOffice (office start/stop + orchestrator restart, spec 2026-11-04). */
-  onSettingsChanged?: (next: AppSettings) => void;
 }
 
 const unavailable = (message: string): BridgeResponse => ({
@@ -237,14 +235,13 @@ export function registerBridge(deps: BridgeDeps): void {
     assertTrusted(event, deps);
     const previous = readAppSettings(deps.paths.dataDir);
     const parsed = z
-      .object({ opencodeMode: z.enum(['managed', 'personal']), agentOffice: z.boolean().optional() })
+      .object({ opencodeMode: z.enum(['managed', 'personal']), office3d: OfficePreferences.optional() })
       .parse(raw);
     const next = writeAppSettings(deps.paths.dataDir, {
       opencodeMode: parsed.opencodeMode,
-      agentOffice: parsed.agentOffice ?? previous.agentOffice,
+      office3d: parsed.office3d ?? previous.office3d,
     });
-    stopOpencodeServer(); // the next call starts a server in the new mode
-    if (previous.agentOffice !== next.agentOffice) deps.onSettingsChanged?.(next);
+    if (needsOpencodeRestart(previous, next)) stopOpencodeServer(); // the next call starts a server in the new mode
     return next;
   });
 

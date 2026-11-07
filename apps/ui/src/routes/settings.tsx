@@ -1,5 +1,6 @@
-import { useEffect, useState } from 'react';
-import type { OpencodeMode, OpencodeModelInfo, OpencodeStatus } from '@aik/contracts';
+import { useEffect, useRef, useState } from 'react';
+import { AGENT_MOVEMENT, DEFAULT_OFFICE_PREFERENCES, OFFICE_QUALITY, STATION_STATES } from '@aik/contracts';
+import type { AppSettings, OfficePreferences, OpencodeMode, OpencodeModelInfo, OpencodeStatus } from '@aik/contracts';
 import { GitHubSettingsCard } from '../components/settings/github-settings.tsx';
 import { ProvidersCard } from '../components/settings/providers-card.tsx';
 import { TopBar } from '../components/shell/top-bar.tsx';
@@ -8,6 +9,8 @@ import { Card } from '../components/ui/card.tsx';
 import { Label } from '../components/ui/label.tsx';
 import { Select } from '../components/ui/select.tsx';
 import { Textarea } from '../components/ui/textarea.tsx';
+import { ConfirmAction } from '../office3d/ui/ConfirmAction.tsx';
+import { effectiveStatusColor } from '../office3d/state/customization.ts';
 import { api } from '../lib/api.ts';
 import { cn } from '../lib/cn.ts';
 import { useTheme } from '../lib/use-theme.ts';
@@ -297,6 +300,53 @@ function ModelPicker({ status, mode, onModeChange }: ModelPickerProps) {
   );
 }
 
+const CHECKBOX_CLASS =
+  'h-3.5 w-3.5 shrink-0 appearance-none rounded-[4px] border border-border-strong bg-surface-2 checked:border-accent checked:bg-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring';
+const RADIO_CLASS =
+  'h-3.5 w-3.5 shrink-0 appearance-none rounded-full border border-border-strong bg-surface-2 checked:border-accent checked:bg-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring';
+const VIEW_OPTIONS = [['overview', 'Overview'], ['last-room', 'Last room'], ['walk', 'Walk']] as const;
+const SCREEN_OPTIONS = [['kanban', 'Kanban wall'], ['activity', 'Activity monitor'], ['runs', 'Runs monitor']] as const;
+const cap = (v: string) => v.charAt(0).toUpperCase() + v.slice(1);
+
+function RadioRow<T extends string>({ name, label, options, value, onChange, testid }: {
+  name: string; label: string; options: readonly (readonly [T, string])[]; value: T; onChange: (v: T) => void; testid: string;
+}) {
+  return (
+    <fieldset data-testid={testid}>
+      <legend className="text-xs text-muted">{label}</legend>
+      <div className="mt-1 flex flex-wrap gap-4">
+        {options.map(([v, text]) => (
+          <label key={v} className="flex cursor-pointer items-center gap-2 text-sm text-foreground">
+            <input type="radio" name={name} value={v} aria-label={`${label}: ${text}`} checked={value === v} onChange={() => onChange(v)} className={RADIO_CLASS} />
+            {text}
+          </label>
+        ))}
+      </div>
+    </fieldset>
+  );
+}
+
+function RangeRow({ label, min, max, step, value, onChange, testid }: {
+  label: string; min: number; max: number; step: number; value: number; onChange: (v: number) => void; testid: string;
+}) {
+  return (
+    <label className="flex items-center gap-3 text-sm text-foreground">
+      <span className="w-40 text-xs text-muted">{label}</span>
+      <input type="range" data-testid={testid} aria-label={label} min={min} max={max} step={step} value={value} onChange={(e) => onChange(Number(e.target.value))} />
+      <span className="w-10 font-mono text-xs">{value}</span>
+    </label>
+  );
+}
+
+function CheckRow({ label, checked, onChange, testid }: { label: string; checked: boolean; onChange: (v: boolean) => void; testid?: string }) {
+  return (
+    <label className="flex cursor-pointer items-center gap-2 text-sm text-foreground">
+      <input type="checkbox" data-testid={testid} aria-label={label} checked={checked} onChange={(e) => onChange(e.target.checked)} className={CHECKBOX_CLASS} />
+      {label}
+    </label>
+  );
+}
+
 export function SettingsPage() {
   const { preference, resolved, setPreference, toggle } = useTheme();
   const [health, setHealth] = useState<Health | null>(null);
@@ -304,13 +354,44 @@ export function SettingsPage() {
   const [installing, setInstalling] = useState(false);
   const [installError, setInstallError] = useState<string | null>(null);
   const [mode, setMode] = useState<OpencodeMode>('managed');
-  const [office, setOffice] = useState(false);
+  const [settings, setSettings] = useState<AppSettings | null>(null);
+  const [office3d, setOffice3d] = useState<OfficePreferences>(DEFAULT_OFFICE_PREFERENCES);
+  const [compactOpen, setCompactOpen] = useState(false);
+  const [office3dError, setOffice3dError] = useState<string | null>(null);
+  const settingsRef = useRef<AppSettings | null>(null);
+  const prefsRef = useRef<OfficePreferences>(DEFAULT_OFFICE_PREFERENCES);
+  const persistTimer = useRef<number | null>(null);
+  /** Writes the latest 3D office prefs; sliders and colour pickers call this debounced so a drag is one write. */
+  const persistOffice3d = () => {
+    persistTimer.current = null;
+    const loaded = settingsRef.current;
+    // The inputs stay disabled until settings load; never write a partial settings object.
+    if (!loaded) return;
+    void window.api.setAppSettings({ ...loaded, office3d: prefsRef.current }).then(
+      (saved) => {
+        setSettings(saved);
+        setOffice3dError(null);
+      },
+      (e: unknown) => setOffice3dError(`Could not save 3D office settings: ${e instanceof Error ? e.message : String(e)}`),
+    );
+  };
+  const persistRef = useRef(persistOffice3d);
+  persistRef.current = persistOffice3d;
+  useEffect(() => () => {
+    if (persistTimer.current !== null) {
+      window.clearTimeout(persistTimer.current);
+      persistRef.current();
+    }
+  }, []);
+  settingsRef.current = settings;
   useEffect(() => {
     void api.get<Health>('/health').then(setHealth, () => setHealth(null));
     void window.api.opencodeStatus().then(setOpencode, () => setOpencode(null));
     void window.api.getAppSettings().then((s) => {
+      setSettings(s);
+      prefsRef.current = s.office3d ?? DEFAULT_OFFICE_PREFERENCES;
+      setOffice3d(prefsRef.current);
       setMode(s.opencodeMode);
-      setOffice(s.agentOffice);
     }, () => undefined);
   }, []);
 
@@ -318,18 +399,19 @@ export function SettingsPage() {
   const changeMode = async (next: OpencodeMode) => {
     if (next === mode) return;
     setMode(next);
-    const saved = await window.api.setAppSettings({ opencodeMode: next, agentOffice: office });
+    const saved = await window.api.setAppSettings({ ...settings, opencodeMode: next } as AppSettings);
+    setSettings(saved);
     setMode(saved.opencodeMode);
-    setOffice(saved.agentOffice);
   };
 
-  /** Toggling starts/stops the bundled office server and restarts the orchestrator (main side). */
-  const changeOffice = async (next: boolean) => {
-    if (next === office) return;
-    setOffice(next);
-    const saved = await window.api.setAppSettings({ opencodeMode: mode, agentOffice: next });
-    setMode(saved.opencodeMode);
-    setOffice(saved.agentOffice);
+  /** 3D office preferences apply immediately; the saved copy comes back from the desktop main process. */
+  const changeOffice3d = (patch: Partial<OfficePreferences>, deferred = false) => {
+    const next = { ...prefsRef.current, ...patch };
+    prefsRef.current = next;
+    setOffice3d(next);
+    if (persistTimer.current !== null) window.clearTimeout(persistTimer.current);
+    if (deferred) persistTimer.current = window.setTimeout(persistOffice3d, 300);
+    else persistOffice3d();
   };
 
   const install = async () => {
@@ -402,24 +484,70 @@ export function SettingsPage() {
             </div>
           </Card>
 
-          <Card data-testid="settings-office" className="p-4">
-            <h2 className="text-sm font-semibold text-foreground">Agent office</h2>
-            <p className="mt-1 text-xs text-muted">
-              Show every running agent as a pixel-art character in an office view. Bundled Pixel
-              Agents (MIT) runs locally on 127.0.0.1 and is embedded read-only. Enabling it also
-              turns on Pixel Agents' global "Watch all sessions" setting so this app's agents
-              appear; the orchestrator restarts once to activate it.
-            </p>
-            <label className="mt-3 flex cursor-pointer items-center gap-2 text-sm text-foreground">
-              <input
-                type="checkbox"
-                data-testid="office-toggle"
-                checked={office}
-                onChange={(e) => void changeOffice(e.target.checked)}
-                className="h-3.5 w-3.5 shrink-0 appearance-none rounded-[4px] border border-border-strong bg-surface-2 checked:border-accent checked:bg-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
-              />
-              Show agents in the office view
-            </label>
+          <Card data-testid="settings-office3d" className="p-4">
+            <h2 className="text-sm font-semibold text-foreground">3D office</h2>
+            <p className="mt-1 text-xs text-muted">Controls for the 3D office view: navigation, graphics and how stations are shown.</p>
+            <fieldset
+              data-testid="office3d-prefs"
+              disabled={settings === null}
+              aria-busy={settings === null}
+              className="mt-3 flex min-w-0 flex-col gap-3 disabled:opacity-60"
+            >
+              <RadioRow name="office3d-view" label="Default view" testid="office3d-default-view" options={VIEW_OPTIONS} value={office3d.defaultView} onChange={(v) => changeOffice3d({ defaultView: v })} />
+              <CheckRow label="Enable walk mode" testid="office3d-walk" checked={office3d.walkEnabled} onChange={(v) => changeOffice3d({ walkEnabled: v })} />
+              <RangeRow label="Mouse sensitivity" testid="office3d-sensitivity" min={0.2} max={3} step={0.1} value={office3d.mouseSensitivity} onChange={(v) => changeOffice3d({ mouseSensitivity: v }, true)} />
+              <RangeRow label="Walk speed" testid="office3d-walk-speed" min={0.5} max={4} step={0.1} value={office3d.walkSpeed} onChange={(v) => changeOffice3d({ walkSpeed: v }, true)} />
+              <RangeRow label="Fly speed" testid="office3d-fly-speed" min={0.25} max={3} step={0.05} value={office3d.flySpeed} onChange={(v) => changeOffice3d({ flySpeed: v }, true)} />
+              <RadioRow name="office3d-quality" label="Graphics quality" testid="office3d-quality" options={OFFICE_QUALITY.map((q) => [q, cap(q)] as const)} value={office3d.quality} onChange={(v) => changeOffice3d({ quality: v })} />
+              <RadioRow name="office3d-movement" label="Agent movement" testid="office3d-movement" options={AGENT_MOVEMENT.map((m) => [m, cap(m)] as const)} value={office3d.agentMovement} onChange={(v) => changeOffice3d({ agentMovement: v })} />
+              <CheckRow label="Show archived rooms" testid="office3d-archived" checked={office3d.showArchived} onChange={(v) => changeOffice3d({ showArchived: v })} />
+              <fieldset>
+                <legend className="text-xs text-muted">Default screens</legend>
+                <div className="mt-1 flex flex-wrap gap-4">
+                  {SCREEN_OPTIONS.map(([k, text]) => (
+                    <CheckRow key={k} label={text} testid={`office3d-screen-${k}`} checked={office3d.screens[k]} onChange={(v) => changeOffice3d({ screens: { ...office3d.screens, [k]: v } })} />
+                  ))}
+                </div>
+              </fieldset>
+              <fieldset>
+                <legend className="text-xs text-muted">Status colours</legend>
+                <div className="mt-1 flex flex-wrap items-center gap-3">
+                  {STATION_STATES.map((st) => (
+                    <label key={st} className="flex items-center gap-1.5 text-xs text-foreground">
+                      <input
+                        type="color"
+                        data-testid={`office3d-color-${st}`}
+                        aria-label={`Status colour ${st}`}
+                        value={effectiveStatusColor(st, office3d)}
+                        onChange={(e) => changeOffice3d({ statusColors: { ...prefsRef.current.statusColors, [st]: e.target.value } }, true)}
+                      />
+                      {st}
+                    </label>
+                  ))}
+                  <Button variant="secondary" size="sm" data-testid="office3d-reset-colors" onClick={() => changeOffice3d({ statusColors: {} })}>
+                    Reset colours
+                  </Button>
+                </div>
+              </fieldset>
+            </fieldset>
+            {office3dError && (
+              <p role="alert" className="mt-2 text-sm text-danger-foreground" data-testid="office3d-error">
+                {office3dError}
+              </p>
+            )}
+            <div className="mt-3">
+              <Button variant="secondary" size="sm" data-testid="office3d-compact" onClick={() => setCompactOpen(true)}>
+                Compact layout
+              </Button>
+            </div>
+            <ConfirmAction
+              open={compactOpen}
+              title="Compact layout"
+              message="Rooms will move to close gaps. Continue?"
+              confirmLabel="Compact layout"
+              onConfirm={() => api.post('/office/rooms/compact', {}).then(() => undefined)}
+              onClose={() => setCompactOpen(false)}
+            />
           </Card>
 
           <Card data-testid="settings-about" className="p-4">

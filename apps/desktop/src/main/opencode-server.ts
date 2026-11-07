@@ -9,6 +9,8 @@ import path from 'node:path';
 import {
   extractAssistantText,
   findSessionFailure,
+  DEFAULT_OFFICE_PREFERENCES,
+  parseOfficePreferences,
   type AppSettings,
   type OpenCodeMessageLike,
   type OpencodeChatResult,
@@ -23,19 +25,24 @@ import { opencodeExePath } from './opencode.ts';
 
 // ---- app settings (tiny JSON in the data dir; no secrets) ----
 
-const DEFAULT_SETTINGS: AppSettings = { opencodeMode: 'managed', agentOffice: false };
+const DEFAULT_SETTINGS: AppSettings = { opencodeMode: 'managed', office3d: DEFAULT_OFFICE_PREFERENCES };
 
 export function readAppSettings(dataDir: string): AppSettings {
   try {
     const raw = JSON.parse(fs.readFileSync(path.join(dataDir, 'settings.json'), 'utf8')) as Partial<AppSettings>;
-    return { opencodeMode: raw.opencodeMode === 'personal' ? 'personal' : 'managed', agentOffice: raw.agentOffice === true };
+    return { opencodeMode: raw.opencodeMode === 'personal' ? 'personal' : 'managed', office3d: parseOfficePreferences(raw.office3d) };
   } catch {
     return DEFAULT_SETTINGS;
   }
 }
 
+/** Only an OpenCode mode change needs the running server stopped; office/other preferences never do. */
+export function needsOpencodeRestart(previous: AppSettings, next: AppSettings): boolean {
+  return previous.opencodeMode !== next.opencodeMode;
+}
+
 export function writeAppSettings(dataDir: string, settings: AppSettings): AppSettings {
-  const next: AppSettings = { opencodeMode: settings.opencodeMode === 'personal' ? 'personal' : 'managed', agentOffice: settings.agentOffice === true };
+  const next: AppSettings = { opencodeMode: settings.opencodeMode === 'personal' ? 'personal' : 'managed', office3d: parseOfficePreferences(settings.office3d) };
   fs.mkdirSync(dataDir, { recursive: true });
   fs.writeFileSync(path.join(dataDir, 'settings.json'), JSON.stringify(next, null, 2));
   return next;

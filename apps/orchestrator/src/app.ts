@@ -1,5 +1,4 @@
 // apps/orchestrator/src/app.ts
-import type { OfficeConfig } from '@aik/contracts';
 import { openDatabase } from '@aik/db';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -41,7 +40,9 @@ import { GitViewService } from './git/view-service.ts';
 import { WorktreeManager } from './git/worktree.ts';
 import { JobQueue } from './jobs/queue.ts';
 import { createLogger } from './logging/logger.ts';
-import { PixelAgentsBridge } from './office/bridge.ts';
+import { registerOfficeRoutes } from './api/routes/office.ts';
+import { buildOfficeSnapshot } from './office/snapshot.ts';
+import { OfficeRoomService } from './office/room-service.ts';
 import { ProjectService } from './projects/service.ts';
 import { projectBusyReason } from './projects/busy.ts';
 import { ProviderService } from './providers/service.ts';
@@ -70,11 +71,6 @@ export interface OrchestratorOptions {
    * mode — none of that wiring exists, so personal behaviour stays byte-identical.
    */
   gatewayToken?: string;
-  /**
-   * Pixel Agents office server (spec 2026-11-04). Presence constructs the run→hook-event
-   * bridge; absence means the feature is off and no office wiring exists at all.
-   */
-  agentOffice?: OfficeConfig;
   /**
    * The environment the orchestrator reads its settings from (default `process.env`). Later
    * tasks resolve agent binaries and detection from it, so tests pass an explicit environment
@@ -108,9 +104,6 @@ export async function startOrchestrator(opts: OrchestratorOptions): Promise<Runn
   // The gateway token is a secret with gateway-only power (PK-2): upstream client errors can
   // echo full URLs, so register it with the redactor like the API token. Only set when passed.
   if (opts.gatewayToken) redactor.addSecret(opts.gatewayToken);
-  // The office token is a bearer capability for the local Pixel Agents server: register it so
-  // no log line or persisted error can leak it (spec 2026-11-04 security review).
-  if (opts.agentOffice) redactor.addSecret(opts.agentOffice.token);
   const { logger, close: closeLog } = createLogger({ file: paths.orchestratorLog, redactor, level: opts.logLevel });
 
   let opened: ReturnType<typeof openDatabase>;
@@ -150,14 +143,18 @@ export async function startOrchestrator(opts: OrchestratorOptions): Promise<Runn
   // app-generated worktrees via the same manager used for isolation before the DB purge runs
   // (their workspaces rows go first, so purgeForProject must run before purgeProjectData).
   const worktreeManager = new WorktreeManager({ rootDir: paths.worktrees, db });
+  const rooms = new OfficeRoomService({ db, bus });
   const projects = new ProjectService({
     db,
+    rooms,
     worktreePurge: (input) => worktreeManager.purgeForProject(input),
     // Spec §4.3: every sanctioned purge leaves an audit line in logs/audit-purge.log. The line
     // carries counts/keys only (built in ProjectService.delete), never secrets; the logs dir is
     // created at startup above, so the synchronous append always has a target.
     purgeLog: (line) => fs.appendFileSync(path.join(paths.logs, 'audit-purge.log'), `${line}\n`),
   });
+  // Startup: make every project have a room and archive rooms whose project is gone.
+  rooms.reconcile();
   // Provider stack (spec PK-1..PK-4), gated on the per-run gateway token: managed mode only.
   // Ordering matters — the vault feeds the service, the service feeds the routes, the
   // default-model lookup feeds the runtime, and the gateway is started once ports are bound.
@@ -250,12 +247,6 @@ export async function startOrchestrator(opts: OrchestratorOptions): Promise<Runn
   const planner = new PlannerAgent({ db, workflow, bus, runtime, interrupts, skills, redact: redactor.redact });
   const implementer = new ImplementerAgent({ db, workflow, bus, runtime, worktreeManager, interrupts, skills, redact: redactor.redact });
   const reviewer = new ReviewerAgent({ db, workflow, bus, runtime, worktreeManager, interrupts, skills, redact: redactor.redact });
-  // Pixel Agents office bridge (spec 2026-11-04): only exists when the desktop passed the
-  // office server config — feature off means no subscriber, no sockets, no processes.
-  const officeBridge = opts.agentOffice
-    ? new PixelAgentsBridge({ db, bus, logger, redact: redactor.redact, office: opts.agentOffice })
-    : null;
-  officeBridge?.start();
   // How many repositories may be worked on at the same time (spec ADV-1). The cap keeps one
   // machine from running more model sessions and test suites at once than it can carry.
   const maxConcurrentLanes = Number.parseInt(env.AIK_MAX_CONCURRENT_LANES ?? '', 10);
@@ -293,6 +284,7 @@ export async function startOrchestrator(opts: OrchestratorOptions): Promise<Runn
   const app = createApiServer({ token: opts.token, getPort: () => port, logger });
   registerHealthRoutes(app, { db, versions: { ...opts.versions, node: process.versions.node }, dataDir: opts.dataDir });
   registerProjectRoutes(app, { db, now: systemClock, projects });
+  registerOfficeRoutes(app, { db, now: systemClock, rooms, snapshot: () => buildOfficeSnapshot(db, systemClock) });
   registerGitViewRoutes(app, { db, now: systemClock, gitView });
   registerFileRoutes(app, { db, now: systemClock, files });
   // Root-relative `/providers` + `/settings/default-model` routes; only wired in managed mode.
@@ -344,7 +336,6 @@ export async function startOrchestrator(opts: OrchestratorOptions): Promise<Runn
     close: async () => {
       clearInterval(pollTimer);
       if (gateway) await gateway.close();
-      officeBridge?.stop();
       runner.stop();
       await app.close();
       opened.close();

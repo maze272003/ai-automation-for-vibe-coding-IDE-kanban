@@ -1,11 +1,36 @@
 // apps/orchestrator/src/agents/run-activity.ts — pure message→activity diffing for the
-// office bubbles (spec 2026-11-04-office-agent-activity). Part shapes follow
+// 3D office bubbles. Part shapes follow
 // spikes/spk-1/out/probe-A-messages.json: tool parts are
 // {type:'tool', id, name, state:{status, input}}; reasoning parts {type:'reasoning'}.
-export interface RunActivityEvent {
+import type { RuntimeEvent } from './runtimes/types.ts';
+
+export type RunActivityEvent = {
   kind: 'tool-start' | 'tool-end';
   name: string;
   summary?: string;
+} | Extract<RuntimeEvent, { kind: 'message' | 'subagent' | 'usage' }>;
+
+/** Project normalized runtime events into the existing activity channel. */
+export function toActivity(event: RuntimeEvent): RunActivityEvent | null {
+  switch (event.kind) {
+    case 'tool-start':
+    case 'tool-end':
+      return { kind: event.kind, name: event.name };
+    case 'message':
+      return { kind: event.kind, text: event.text };
+    case 'subagent':
+      return { kind: event.kind, phase: event.phase, id: event.id, name: event.name,
+        ...(event.ok !== undefined ? { ok: event.ok } : {}) };
+    case 'usage':
+      return { kind: event.kind, inputTokens: event.inputTokens, cachedInputTokens: event.cachedInputTokens,
+        outputTokens: event.outputTokens, costUsd: event.costUsd };
+    case 'session':
+    case 'command':
+    case 'result':
+    case 'denied':
+    case 'unknown':
+      return null;
+  }
 }
 
 export interface ActivityDiffState {

@@ -13,19 +13,14 @@ downloads + security-scans them from their GitHub sources, and installs approved
 OpenCode/Claude Code. Docs: `docs/skill-vault/` · CLI: `node apps/skill-vault/src/cli.ts help`.
 Vault data lives in `%LOCALAPPDATA%\AiKanban\skill-vault` (never in git).
 
-## Agent office
+## Office
 
-Optional (Settings → Agent office, off by default): every planner/implementer/reviewer run
-appears as an animated pixel-art character in an embedded office view powered by the bundled
-[Pixel Agents](https://github.com/pixel-agents-hq/pixel-agents) runtime (exact-pinned, MIT).
-The office server runs locally on 127.0.0.1 with terminals disabled and is embedded read-only;
-its loopback bearer token stays in the app's processes (redacted from all logs). Enabling the
-feature also turns on Pixel Agents' global "Watch all sessions" setting (required for external
-agents to appear). Design: `docs/superpowers/specs/2026-11-04-pixel-agents-office-design.md`.
-
-- Click a character to open that story's "Terminal Logs & Thoughts" view (live reasoning,
-  tool calls and output); while a run is in flight the character's bubble shows the agent's
-  real activity (`Reading foo.ts`, `Running: npm test`, `Using Thinking`).
+A native 3D office shows your agents at work. Each project gets its own suite with a QA lab,
+and every planner/implementer/reviewer run appears as a pixel-art character walking to its
+activity spot, with a bubble showing what it is doing. Use the overview, fly-to and walk modes
+to look around; customize the suites and edit rooms and furniture with the room editor;
+archive and restore rooms. Click a character to open that story's "Terminal Logs & Thoughts"
+view. Preferences live under Settings → 3D office.
 
 ## Requirements
 Windows 10 22H2+ / 11 · Node ≥ 24.17.0 · Git for Windows ≥ 2.38

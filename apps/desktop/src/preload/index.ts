@@ -31,17 +31,6 @@ const api: AikWindowApi = {
   getAppSettings: () => ipcRenderer.invoke('aik:app-settings'),
   setAppSettings: (settings) => ipcRenderer.invoke('aik:app-settings-set', settings),
   openTerminalCli: (storyId) => ipcRenderer.invoke('aik:open-terminal-cli', { storyId }) as Promise<OpenCliResult>,
-  office: {
-    setVisible: (visible) => ipcRenderer.send('aik:office-visible', visible),
-    setBounds: (bounds) => ipcRenderer.send('aik:office-bounds', bounds),
-    onAgentClick: (listener) => {
-      const handler = (_e: IpcRendererEvent, label: string) => listener(label);
-      ipcRenderer.on('aik:office-agent-click', handler);
-      return () => {
-        ipcRenderer.removeListener('aik:office-agent-click', handler);
-      };
-    },
-  },
   events: {
     subscribe(listener) {
       const handler = (_e: IpcRendererEvent, value: EventEnvelope) => listener(value);

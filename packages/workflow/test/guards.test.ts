@@ -156,6 +156,17 @@ describe('T13 fail / stop_run', () => {
     expect(r).toMatchObject({ ok: true, patch: { blockedReason: 'quota', blockedFrom: 'IN_PROGRESS', blockedDetail: 'quota exhausted', activeRunId: null } });
     if (r.ok) expect(r.effects).toEqual([{ kind: 'interrupt_active_run', runId: 4 }, { kind: 'cancel_jobs' }]);
   });
+  it('fail is legal from NEW and READY (RE0): a story that cannot plan or cannot start is blocked', () => {
+    for (const from of ['NEW', 'READY'] as const) {
+      const r = evaluate(story({ status: from }), evidence(), { type: 'fail', reason: 'invalid_agent_output', detail: 'Planning failed three times' });
+      expect(r).toMatchObject({ ok: true, from, to: 'BLOCKED', patch: { blockedReason: 'invalid_agent_output', blockedFrom: from, blockedDetail: 'Planning failed three times', activeRunId: null } });
+    }
+  });
+  it('fail is still illegal from DONE and CANCELLED', () => {
+    for (const from of ['DONE', 'CANCELLED'] as const) {
+      expect(guards(evaluate(story({ status: from }), evidence(), { type: 'fail', reason: 'quota', detail: 'late' }))).toEqual(['state']);
+    }
+  });
   it('stop_run is refused while merging', () => {
     expect(guards(evaluate(story({ status: 'AWAITING_MERGE' }), evidence({ mergeInProgress: true }), { type: 'stop_run' }))).toEqual(['merge_in_progress']);
   });
