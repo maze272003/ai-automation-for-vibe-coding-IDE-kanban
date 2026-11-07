@@ -4,19 +4,17 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { signText } from '../screens/data.ts';
 import type { OfficeState } from '../state/model.ts';
 import { roomAggregate, stationViews, type StationView } from '../state/selectors.ts';
+import { RoomSettingsDialog } from './RoomSettingsDialog.tsx';
 import { StationPopover } from './StationPopover.tsx';
-import { pmTarget, stationTarget } from './navigate.ts';
+import { activeAgentCount, pmTarget, stationTarget } from './navigate.ts';
 
 const ROLE_LABEL: Record<StationRole, string> = { planner: 'Planner', implementer: 'Developers', reviewer: 'Reviewer', pm: 'PM', qa: 'QA lab' };
-
-function activeAgents(views: Record<StationRole, StationView>): number {
-  return STATION_ROLES.reduce((n, r) => n + views[r].seats.filter((s) => s.runId !== null).length, 0);
-}
 
 export function QuickJumpPanel({ state, now, onSelectRoom }: { state: OfficeState; now: number; onSelectRoom: (roomId: number) => void }) {
   const navigate = useNavigate();
   const [query, setQuery] = useState('');
   const [popover, setPopover] = useState<{ roomId: number; stories: StationView['stories'] } | null>(null);
+  const [settingsRoomId, setSettingsRoomId] = useState<number | null>(null);
   const input = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -36,6 +34,8 @@ export function QuickJumpPanel({ state, now, onSelectRoom }: { state: OfficeStat
     const match = (r: OfficeRoomDTO) => q === '' || `${r.projectKey} ${r.projectName}`.toLowerCase().includes(q);
     return { active: all.filter((r) => r.state === 'active' && match(r)), archived: all.filter((r) => r.state === 'archived' && match(r)) };
   }, [state.rooms, query]);
+
+  const settingsRoom = settingsRoomId === null ? null : (state.rooms.get(settingsRoomId) ?? null);
 
   const goBoard = (room: OfficeRoomDTO, storyId?: number) => {
     if (room.projectId === null) return;
@@ -71,12 +71,23 @@ export function QuickJumpPanel({ state, now, onSelectRoom }: { state: OfficeStat
           const agg = roomAggregate(state, room.id, now);
           return (
             <li key={room.id} data-testid={`office-room-${room.projectKey}`} className="rounded border border-glass-border p-2">
-              <button type="button" className="w-full text-left" onClick={() => onSelectRoom(room.id)}>
-                <span className="block text-xs font-bold">{signText(room.customization, room.projectName)}</span>
-                <span className="block text-xs text-muted">
-                  {room.projectKey} · {agg} · {activeAgents(views)} active
-                </span>
-              </button>
+              <div className="flex items-start gap-1">
+                <button type="button" className="min-w-0 flex-1 text-left" onClick={() => onSelectRoom(room.id)}>
+                  <span className="block text-xs font-bold">{signText(room.customization, room.projectName)}</span>
+                  <span className="block text-xs text-muted">
+                    {room.projectKey} · {agg} · {activeAgentCount(state, room.id)} active
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  data-testid={`office-room-settings-${room.projectKey}`}
+                  aria-label={`Room settings ${room.projectKey}`}
+                  className="shrink-0 rounded px-1 text-sm text-muted hover:bg-glass/60 hover:text-foreground"
+                  onClick={() => setSettingsRoomId(room.id)}
+                >
+                  {'⚙'}
+                </button>
+              </div>
               <ul className="mt-1 flex flex-col gap-0.5">
                 {STATION_ROLES.map((role) => (
                   <li key={role}>
@@ -117,6 +128,9 @@ export function QuickJumpPanel({ state, now, onSelectRoom }: { state: OfficeStat
             ))}
           </ul>
         </details>
+      ) : null}
+      {settingsRoom ? (
+        <RoomSettingsDialog key={settingsRoom.id} room={settingsRoom} open onClose={() => setSettingsRoomId(null)} />
       ) : null}
     </aside>
   );

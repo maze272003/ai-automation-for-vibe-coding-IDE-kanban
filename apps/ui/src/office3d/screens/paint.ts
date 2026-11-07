@@ -1,5 +1,4 @@
-import type { ROOM_ICONS } from '@aik/contracts';
-export type RoomIcon = (typeof ROOM_ICONS)[number];
+import { ROOM_ICON_GRIDS, type RoomIcon } from '../ui/icons.ts';
 import type { StationState } from '../state/selectors.ts';
 import {
   COLUMN_LABEL, type ActivityScreenData, type KanbanScreenData, type PmScreenData, type RunsScreenData, type TestBoardData,
@@ -113,10 +112,7 @@ export function paintWhiteboard(ctx: Ctx2D, entries: Array<{ storyKey: string; c
   });
 }
 
-/**
- * Entrance sign. Icon grids belong to Task 19; for now a non-null icon only draws a small accent square
- * placeholder to the left of the text so Task 19 can plug real grids in at the same spot.
- */
+/** Entrance sign: optional 8x8 pixel icon in the accent colour, then the text. */
 export function paintSign(ctx: Ctx2D, text: string, accent: string, icon: RoomIcon | null, w = 256, h = 32): void {
   ctx.clearRect(0, 0, w, h);
   rect(ctx, '#111827', 0, 0, w, h);
@@ -124,7 +120,10 @@ export function paintSign(ctx: Ctx2D, text: string, accent: string, icon: RoomIc
   rect(ctx, accent, 0, h - 2, w, 2);
   let tx = 4;
   if (icon !== null) {
-    rect(ctx, accent, 4, Math.floor((h - 8) / 2), 8, 8);
+    const iy = Math.floor((h - 8) / 2);
+    ROOM_ICON_GRIDS[icon].forEach((row, y) => {
+      for (let x = 0; x < 8; x++) if (row[x] === '#') rect(ctx, accent, 4 + x, iy + y, 1, 1);
+    });
     tx = 16;
   }
   const scale = 2;
