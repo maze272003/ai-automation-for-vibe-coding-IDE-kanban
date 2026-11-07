@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import type { OpencodeMode, OpencodeModelInfo, OpencodeStatus } from '@aik/contracts';
+import type { AppSettings, OpencodeMode, OpencodeModelInfo, OpencodeStatus } from '@aik/contracts';
 import { GitHubSettingsCard } from '../components/settings/github-settings.tsx';
 import { ProvidersCard } from '../components/settings/providers-card.tsx';
 import { TopBar } from '../components/shell/top-bar.tsx';
@@ -305,10 +305,12 @@ export function SettingsPage() {
   const [installError, setInstallError] = useState<string | null>(null);
   const [mode, setMode] = useState<OpencodeMode>('managed');
   const [office, setOffice] = useState(false);
+  const [settings, setSettings] = useState<AppSettings | null>(null);
   useEffect(() => {
     void api.get<Health>('/health').then(setHealth, () => setHealth(null));
     void window.api.opencodeStatus().then(setOpencode, () => setOpencode(null));
     void window.api.getAppSettings().then((s) => {
+      setSettings(s);
       setMode(s.opencodeMode);
       setOffice(s.agentOffice);
     }, () => undefined);
@@ -318,7 +320,8 @@ export function SettingsPage() {
   const changeMode = async (next: OpencodeMode) => {
     if (next === mode) return;
     setMode(next);
-    const saved = await window.api.setAppSettings({ opencodeMode: next, agentOffice: office });
+    const saved = await window.api.setAppSettings({ ...settings, opencodeMode: next, agentOffice: office } as AppSettings);
+    setSettings(saved);
     setMode(saved.opencodeMode);
     setOffice(saved.agentOffice);
   };
@@ -327,7 +330,8 @@ export function SettingsPage() {
   const changeOffice = async (next: boolean) => {
     if (next === office) return;
     setOffice(next);
-    const saved = await window.api.setAppSettings({ opencodeMode: mode, agentOffice: next });
+    const saved = await window.api.setAppSettings({ ...settings, opencodeMode: mode, agentOffice: next } as AppSettings);
+    setSettings(saved);
     setMode(saved.opencodeMode);
     setOffice(saved.agentOffice);
   };

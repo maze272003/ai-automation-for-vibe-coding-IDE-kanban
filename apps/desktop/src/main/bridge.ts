@@ -1,4 +1,4 @@
-import type { AppSettings, BridgeResponse, DiagnosticsExportResult, OpenCliResult, SystemState } from '@aik/contracts';
+import { OfficePreferences, type AppSettings, type BridgeResponse, type DiagnosticsExportResult, type OpenCliResult, type SystemState } from '@aik/contracts';
 import { listBackups, restoreBackup } from '@aik/db/backup';
 import { BrowserWindow, dialog, ipcMain, shell, type IpcMainInvokeEvent } from 'electron';
 import { writeFile } from 'node:fs/promises';
@@ -237,11 +237,12 @@ export function registerBridge(deps: BridgeDeps): void {
     assertTrusted(event, deps);
     const previous = readAppSettings(deps.paths.dataDir);
     const parsed = z
-      .object({ opencodeMode: z.enum(['managed', 'personal']), agentOffice: z.boolean().optional() })
+      .object({ opencodeMode: z.enum(['managed', 'personal']), agentOffice: z.boolean().optional(), office3d: OfficePreferences.optional() })
       .parse(raw);
     const next = writeAppSettings(deps.paths.dataDir, {
       opencodeMode: parsed.opencodeMode,
       agentOffice: parsed.agentOffice ?? previous.agentOffice,
+      office3d: parsed.office3d ?? previous.office3d,
     });
     stopOpencodeServer(); // the next call starts a server in the new mode
     if (previous.agentOffice !== next.agentOffice) deps.onSettingsChanged?.(next);

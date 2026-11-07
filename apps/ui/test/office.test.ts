@@ -1,11 +1,12 @@
 // apps/ui/test/office.test.ts
 import { describe, expect, test } from 'vitest';
+import { DEFAULT_OFFICE_PREFERENCES } from '@aik/contracts';
 import { isOfficeEnabled, parseOfficeLabel, toOfficeBounds } from '../src/lib/office.ts';
 
 describe('office lib', () => {
   test('enabled only when the setting is explicitly true', () => {
-    expect(isOfficeEnabled({ opencodeMode: 'managed', agentOffice: true })).toBe(true);
-    expect(isOfficeEnabled({ opencodeMode: 'managed', agentOffice: false })).toBe(false);
+    expect(isOfficeEnabled({ opencodeMode: 'managed', agentOffice: true, office3d: DEFAULT_OFFICE_PREFERENCES })).toBe(true);
+    expect(isOfficeEnabled({ opencodeMode: 'managed', agentOffice: false, office3d: DEFAULT_OFFICE_PREFERENCES })).toBe(false);
     expect(isOfficeEnabled(null)).toBe(false);
   });
 

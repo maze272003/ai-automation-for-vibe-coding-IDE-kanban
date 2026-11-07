@@ -1,5 +1,6 @@
 import type { DiagnosticsExportResult } from './diagnostics.ts';
 import type { EventEnvelope } from './events.ts';
+import type { OfficePreferences } from './office.ts';
 import type { OfficeBounds } from './pixel-agents.ts';
 
 export type HttpMethod = 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE';
@@ -48,6 +49,8 @@ export interface AppSettings {
   opencodeMode: OpencodeMode;
   /** Show running agents as pixel-art characters in the embedded Pixel Agents office (spec 2026-11-04). Off by default. */
   agentOffice: boolean;
+  /** 3D Agent Office preferences (spec 2026-11-08). */
+  office3d: OfficePreferences;
 }
 
 /** Result of `aik:terminal-open` (Phase 5.3 spec §IPC contract): a live session id, or why it was refused. */
