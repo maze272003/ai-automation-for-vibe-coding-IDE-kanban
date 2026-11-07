@@ -100,6 +100,20 @@ describe('hook event translation (pure)', () => {
 describe('hookEventsForRunActivity', () => {
   const base = { runId: 7, role: 'implementer', storyKey: 'INV-7', projectKey: 'INV' };
 
+  test('ignores message, subagent and usage events while retaining adjacent tool activity', () => {
+    expect(hookEventsForRunActivity({ ...base, events: [
+      { kind: 'message', text: 'Finished reading' },
+      { kind: 'subagent', phase: 'start', id: 'child', name: 'scout' },
+      { kind: 'tool-start', name: 'read', summary: 'src/index.ts' },
+      { kind: 'usage', inputTokens: 1, cachedInputTokens: null, outputTokens: 2, costUsd: null },
+      { kind: 'subagent', phase: 'end', id: 'child', name: 'scout', ok: true },
+      { kind: 'tool-end', name: 'read' },
+    ] })).toEqual([
+      { session_id: 'aik-run-7', hook_event_name: 'PreToolUse', tool_name: 'Read', tool_input: { file_path: 'src/index.ts' } },
+      { session_id: 'aik-run-7', hook_event_name: 'PostToolUse' },
+    ]);
+  });
+
   test('maps tool events to Claude-shaped PreToolUse/PostToolUse', () => {
     const events = hookEventsForRunActivity({
       ...base,

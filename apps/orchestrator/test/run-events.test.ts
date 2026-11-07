@@ -153,4 +153,54 @@ describe('run-events', () => {
     expect(straddling?.length).toBeLessThanOrEqual(120 + 1);
     t.close();
   });
+
+  test('appendRunActivity redacts every string field of message/subagent/tool events and passes usage through', () => {
+    const t = createTestDb();
+    const project = seedProject(t.db, { key: 'INV' });
+    const story = seedStory(t.db, project.id, { key: 'INV-9' });
+    const run = t.db
+      .insert(agentRuns)
+      .values({
+        storyId: story.id, role: 'implementer', attempt: 1, promptVersion: '1.0',
+        opencodeVersion: '2.0.32', status: 'running', idempotencyKey: `rednew_${story.id}`,
+        startedAt: new Date(1_000),
+      })
+      .returning()
+      .get();
+
+    const redact = (s: string) => s.replace(/hunter2/g, '[red]');
+    const seq = appendRunActivity(
+      t.db, new Date(2_000), run.id,
+      [
+        { kind: 'message', text: 'a'.repeat(115) + 'hunter2' + 'b'.repeat(50) },
+        { kind: 'subagent', phase: 'end', id: 'sub-hunter2-1', name: 'hunter2-worker', ok: true },
+        { kind: 'tool-start', name: 'bash-hunter2', summary: 'echo hunter2' },
+        { kind: 'usage', inputTokens: 1_234, cachedInputTokens: null, outputTokens: 567, costUsd: null },
+      ],
+      redact, undefined, 0,
+    );
+    expect(typeof seq).toBe('number');
+
+    const rows = readOutbox(t.db);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ topic: 'run.activity', storyId: story.id, provenance: 'system' });
+    expect(JSON.stringify(rows[0])).not.toContain('hunter2');
+    expect(rows[0]?.data).toEqual({
+      runId: run.id, role: 'implementer', storyKey: 'INV-9', projectKey: 'INV',
+      events: [
+        { kind: 'message', text: 'a'.repeat(115) + '[red]' + '…' },
+        { kind: 'subagent', phase: 'end', id: 'sub-[red]-1', name: '[red]-worker', ok: true },
+        { kind: 'tool-start', name: 'bash-[red]', summary: 'echo [red]' },
+        { kind: 'usage', inputTokens: 1_234, cachedInputTokens: null, outputTokens: 567, costUsd: null },
+      ],
+    });
+
+    // The message secret straddles the 120-char cap: redacted whole, then truncated.
+    const text = ((rows[0]?.data as { events: Array<{ text?: string }> }).events[0]?.text) ?? '';
+    expect(text.startsWith('a'.repeat(115))).toBe(true);
+    expect(text).toContain('[red]');
+    expect(text).not.toContain('hunter2');
+    expect(text.length).toBeLessThanOrEqual(120 + 1);
+    t.close();
+  });
 });

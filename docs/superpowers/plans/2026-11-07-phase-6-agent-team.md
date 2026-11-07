@@ -419,9 +419,11 @@ Rules: argv only, `shell:false`, `windowsHide:true`; throws `UnsupportedCommandE
 
 **Interfaces — Produces:** `RuntimeEvent` = `session{ref}` | `message{text}` | `tool-start{id,name,parentId?}` | `tool-end{id,name,ok,parentId?}` | `command{id}` (a command execution — counted for `commandsPerRun`) | `subagent{phase:'start'|'end', id, name, ok?}` | `usage{inputTokens:number|null, cachedInputTokens:number|null, outputTokens:number|null, costUsd:number|null}` | `result{text?, structured?: unknown, isError: boolean, subtype?: string}` | `denied{tool, reason}` | `unknown{type}`. `decodeClaudeFrame(frame: unknown, state: ClaudeStreamState): RuntimeEvent[]` — pure, never throws.
 
-- [ ] **RED** (golden lists from the recorded fixtures): init frame → `session{ref}`; schema run → `result.structured` set even when `result` text is empty; a repeated final result is ignored (one `result`); usage nullable, never 0-filled; malformed frame → `[]` + counter; `toActivity()` keeps `tool-start/tool-end` mapping so Office bubbles still work; Office bridge ignores the new kinds; `run.activity`/`run.output` outbox topics carry the new kinds (§5.3).
-- [ ] Run `npx vitest run apps/orchestrator/test/claude-stream.test.ts apps/orchestrator/test/run-activity.test.ts apps/orchestrator/test/office-bridge.test.ts` → FAIL → implement → PASS.
+- [x] **RED** (golden lists from the recorded fixtures): init frame → `session{ref}`; schema run → `result.structured` set even when `result` text is empty; a repeated final result is ignored (one `result`); usage nullable, never 0-filled; malformed frame → `[]` + counter; `toActivity()` keeps `tool-start/tool-end` mapping so Office bubbles still work; Office bridge ignores the new kinds; `run.activity`/`run.output` outbox topics carry the new kinds (§5.3).
+- [x] Run `npx vitest run apps/orchestrator/test/claude-stream.test.ts apps/orchestrator/test/run-activity.test.ts apps/orchestrator/test/office-bridge.test.ts` → FAIL → implement → PASS.
 - [ ] Commit: `feat(orchestrator): normalized runtime events and Claude stream parser (TEAM-2, §5.3)`
+
+Execution note (2026-11-08): implemented on `main` and left uncommitted per the slice addendum's working deviation (plan `2026-11-07-phase-6-next-runtime-events.md`, resolution 5). Codex wrote the implementation and initial tests before its credit exhaustion; after the user-mandated handoff to GLM 5.3, three GLM workers (activity tests, parser tests, read-only compat audit) completed coverage, a Claude runner verified, and an independent GLM review returned SATISFIED (0 blockers, 0 majors; minors recorded in the addendum). `run.output` acceptance deferred to 6.1a-10/11 per addendum resolution 4.
 
 **Depends on:** 6.1a-05 (fixtures). **Parallel with:** 6.1a-02, 07, 08, 09.
 

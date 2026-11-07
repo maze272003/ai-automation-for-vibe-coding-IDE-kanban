@@ -73,6 +73,24 @@ export function truncateSummary(text: string): string {
   return text.length > SUMMARY_MAX ? `${text.slice(0, SUMMARY_MAX)}…` : text;
 }
 
+function persistedActivity(event: RunActivityEvent, redact: (text: string) => string): RunActivityEvent {
+  const safe = (text: string) => truncateSummary(redact(text));
+  switch (event.kind) {
+    case 'tool-start':
+    case 'tool-end':
+      return { kind: event.kind, name: safe(event.name),
+        ...(event.summary !== undefined ? { summary: safe(event.summary) } : {}) };
+    case 'message':
+      return { kind: event.kind, text: safe(event.text) };
+    case 'subagent':
+      return { kind: event.kind, phase: event.phase, id: safe(event.id), name: safe(event.name),
+        ...(event.ok !== undefined ? { ok: event.ok } : {}) };
+    case 'usage':
+      return { kind: event.kind, inputTokens: event.inputTokens, cachedInputTokens: event.cachedInputTokens,
+        outputTokens: event.outputTokens, costUsd: event.costUsd };
+  }
+}
+
 /** One outbox row per activity batch: `{runId, role, storyKey, projectKey, events}`; summaries redacted, then truncated.
  * `afterSeq` (the run's run.started seq) bounds the cap count to the run's own rows via the outbox PK,
  * so SQLite range-scans only what was written since the run started instead of the whole 30-day outbox. */
@@ -109,7 +127,7 @@ export function appendRunActivity(
         role: info.role,
         storyKey: info.storyKey,
         projectKey: info.projectKey,
-        events: events.map((e) => ({ kind: e.kind, name: e.name, ...(e.summary !== undefined ? { summary: truncateSummary(redact(e.summary)) } : {}) })),
+        events: events.map((event) => persistedActivity(event, redact)),
       },
     },
     now,
