@@ -1,7 +1,7 @@
 import type { FurnitureItem, StationRole } from '@aik/contracts';
 import { STATION_ROLES } from '@aik/contracts';
 import { DEV_LENGTH, DOOR_WIDTH, GRID, LAB_LENGTH, SLOT_DEPTH } from './dimensions.ts';
-import { FOOTPRINTS, devZoneSeats, type FootprintKey } from './footprints.ts';
+import { devZoneSeats, rectOf } from './footprints.ts';
 import { intersects, type Rect } from './geometry.ts';
 import { buildWaypointGraph, isConnected } from './waypoints.ts';
 
@@ -63,25 +63,6 @@ const EPS = 1e-6;
 const SWING_DEPTH = 1.2;
 const INTERNAL_DOOR_Z = 5.7;
 const WALKWAY: Rect = { x0: DEV_LENGTH / 2 - 0.5, z0: 0, x1: DEV_LENGTH / 2 + 0.5, z1: SLOT_DEPTH };
-
-function footprintKey(i: FurnitureItem): FootprintKey | null {
-  if (i.kind === 'station') return i.role ? (`station:${i.role}` as const) : null;
-  return i.kind;
-}
-
-/** Axis-aligned bounds of the rotated footprint (exact for 90 deg steps, conservative otherwise). */
-function rectOf(i: FurnitureItem): Rect | null {
-  const key = footprintKey(i);
-  if (!key) return null;
-  const f = FOOTPRINTS[key];
-  const rad = (i.rotationY * Math.PI) / 180;
-  const c = Math.abs(Math.cos(rad));
-  const s = Math.abs(Math.sin(rad));
-  const r = (n: number) => Math.round(n * 1e9) / 1e9;
-  const w = r(f.w * c + f.d * s);
-  const d = r(f.w * s + f.d * c);
-  return { x0: i.x - w / 2, z0: i.z - d / 2, x1: i.x + w / 2, z1: i.z + d / 2 };
-}
 
 function doorSwings(): Array<{ name: string; area: 'dev' | 'lab'; rect: Rect }> {
   const h = DOOR_WIDTH / 2;

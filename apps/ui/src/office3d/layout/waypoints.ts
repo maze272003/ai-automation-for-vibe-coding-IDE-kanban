@@ -1,6 +1,6 @@
 import type { FurnitureItem, StationRole } from '@aik/contracts';
 import { DEV_LENGTH, LAB_LENGTH, SLOT_DEPTH } from './dimensions.ts';
-import { FOOTPRINTS, devZoneSeats, type FootprintKey } from './footprints.ts';
+import { FOOTPRINTS, devZoneSeats, localToRoom, rectOf } from './footprints.ts';
 import type { Rect, Vec2 } from './geometry.ts';
 
 export type SpotKind =
@@ -36,20 +36,12 @@ type Obstacle = { id: string; rect: Rect };
 
 const toSuite = (area: 'dev' | 'lab', x: number, z: number): Vec2 => ({ x: area === 'lab' ? x + LAB_OFFSET : x, z });
 
-function footprintKey(it: FurnitureItem): FootprintKey | null {
-  if (it.kind === 'station') return it.role ? (`station:${it.role}` as const) : null;
-  return it.kind;
-}
-
 function obstacleOf(it: FurnitureItem): Obstacle | null {
-  const key = footprintKey(it);
-  if (!key || it.kind === 'rug') return null; // rugs are walkable
-  const f = FOOTPRINTS[key];
-  const quarter = Math.round(it.rotationY / 90) % 2 !== 0;
-  const w = quarter ? f.d : f.w;
-  const d = quarter ? f.w : f.d;
-  const c = toSuite(it.area, it.x, it.z);
-  return { id: it.id, rect: { x0: c.x - w / 2, z0: c.z - d / 2, x1: c.x + w / 2, z1: c.z + d / 2 } };
+  if (it.kind === 'rug') return null; // rugs are walkable
+  const r = rectOf(it);
+  if (!r) return null;
+  const dx = it.area === 'lab' ? LAB_OFFSET : 0;
+  return { id: it.id, rect: { x0: r.x0 + dx, z0: r.z0, x1: r.x1 + dx, z1: r.z1 } };
 }
 
 /** True when the segment passes through the interior of the rect (touching edges is allowed). */
@@ -99,9 +91,11 @@ export function buildWaypointGraph(
   add({ id: 'internal-door', kind: 'internal-door', area: 'dev', pos: { x: DEV_LENGTH, z: INTERNAL_DOOR_Z } });
 
   for (const it of [...items].sort((a, b) => a.id.localeCompare(b.id))) {
-    const c = toSuite(it.area, it.x, it.z);
-    const rad = (it.rotationY * Math.PI) / 180;
-    const face = { x: Math.sin(rad), z: Math.cos(rad) }; // unit vector the item faces (0 deg faces +z, into the room)
+    // Spots are offsets in the item's local frame, rotated around its centre, then shifted into suite space.
+    const at = (lx: number, lz: number): Vec2 => {
+      const p = localToRoom(it, lx, lz);
+      return toSuite(it.area, p.x, p.z);
+    };
     switch (it.kind) {
       case 'station': {
         if (!it.role) break;
@@ -110,13 +104,7 @@ export function buildWaypointGraph(
           const n = devZoneSeats(seatCounts.implementer ?? 2).seats;
           for (let k = 0; k < n; k++) {
             add(
-              {
-                id: `seat-implementer-${k}`,
-                kind: 'seat',
-                area: it.area,
-                role: 'implementer',
-                pos: { x: c.x + (k % 2 === 0 ? -1 : 1), z: c.z - f.d / 2 + 1 + Math.floor(k / 2) * 2 },
-              },
+              { id: `seat-implementer-${k}`, kind: 'seat', area: it.area, role: 'implementer', pos: at(k % 2 === 0 ? -1 : 1, -f.d / 2 + 1 + Math.floor(k / 2) * 2) },
               it.id,
             );
           }
@@ -124,13 +112,7 @@ export function buildWaypointGraph(
           const n = Math.min(2, Math.max(1, seatCounts[it.role] ?? 1));
           for (let k = 0; k < n; k++) {
             add(
-              {
-                id: `seat-${it.role}-${k}`,
-                kind: 'seat',
-                area: it.area,
-                role: it.role,
-                pos: { x: c.x + (k - (n - 1) / 2) * 1.2, z: c.z + f.d / 2 + 0.4 },
-              },
+              { id: `seat-${it.role}-${k}`, kind: 'seat', area: it.area, role: it.role, pos: at((k - (n - 1) / 2) * 1.2, f.d / 2 + 0.4) },
               it.id,
             );
           }
@@ -139,15 +121,12 @@ export function buildWaypointGraph(
       }
       case 'reading-lounge':
         for (let k = 0; k < 3; k++) {
-          add(
-            { id: `sofa-${k}`, kind: 'sofa', area: it.area, capacityGroup: 'lounge', pos: { x: c.x - 1.2 + 1.2 * k, z: c.z } },
-            it.id,
-          );
+          add({ id: `sofa-${k}`, kind: 'sofa', area: it.area, capacityGroup: 'lounge', pos: at(-1.2 + 1.2 * k, 0) }, it.id);
         }
         break;
       case 'coffee-bar':
         for (let k = 0; k < 3; k++) {
-          add({ id: `coffee-${k}`, kind: 'coffee', area: it.area, pos: { x: c.x - 1.2 + 1.2 * k, z: c.z - 0.9 } }, it.id);
+          add({ id: `coffee-${k}`, kind: 'coffee', area: it.area, pos: at(-1.2 + 1.2 * k, -0.9) }, it.id);
         }
         break;
       case 'huddle':
@@ -159,18 +138,18 @@ export function buildWaypointGraph(
             [0.7, 1.4],
           ] as const
         ).forEach(([dx, dz], k) => {
-          add({ id: `huddle-${k}`, kind: 'huddle', area: it.area, pos: { x: c.x + dx, z: c.z + dz } }, it.id);
+          add({ id: `huddle-${k}`, kind: 'huddle', area: it.area, pos: at(dx, dz) }, it.id);
         });
         break;
       case 'test-board':
-        add({ id: 'test-board', kind: 'test-board', area: it.area, pos: { x: c.x + face.x * 0.9, z: c.z + face.z * 0.9 } }, it.id);
+        add({ id: 'test-board', kind: 'test-board', area: it.area, pos: at(0, 0.9) }, it.id);
         break;
       case 'audit-whiteboard':
-        add({ id: 'whiteboard', kind: 'whiteboard', area: it.area, pos: { x: c.x + face.x * 0.9, z: c.z + face.z * 0.9 } }, it.id);
+        add({ id: 'whiteboard', kind: 'whiteboard', area: it.area, pos: at(0, 0.9) }, it.id);
         break;
       case 'lab-couch':
         for (let k = 0; k < 2; k++) {
-          add({ id: `lab-couch-${k}`, kind: 'lab-couch', area: it.area, pos: { x: c.x - 0.6 + 1.2 * k, z: c.z } }, it.id);
+          add({ id: `lab-couch-${k}`, kind: 'lab-couch', area: it.area, pos: at(-0.6 + 1.2 * k, 0) }, it.id);
         }
         break;
       default:

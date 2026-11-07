@@ -72,4 +72,38 @@ describe('waypoint graph', () => {
     const p = findPath(g, 'door-dev', 'seat-reviewer-0');
     expect(p.length).toBeGreaterThan(1);
   });
+  test.each([90, 180, 270])('a lounge rotated %i deg keeps its sofa spots on it and the graph connected', (rot) => {
+    const rotated = layout().map((i) => (i.id === 'lounge' ? { ...i, rotationY: rot } : i));
+    const gr = buildWaypointGraph(rotated);
+    expect(isConnected(gr)).toBe(true);
+    const sofas = gr.spots.filter((s) => s.kind === 'sofa');
+    expect(sofas).toHaveLength(3);
+    const sideways = rot !== 180;
+    // The row of seats runs along the item's local x axis: world z when turned 90/270, world x at 180.
+    for (const s of sofas) {
+      expect(s.pos[sideways ? 'x' : 'z']).toBeCloseTo(sideways ? 2.2 : 10.5);
+    }
+    expect(new Set(sofas.map((s) => Math.round(s.pos[sideways ? 'z' : 'x'] * 1e3))).size).toBe(3);
+    // Inside the rotated 4 x 2.6 footprint.
+    const half = sideways ? { x: 1.3, z: 2 } : { x: 2, z: 1.3 };
+    for (const s of sofas) {
+      expect(Math.abs(s.pos.x - 2.2)).toBeLessThanOrEqual(half.x);
+      expect(Math.abs(s.pos.z - 10.5)).toBeLessThanOrEqual(half.z);
+    }
+    expect(findPath(gr, 'door-dev', 'sofa-0').length).toBeGreaterThan(0);
+  });
+  test('a rotated station puts its seat on the rotated front side, outside the footprint', () => {
+    const base = layout().filter((i) => i.id !== 'station-pm');
+    const pm = { id: 'station-pm', kind: 'station', area: 'dev', x: 11.6, z: 3.5, rotationY: 90, role: 'pm' } as const;
+    const gr = buildWaypointGraph([...base, pm]);
+    const seat = gr.spots.find((s) => s.id === 'seat-pm-0')!;
+    // rotation 90 faces +x: seat is right of the footprint (half-width 1 along x after rotation, plus 0.4)
+    expect(seat.pos.x).toBeCloseTo(11.6 + 1 + 0.4);
+    expect(seat.pos.z).toBeCloseTo(3.5);
+    expect(isConnected(gr)).toBe(true);
+    const pm180 = { ...pm, rotationY: 180 } as const;
+    const g180 = buildWaypointGraph([...base, pm180]);
+    const seat180 = g180.spots.find((s) => s.id === 'seat-pm-0')!;
+    expect(seat180.pos.z).toBeCloseTo(3.5 - 1 - 0.4);
+  });
 });

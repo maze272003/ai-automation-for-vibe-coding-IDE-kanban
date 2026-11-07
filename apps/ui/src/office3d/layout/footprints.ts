@@ -1,4 +1,5 @@
 import type { FurnitureItem, StationRole } from '@aik/contracts';
+import type { Rect, Vec2 } from './geometry.ts';
 
 export type FootprintKey = Exclude<FurnitureItem['kind'], 'station'> | `station:${StationRole}`;
 
@@ -32,4 +33,32 @@ const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v
 /** Desks shown in the developer zone: max(2, active runs) capped at 8; extra runs are overflow ("+N"). */
 export function devZoneSeats(activeDevs: number): { seats: number; overflow: number } {
   return { seats: clamp(Math.max(2, activeDevs), 2, 8), overflow: Math.max(0, activeDevs - 8) };
+}
+
+export function footprintKey(i: FurnitureItem): FootprintKey | null {
+  if (i.kind === 'station') return i.role ? (`station:${i.role}` as const) : null;
+  return i.kind;
+}
+
+/** Axis-aligned bounds of the rotated footprint, room-local (exact for 90 deg steps, conservative otherwise). */
+export function rectOf(i: FurnitureItem): Rect | null {
+  const key = footprintKey(i);
+  if (!key) return null;
+  const f = FOOTPRINTS[key];
+  const rad = (i.rotationY * Math.PI) / 180;
+  const c = Math.abs(Math.cos(rad));
+  const s = Math.abs(Math.sin(rad));
+  const r = (n: number) => Math.round(n * 1e9) / 1e9;
+  const w = r(f.w * c + f.d * s);
+  const d = r(f.w * s + f.d * c);
+  return { x0: i.x - w / 2, z0: i.z - d / 2, x1: i.x + w / 2, z1: i.z + d / 2 };
+}
+
+/** Rotate an item-local offset (local +z faces rotationY 0 into the room) around the item centre into room-local space. */
+export function localToRoom(i: Pick<FurnitureItem, 'x' | 'z' | 'rotationY'>, lx: number, lz: number): Vec2 {
+  const rad = (i.rotationY * Math.PI) / 180;
+  const c = Math.cos(rad);
+  const s = Math.sin(rad);
+  const r = (n: number) => Math.round(n * 1e9) / 1e9;
+  return { x: r(i.x + lx * c + lz * s), z: r(i.z - lx * s + lz * c) };
 }
