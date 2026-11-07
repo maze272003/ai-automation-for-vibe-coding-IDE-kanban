@@ -1,4 +1,5 @@
-import type { RoomIcon } from '@aik/contracts';
+import type { ROOM_ICONS } from '@aik/contracts';
+export type RoomIcon = (typeof ROOM_ICONS)[number];
 import type { StationState } from '../state/selectors.ts';
 import {
   COLUMN_LABEL, type ActivityScreenData, type KanbanScreenData, type PmScreenData, type RunsScreenData, type TestBoardData,
