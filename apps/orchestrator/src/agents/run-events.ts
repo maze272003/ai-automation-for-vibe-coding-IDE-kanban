@@ -1,6 +1,6 @@
 // apps/orchestrator/src/agents/run-events.ts
-// Emits the run.started/run.finished outbox topics (spec 2026-11-04 Pixel Agents office).
-// The payload carries story/project context so consumers (the office bridge) need no extra joins.
+// Emits the run.started/run.finished outbox topics (consumed by the 3D office).
+// The payload carries story/project context so consumers (the 3D office) need no extra joins.
 import type { Role } from '@aik/contracts';
 import { agentRuns, outboxEvents, projects, userStories, type AikDbOrTx } from '@aik/db';
 import { and, eq, gt, sql } from 'drizzle-orm';
@@ -62,7 +62,7 @@ export function emitRunFinished(db: AikDbOrTx, now: Date, runId: number, status:
   }, now);
 }
 
-/** Max `run.activity` rows per run (spec 2026-11-04-office-agent-activity); drops silently after. */
+/** Max `run.activity` rows per run (feeds the 3D office bubbles); drops silently after. */
 export const RUN_ACTIVITY_ROW_CAP = 300;
 
 /** Max characters of a redacted activity summary. */

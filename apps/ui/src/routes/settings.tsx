@@ -354,7 +354,6 @@ export function SettingsPage() {
   const [installing, setInstalling] = useState(false);
   const [installError, setInstallError] = useState<string | null>(null);
   const [mode, setMode] = useState<OpencodeMode>('managed');
-  const [office, setOffice] = useState(false);
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [office3d, setOffice3d] = useState<OfficePreferences>(DEFAULT_OFFICE_PREFERENCES);
   const [compactOpen, setCompactOpen] = useState(false);
@@ -383,7 +382,6 @@ export function SettingsPage() {
       prefsRef.current = s.office3d ?? DEFAULT_OFFICE_PREFERENCES;
       setOffice3d(prefsRef.current);
       setMode(s.opencodeMode);
-      setOffice(s.agentOffice);
     }, () => undefined);
   }, []);
 
@@ -391,20 +389,9 @@ export function SettingsPage() {
   const changeMode = async (next: OpencodeMode) => {
     if (next === mode) return;
     setMode(next);
-    const saved = await window.api.setAppSettings({ ...settings, opencodeMode: next, agentOffice: office } as AppSettings);
+    const saved = await window.api.setAppSettings({ ...settings, opencodeMode: next } as AppSettings);
     setSettings(saved);
     setMode(saved.opencodeMode);
-    setOffice(saved.agentOffice);
-  };
-
-  /** Toggling starts/stops the bundled office server and restarts the orchestrator (main side). */
-  const changeOffice = async (next: boolean) => {
-    if (next === office) return;
-    setOffice(next);
-    const saved = await window.api.setAppSettings({ ...settings, opencodeMode: mode, agentOffice: next } as AppSettings);
-    setSettings(saved);
-    setMode(saved.opencodeMode);
-    setOffice(saved.agentOffice);
   };
 
   /** 3D office preferences apply immediately; the saved copy comes back from the desktop main process. */
@@ -485,26 +472,6 @@ export function SettingsPage() {
             <div className="mt-3">
               <ModelPicker status={opencode} mode={mode} onModeChange={changeMode} />
             </div>
-          </Card>
-
-          <Card data-testid="settings-office" className="p-4">
-            <h2 className="text-sm font-semibold text-foreground">Agent office</h2>
-            <p className="mt-1 text-xs text-muted">
-              Show every running agent as a pixel-art character in an office view. Bundled Pixel
-              Agents (MIT) runs locally on 127.0.0.1 and is embedded read-only. Enabling it also
-              turns on Pixel Agents' global "Watch all sessions" setting so this app's agents
-              appear; the orchestrator restarts once to activate it.
-            </p>
-            <label className="mt-3 flex cursor-pointer items-center gap-2 text-sm text-foreground">
-              <input
-                type="checkbox"
-                data-testid="office-toggle"
-                checked={office}
-                onChange={(e) => void changeOffice(e.target.checked)}
-                className="h-3.5 w-3.5 shrink-0 appearance-none rounded-[4px] border border-border-strong bg-surface-2 checked:border-accent checked:bg-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
-              />
-              Show agents in the office view
-            </label>
           </Card>
 
           <Card data-testid="settings-office3d" className="p-4">

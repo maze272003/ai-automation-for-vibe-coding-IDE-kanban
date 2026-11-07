@@ -68,7 +68,7 @@ export interface RunOneShotInput {
   model?: ModelRef;
   timeoutMs?: number;
   onSessionCreated?: (sessionId: string, model?: ModelRef) => void | Promise<void>;
-  /** Fired at most once per 400 ms tick with the run's new activity (office bubbles, spec 2026-11-04-office-agent-activity). Never throws. */
+  /** Fired at most once per 400 ms tick with the run's new activity (3D office bubbles). Never throws. */
   onActivity?: (events: RunActivityEvent[]) => void;
   /** Polled between activity checks; a truthy return aborts the run (EXE-13). */
   shouldStop?: () => boolean;
@@ -263,7 +263,7 @@ export class OpenCodeRuntime {
       let interruptSent = false;
       let graceDeadline = 0;
       let sawActive = false;
-      // Office bubble feed (spec 2026-11-04-office-agent-activity): when a consumer wants
+      // 3D office bubble feed: when a consumer wants
       // activity, fetch the messages each tick and diff them. Cost: one extra loopback GET
       // per 400 ms — the same message endpoint the run's final extraction already uses.
       const activity = input.onActivity ? createActivityDiffState() : null;

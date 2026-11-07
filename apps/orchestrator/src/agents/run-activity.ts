@@ -1,5 +1,5 @@
 // apps/orchestrator/src/agents/run-activity.ts — pure message→activity diffing for the
-// office bubbles (spec 2026-11-04-office-agent-activity). Part shapes follow
+// 3D office bubbles. Part shapes follow
 // spikes/spk-1/out/probe-A-messages.json: tool parts are
 // {type:'tool', id, name, state:{status, input}}; reasoning parts {type:'reasoning'}.
 import type { RuntimeEvent } from './runtimes/types.ts';

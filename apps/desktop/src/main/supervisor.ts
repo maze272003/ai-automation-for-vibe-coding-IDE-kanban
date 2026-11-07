@@ -55,7 +55,7 @@ export class OrchestratorSupervisor extends EventEmitter {
 
   /**
    * Replace the orchestrator with a fresh process so the next init message (e.g. a
-   * toggled agent-office config, a restored backup, a provider change) actually
+   * changed environment, a restored backup, a provider change) actually
    * takes effect: a live child is stopped first (shutdown, bounded, then kill) and
    * respawned; a dead one respawns directly. Overlapping calls coalesce into a
    * single replacement — the second caller's state resets still apply.
