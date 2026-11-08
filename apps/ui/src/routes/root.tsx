@@ -1,11 +1,15 @@
 import type { ProjectDTO, SystemState } from '@aik/contracts';
-import { Outlet } from '@tanstack/react-router';
+import { Outlet, useNavigate } from '@tanstack/react-router';
 import { useEffect, useState } from 'react';
 import { AppShell } from '../components/shell/app-shell.tsx';
+import { ShortcutsDialog } from '../components/shell/shortcuts-dialog.tsx';
 import { Button } from '../components/ui/button.tsx';
 import { ToastProvider } from '../components/ui/toast.tsx';
 import { api } from '../lib/api.ts';
 import { useSystemState } from '../lib/events.ts';
+import { subscribeShortcutHelp } from '../lib/shortcut-help.ts';
+import { toggleTheme } from '../lib/theme.ts';
+import { useGlobalShortcuts } from '../lib/use-global-shortcuts.ts';
 
 export interface Health {
   status: string;
@@ -63,6 +67,18 @@ function sameProjects(a: ProjectDTO[], b: ProjectDTO[]): boolean {
 }
 
 export function RootLayout() {
+  const navigate = useNavigate();
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  useEffect(() => subscribeShortcutHelp(() => setShortcutsOpen(true)), []);
+  useGlobalShortcuts({
+    'nav.projects': () => void navigate({ to: '/' }),
+    'nav.usage': () => void navigate({ to: '/usage' }),
+    'nav.office': () => void navigate({ to: '/office' }),
+    'nav.settings': () => void navigate({ to: '/settings' }),
+    'nav.diagnostics': () => void navigate({ to: '/diagnostics' }),
+    'view.theme': () => { toggleTheme(); },
+    'help.shortcuts': () => setShortcutsOpen(true),
+  });
   const system = useSystemState();
   const [health, setHealth] = useState<Health | null>(null);
   const [projects, setProjects] = useState<ProjectDTO[]>([]);
@@ -107,6 +123,7 @@ export function RootLayout() {
 
   return (
     <ToastProvider>
+      <ShortcutsDialog open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} />
       <AppShell projects={projects} orchestratorState={system.state} dataDir={health?.dataDir ?? null}>
         {(system.state === 'fatal' || system.state === 'crash-loop') && <SystemFailure system={system} />}
         {health && <div data-testid="app-ready" hidden />}

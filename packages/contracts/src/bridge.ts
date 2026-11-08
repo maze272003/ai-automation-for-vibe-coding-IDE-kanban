@@ -1,3 +1,4 @@
+import type { SessionUsage } from './usage.ts';
 import type { DiagnosticsExportResult } from './diagnostics.ts';
 import type { EventEnvelope } from './events.ts';
 import type { OfficePreferences } from './office.ts';
@@ -38,7 +39,7 @@ export interface OpencodeModelInfo {
 }
 
 export type OpencodeModelsResult = { ok: true; models: OpencodeModelInfo[] } | { ok: false; error: string };
-export type OpencodeChatResult = { ok: true; text: string } | { ok: false; error: string };
+export type OpencodeChatResult = { ok: true; text: string; usage?: SessionUsage | null; durationMs?: number } | { ok: false; error: string };
 export type OpencodeLoginStartResult = { ok: true; url: string; code: string } | { ok: false; error: string };
 export type OpencodeLoginWaitResult = { ok: true } | { ok: false; error: string };
 

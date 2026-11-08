@@ -112,6 +112,7 @@ describe('REL-5 Usage & Quota Metrics', () => {
     dbHolder.db.insert(modelUsage).values([
       {
         agentRunId: runId,
+        projectId, storyId,
         modelProfileId: modelProfId1,
         httpStatus: 200,
         inputTokens: 1000,
@@ -121,6 +122,7 @@ describe('REL-5 Usage & Quota Metrics', () => {
       },
       {
         agentRunId: runId,
+        projectId, storyId,
         modelProfileId: modelProfId1,
         httpStatus: 200,
         inputTokens: 1500,
@@ -134,6 +136,7 @@ describe('REL-5 Usage & Quota Metrics', () => {
     dbHolder.db.insert(modelUsage).values([
       {
         agentRunId: runId,
+        projectId, storyId,
         modelProfileId: modelProfId2,
         httpStatus: 429,
         inputTokens: 0,
@@ -143,6 +146,7 @@ describe('REL-5 Usage & Quota Metrics', () => {
       },
       {
         agentRunId: runId,
+        projectId, storyId,
         modelProfileId: modelProfId2,
         httpStatus: 200,
         inputTokens: 2000,
@@ -219,7 +223,7 @@ describe('REL-5 Usage & Quota Metrics', () => {
     const { registerMetricsRoutes } = await import('../src/api/routes/metrics.ts');
     const { default: Fastify } = await import('fastify');
     const app = Fastify();
-    registerMetricsRoutes(app, { metrics: service });
+    registerMetricsRoutes(app, { metrics: service, db: dbHolder.db, now: Date.now });
 
     const res = await app.inject({
       method: 'GET',

@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 export const EVENT_TOPICS = [
+  'usage.recorded',
   'story.transitioned', 'story.updated', 'run.started', 'run.output', 'run.finished', 'run.activity', 'check.started', 'check.finished',
   'review.completed', 'pr.updated', 'provider.quota', 'github.connection', 'system.health', 'system.resync', 'office.rooms_changed',
 ] as const;

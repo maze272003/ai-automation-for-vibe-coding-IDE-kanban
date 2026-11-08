@@ -1,14 +1,17 @@
 // apps/ui/src/components/UsageDashboard.tsx
 import { useEffect, useState } from 'react';
+import type { ProjectDTO } from '@aik/contracts';
+import { costLabel, formatUsd } from '../lib/usage-format.ts';
 import { api } from '../lib/api.ts';
 import { Badge } from './ui/badge.tsx';
 import { Button } from './ui/button.tsx';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card.tsx';
 
 export interface UsageModelBreakdown {
-  modelProfileId: number;
+  modelProfileId: number | null;
   modelId: string;
   provider: string;
+  costUsd: number;
   requests: number;
   inputTokens: number;
   outputTokens: number;
@@ -27,6 +30,9 @@ export interface ProviderQuotaSummary {
 }
 
 export interface UsageSummaryDTO {
+  totalCostUsd: number;
+  costComplete: boolean;
+  estimated: boolean;
   totalRequests: number;
   totalInputTokens: number;
   totalOutputTokens: number;
@@ -74,6 +80,10 @@ export interface UsageDashboardProps {
 }
 
 export function UsageDashboard({ projectId, className }: UsageDashboardProps) {
+  const [projects, setProjects] = useState<ProjectDTO[]>([]);
+  const [selectedProject, setSelectedProject] = useState<number | undefined>(projectId);
+  useEffect(() => { setSelectedProject(projectId); }, [projectId]);
+  useEffect(() => { void api.get<ProjectDTO[]>('/projects').then(setProjects).catch(() => undefined); }, []);
   const [data, setData] = useState<UsageSummaryDTO | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -84,7 +94,7 @@ export function UsageDashboard({ projectId, className }: UsageDashboardProps) {
     setError(null);
     try {
       const params = new URLSearchParams();
-      if (projectId) params.set('projectId', String(projectId));
+      if (selectedProject) params.set('projectId', String(selectedProject));
       if (range === '24h') params.set('from', String(Date.now() - 24 * 3600_000));
       else if (range === '7d') params.set('from', String(Date.now() - 7 * 24 * 3600_000));
       else if (range === '30d') params.set('from', String(Date.now() - 30 * 24 * 3600_000));
@@ -101,7 +111,7 @@ export function UsageDashboard({ projectId, className }: UsageDashboardProps) {
 
   useEffect(() => {
     void fetchUsage();
-  }, [projectId, range]);
+  }, [selectedProject, range]);
 
   return (
     <div className={`flex flex-col gap-6 p-6 ${className ?? ''}`}>
@@ -110,10 +120,14 @@ export function UsageDashboard({ projectId, className }: UsageDashboardProps) {
         <div>
           <h1 className="text-xl font-bold tracking-tight text-foreground">Usage & Quotas</h1>
           <p className="text-xs text-muted">
-            Token telemetry, request latency, and provider quota reset ETAs (REL-5)
+            Token telemetry, request latency, and provider quota reset ETAs
           </p>
         </div>
         <div className="flex items-center gap-2">
+          <select aria-label="Project" value={selectedProject ?? ''} onChange={(event) => setSelectedProject(event.target.value ? Number(event.target.value) : undefined)} className="rounded-control border border-border bg-surface px-2 py-1 text-xs">
+            <option value="">All projects</option>
+            {projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}
+          </select>
           <div className="flex rounded-control border border-border bg-surface p-0.5 text-xs">
             <button
               type="button"
@@ -165,7 +179,13 @@ export function UsageDashboard({ projectId, className }: UsageDashboardProps) {
       )}
 
       {/* Metric Stat Cards */}
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5">
+        <Card data-testid="usage-cost" className="border border-border/80 bg-surface/90 shadow-sm">
+          <CardHeader className="pb-2"><CardTitle className="text-xs font-medium uppercase tracking-wider text-muted">Total Cost</CardTitle></CardHeader>
+          <CardContent><div className="text-2xl font-bold">{formatUsd(data?.totalCostUsd ?? null)}</div>
+            {data && costLabel(data) && <div className="mt-1 text-xs text-muted">{costLabel(data)}</div>}
+          </CardContent>
+        </Card>
         <Card className="border border-border/80 bg-surface/90 backdrop-blur-[12px] shadow-sm">
           <CardHeader className="pb-2">
             <CardTitle className="text-xs font-medium uppercase tracking-wider text-muted">Total Requests</CardTitle>
@@ -265,6 +285,7 @@ export function UsageDashboard({ projectId, className }: UsageDashboardProps) {
               <tr>
                 <th className="px-4 py-3 font-semibold">Model</th>
                 <th className="px-4 py-3 font-semibold">Provider</th>
+                <th className="px-4 py-3 font-semibold">$</th>
                 <th className="px-4 py-3 font-semibold">Requests</th>
                 <th className="px-4 py-3 font-semibold">Input Tokens</th>
                 <th className="px-4 py-3 font-semibold">Output Tokens</th>
@@ -275,9 +296,10 @@ export function UsageDashboard({ projectId, className }: UsageDashboardProps) {
             </thead>
             <tbody className="divide-y divide-border/40 text-foreground">
               {data?.models.map((m) => (
-                <tr key={m.modelProfileId} className="hover:bg-surface-2/40 transition-colors">
+                <tr key={m.modelProfileId ?? m.modelId} className="hover:bg-surface-2/40 transition-colors">
                   <td className="px-4 py-3 font-mono font-bold text-accent-soft-foreground">{m.modelId}</td>
                   <td className="px-4 py-3 capitalize text-muted">{m.provider}</td>
+                  <td className="px-4 py-3 font-mono">{formatUsd(m.costUsd)}</td>
                   <td className="px-4 py-3 font-medium">{m.requests.toLocaleString()}</td>
                   <td className="px-4 py-3">{formatTokens(m.inputTokens)}</td>
                   <td className="px-4 py-3">{formatTokens(m.outputTokens)}</td>
@@ -304,7 +326,7 @@ export function UsageDashboard({ projectId, className }: UsageDashboardProps) {
               ))}
               {(!data || data.models.length === 0) && (
                 <tr>
-                  <td colSpan={8} className="px-4 py-8 text-center text-muted">
+                  <td colSpan={9} className="px-4 py-8 text-center text-muted">
                     No inference usage recorded for this period
                   </td>
                 </tr>

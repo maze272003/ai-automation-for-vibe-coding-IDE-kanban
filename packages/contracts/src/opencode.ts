@@ -10,6 +10,8 @@ export const OPENCODE_PIN = '2.0.32';
  * pick the last assistant message that actually carries text.
  */
 export interface OpenCodeMessageLike {
+  /** Stable server-assigned message identity (`msg_…`), used to baseline a resumed session's turns. */
+  id?: string;
   type?: string;
   outcome?: string;
   finish?: string;

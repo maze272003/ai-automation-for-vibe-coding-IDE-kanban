@@ -73,6 +73,24 @@ export interface ClarificationAnswer {
   answer: string;
 }
 
+/** Sends approve_plan for the story's active plan; errors map exactly like performMove's. */
+export async function approvePlan(
+  story: StoryDTO,
+): Promise<{ ok: true } | { ok: false; reason: string }> {
+  if (story.activePlanVersion === null) return { ok: false, reason: 'No proposed plan to approve' };
+  try {
+    await api.post(`/stories/${story.id}/transitions`, {
+      event: 'approve_plan',
+      planVersion: story.activePlanVersion,
+      expectedVersion: story.statusVersion,
+    });
+    return { ok: true };
+  } catch (e) {
+    if (!(e instanceof ApiRequestError)) throw e;
+    return { ok: false, reason: e.code === 'VERSION_CONFLICT' ? 'The story changed in the meantime; the board was refreshed' : e.reason };
+  }
+}
+
 /** Sends reject_plan for the story's active plan with the reviewer's feedback; errors map exactly like performMove's. */
 export async function rejectPlan(
   story: StoryDTO,

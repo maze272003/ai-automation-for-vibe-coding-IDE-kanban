@@ -1,12 +1,12 @@
 import {
-  STORY_STATUS, type CreateStoryRequest, type OpenCliTargetDTO, type PatchStoryRequest, type PlanV1, type PullRequestDTO, type StoryDTO, type StoryListQuery, type StoryStatus, type TransitionRequest,
+  STORY_STATUS, type CreateStoryRequest, type OpenCliTargetDTO, type PatchStoryRequest, type PlanStatus, type PlanV1, type PullRequestDTO, type StoryDTO, type StoryListQuery, type StoryStatus, type TransitionRequest,
 } from '@aik/contracts';
 import {
   acceptanceCriteria, agentRuns, clarifications, durableJobs, mergeApprovals, modelProfiles, plans, projects, pullRequests, reviewAcResults, reviewFindings, reviews, storyDependencies, storyEvents, userStories,
   verificationChecks, verificationRuns, workspaces, type AikDb, type AikTx,
 } from '@aik/db';
 import type { WorkflowEvent } from '@aik/workflow';
-import { and, asc, desc, eq, inArray, isNotNull, isNull, max, ne, sql, type SQL } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, isNotNull, isNull, lt, max, ne, sql, type SQL } from 'drizzle-orm';
 import { execFileSync } from 'node:child_process';
 import crypto from 'node:crypto';
 import { ApiHttpError } from '../api/errors.ts';
@@ -24,6 +24,7 @@ import { systemClock, type Clock } from '../time.ts';
 import type { PendingRunInterrupt, TransitionOutcome, WorkflowService } from '../workflow/service.ts';
 import { getStoryRow, type StoryRow } from '../workflow/snapshot.ts';
 import { toStoryDTO } from './dto.ts';
+import { protectedPathsForCandidate, sameProtectedPaths } from './protected-ack.ts';
 
 const EDITABLE: readonly StoryStatus[] = ['NEW', 'READY', 'BLOCKED'];
 const PRIORITY_ORDER = sql`CASE ${userStories.priority} WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 WHEN 'P2' THEN 2 ELSE 3 END`;
@@ -294,73 +295,93 @@ export class StoryService {
 
     if (req.event === 'approve_merge' && (this.merger || this.remoteMerger) && this.queue) {
       const queue = this.queue;
-      const story = getStoryRow(this.db, id);
-      if (!story) throw new ApiHttpError(404, 'NOT_FOUND', `Story ${id} not found`);
-      const project = this.db.select().from(projects).where(eq(projects.id, story.projectId)).get();
-      if (!project) throw new ApiHttpError(404, 'NOT_FOUND', `Project for story ${id} not found`);
-      if (story.status !== 'AWAITING_MERGE') {
-        throw new ApiHttpError(409, 'GUARD_FAILED', `A merge can only be approved while the story is AWAITING_MERGE`, {
-          failedGuards: [{ guard: 'state', reason: `approve_merge is not allowed while the story is ${story.status}` }],
-        });
-      }
-      if (story.candidateSha !== req.sha) {
-        throw new ApiHttpError(409, 'GUARD_FAILED', 'The approval is not for the current candidate', {
-          failedGuards: [{ guard: 'sha', reason: `Candidate ${story.candidateSha ?? 'none'} does not match the approved ${req.sha}` }],
-        });
-      }
-      if (req.expectedVersion !== story.statusVersion) {
-        throw new ApiHttpError(409, 'VERSION_CONFLICT', 'The story changed since it was loaded');
-      }
+      const dto = this.db.transaction((tx) => {
+        const story = getStoryRow(tx, id);
+        if (!story) throw new ApiHttpError(404, 'NOT_FOUND', `Story ${id} not found`);
+        const project = tx.select().from(projects).where(eq(projects.id, story.projectId)).get();
+        if (!project) throw new ApiHttpError(404, 'NOT_FOUND', `Project for story ${id} not found`);
+        if (story.status !== 'AWAITING_MERGE') {
+          throw new ApiHttpError(409, 'GUARD_FAILED', `A merge can only be approved while the story is AWAITING_MERGE`, {
+            failedGuards: [{ guard: 'state', reason: `approve_merge is not allowed while the story is ${story.status}` }],
+          });
+        }
+        if (story.candidateSha !== req.sha) {
+          throw new ApiHttpError(409, 'GUARD_FAILED', 'The approval is not for the current candidate', {
+            failedGuards: [{ guard: 'sha', reason: `Candidate ${story.candidateSha ?? 'none'} does not match the approved ${req.sha}` }],
+          });
+        }
+        if (req.expectedVersion !== story.statusVersion) {
+          throw new ApiHttpError(409, 'VERSION_CONFLICT', 'The story changed since it was loaded');
+        }
 
-      const now = new Date(this.now());
-      const inserted = this.db
-        .insert(mergeApprovals)
-        .values({
-          storyId: id,
-          kind: 'merge',
-          commitSha: req.sha,
-          approver: 'local-user',
-          approvedAt: now,
-        })
-        .onConflictDoNothing()
-        .returning({ id: mergeApprovals.id })
-        .get();
-      // A repeated approval of the same candidate conflicts away on (storyId, kind, commitSha); the
-      // job must still reference the one approval row that exists, so re-read it.
-      const approval =
-        inserted ??
-        this.db
-          .select({ id: mergeApprovals.id })
-          .from(mergeApprovals)
-          .where(and(eq(mergeApprovals.storyId, id), eq(mergeApprovals.kind, 'merge'), eq(mergeApprovals.commitSha, req.sha)))
-          .get()!;
+        const matched = protectedPathsForCandidate(tx, id, req.sha);
+        if (!sameProtectedPaths(matched, req.acknowledgedProtectedPaths ?? [])) {
+          const reason = 'Acknowledge the protected paths changed by this candidate before merging';
+          throw new ApiHttpError(409, 'GUARD_FAILED', reason, {
+            failedGuards: [{ guard: 'protected_paths_acknowledged', reason }],
+            details: { protectedPaths: matched },
+          });
+        }
 
-      // At most one live merge job per story: a queued job, or a leased job whose lease has not
-      // expired, is already carrying this candidate to the merger. A leased job with a dead lease
-      // is not live (the runner lost it), so a re-approval must still be able to enqueue a retry.
-      const nowMs = this.now();
-      const liveJobs = this.db
-        .select({ id: durableJobs.id, status: durableJobs.status, leaseExpiresAt: durableJobs.leaseExpiresAt })
-        .from(durableJobs)
-        .where(and(eq(durableJobs.storyId, id), eq(durableJobs.kind, 'merge'), inArray(durableJobs.status, ['queued', 'leased'])))
-        .all();
-      const live = liveJobs.some((j) => j.status === 'queued' || (j.leaseExpiresAt !== null && j.leaseExpiresAt.getTime() > nowMs));
-      if (!live) {
-        queue.enqueue({
-          kind: 'merge',
-          // The merge runs in the lane of the repository: one merge at a time per repository,
-          // while other repositories keep working in parallel (spec ADV-1).
-          slot: heavyLane(project.repoPath),
-          storyId: id,
-          sideEffecting: true,
-          payload: { sha: req.sha, approvalId: approval.id },
-          // A failed merge must be retryable: bind the job to the approval request rather than only
-          // to the candidate SHA, otherwise every re-approval collapses onto the failed job.
-          idempotencyKey: `merge_${id}_${req.sha}_${idempotencyKey ?? crypto.randomUUID()}`,
-        });
-      }
+        const now = new Date(this.now());
+        const inserted = tx
+          .insert(mergeApprovals)
+          .values({
+            storyId: id,
+            kind: 'merge',
+            commitSha: req.sha,
+            note: matched.length > 0 || req.note ? JSON.stringify({ protectedPathsAcknowledged: matched, text: req.note ?? null }) : null,
+            approver: 'local-user',
+            approvedAt: now,
+          })
+          .onConflictDoNothing()
+          .returning({ id: mergeApprovals.id })
+          .get();
+        if (inserted && matched.length > 0) {
+          tx.insert(storyEvents).values({
+            storyId: id, type: 'protected_paths_acknowledged', actor: 'human',
+            fromStatus: null, toStatus: null, payload: { candidateSha: req.sha, paths: matched },
+            idempotencyKey: `ppa_${id}_${req.sha}`, createdAt: now,
+          }).run();
+        }
+        // A repeated approval of the same candidate conflicts away on (storyId, kind, commitSha); the
+        // job must still reference the one approval row that exists, so re-read it.
+        const approval =
+          inserted ??
+          tx
+            .select({ id: mergeApprovals.id })
+            .from(mergeApprovals)
+            .where(and(eq(mergeApprovals.storyId, id), eq(mergeApprovals.kind, 'merge'), eq(mergeApprovals.commitSha, req.sha)))
+            .get()!;
+
+        // At most one live merge job per story: a queued job, or a leased job whose lease has not
+        // expired, is already carrying this candidate to the merger. A leased job with a dead lease
+        // is not live (the runner lost it), so a re-approval must still be able to enqueue a retry.
+        const nowMs = this.now();
+        const liveJobs = tx
+          .select({ id: durableJobs.id, status: durableJobs.status, leaseExpiresAt: durableJobs.leaseExpiresAt })
+          .from(durableJobs)
+          .where(and(eq(durableJobs.storyId, id), eq(durableJobs.kind, 'merge'), inArray(durableJobs.status, ['queued', 'leased'])))
+          .all();
+        const live = liveJobs.some((j) => j.status === 'queued' || (j.leaseExpiresAt !== null && j.leaseExpiresAt.getTime() > nowMs));
+        if (!live) {
+          queue.enqueue({
+            kind: 'merge',
+            // The merge runs in the lane of the repository: one merge at a time per repository,
+            // while other repositories keep working in parallel (spec ADV-1).
+            slot: heavyLane(project.repoPath),
+            storyId: id,
+            sideEffecting: true,
+            payload: { sha: req.sha, approvalId: approval.id },
+            // A failed merge must be retryable: bind the job to the approval request rather than only
+            // to the candidate SHA, otherwise every re-approval collapses onto the failed job.
+            idempotencyKey: `merge_${id}_${req.sha}_${idempotencyKey ?? crypto.randomUUID()}`,
+          });
+        }
+        return toStoryDTO(tx, getStoryRow(tx, id)!);
+      }, { behavior: 'immediate' });
       this.bus.notify(1);
-      return toStoryDTO(this.db, getStoryRow(this.db, id)!);
+      return dto;
     }
     let seq: number | null = null;
     let interrupts: PendingRunInterrupt[] = [];
@@ -659,6 +680,9 @@ export class StoryService {
 
   getDetails(storyId: number): {
     plan: PlanV1 | null;
+    planMeta: { version: number; status: PlanStatus; approvedBy: string | null; createdAt: number } | null;
+    previousPlan: { version: number; content: PlanV1; rejectionFeedback: string | null } | null;
+    protectedPaths: string[];
     verification: {
       status: string;
       commitSha: string;
@@ -682,6 +706,9 @@ export class StoryService {
     const planRow = story.activePlanId
       ? this.db.select().from(plans).where(eq(plans.id, story.activePlanId)).get()
       : this.db.select().from(plans).where(eq(plans.storyId, storyId)).orderBy(desc(plans.version)).limit(1).get();
+    const previousPlanRow = planRow
+      ? this.db.select().from(plans).where(and(eq(plans.storyId, storyId), eq(plans.status, 'rejected'), lt(plans.version, planRow.version))).orderBy(desc(plans.version)).limit(1).get()
+      : undefined;
 
     // 2. Verification
     let verification: {
@@ -792,6 +819,9 @@ export class StoryService {
 
     return {
       plan: planRow?.content ?? null,
+      planMeta: planRow ? { version: planRow.version, status: planRow.status, approvedBy: planRow.approvedBy, createdAt: planRow.createdAt.getTime() } : null,
+      previousPlan: previousPlanRow ? { version: previousPlanRow.version, content: previousPlanRow.content, rejectionFeedback: previousPlanRow.rejectionFeedback } : null,
+      protectedPaths: story.candidateSha ? protectedPathsForCandidate(this.db, storyId, story.candidateSha) : [],
       verification,
       review,
       diff,

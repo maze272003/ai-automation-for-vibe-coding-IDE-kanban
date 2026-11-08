@@ -4,10 +4,15 @@ import { and, eq } from 'drizzle-orm';
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
-import { afterAll, beforeAll, describe, expect, test } from 'vitest';
+import { afterAll, beforeAll, describe, expect, test, vi } from 'vitest';
+import type { ImplementerAgent } from '../src/agents/implementer.ts';
 import { RunInterruptRegistry } from '../src/agents/interrupts.ts';
+import type { PlannerAgent } from '../src/agents/planner.ts';
+import { AgentRunner } from '../src/agents/runner.ts';
+import type { ReviewerAgent } from '../src/agents/reviewer.ts';
 import { EventBus } from '../src/events/bus.ts';
 import { WorktreeManager } from '../src/git/worktree.ts';
+import { JobQueue } from '../src/jobs/queue.ts';
 import { VerificationRunner } from '../src/verify/runner.ts';
 import { WorkflowService } from '../src/workflow/service.ts';
 import { createTestDb, seedProject, seedStory } from './helpers/db.ts';
@@ -358,6 +363,49 @@ describe('VerificationRunner evidence rules', () => {
     expect(vulnCheck?.outputTail).toContain('GHSA-vuln-1234');
     expect(vulnCheck?.outputTail).toContain('critical');
   });
+
+  test('blocks the environment when the vulnerability scanner is missing (W0-4)', async () => {
+    const repoPath = makeTempRepo({ name: 'verif-vuln-enoent-repo' });
+    const project = seedProject(dbHolder.db, {
+      repoPath,
+      settings: {
+        ...defaultProjectSettings(),
+        secretsOnlyVerification: true,
+        vulnerabilityScan: { enabled: true, threshold: 'high' },
+      },
+    });
+
+    const candidate = await candidateFor(repoPath, 'VRF-12', 'package-lock.json', '{"name": "missing-scanner", "lockfileVersion": 3}');
+    const story = seedStory(dbHolder.db, project.id, {
+      key: 'VRF-12',
+      baseSha: candidate.baseSha,
+      candidateSha: candidate.candidateSha,
+      candidateTree: candidate.candidateTree,
+      status: 'TESTING',
+    });
+
+    const v = new VerificationRunner({
+      db: dbHolder.db,
+      workflow,
+      bus,
+      worktreeManager,
+      logsDir: makeTempDir('aikanban-verif-logs-enoent-'),
+      vulnerabilityScanner: async () => ({ stdout: '', stderr: '', exitCode: 1, spawnError: 'ENOENT' }),
+    });
+
+    const result = await v.verifyStory(story.id);
+
+    expect(result).toMatchObject({ ok: false, status: 'error', blockedReason: 'environment' });
+    expect(result.error).toContain('vulnerabilities (error: osv-scanner not found');
+    const checks = dbHolder.db
+      .select()
+      .from(verificationChecks)
+      .where(eq(verificationChecks.verificationRunId, result.verificationRunId!))
+      .all();
+    const vulnCheck = checks.find((c) => c.checkKey === 'vulnerabilities');
+    expect(vulnCheck?.status).toBe('error');
+    expect(vulnCheck?.outputTail).toContain('osv-scanner not found at osv-scanner (PATH)');
+  });
 });
 
 describe('VerificationRunner interruption', () => {
@@ -473,4 +521,74 @@ describe('VerificationRunner interruption', () => {
     expect(interrupts.active(story.id)).toBeUndefined();
     expect(interrupts.activeStoryIds()).not.toContain(story.id);
   }, 20_000);
+});
+
+describe('VerificationRunner through the agent runner', () => {
+  let dbHolder: ReturnType<typeof createTestDb>;
+  let bus: EventBus;
+  let workflow: WorkflowService;
+  let worktreeManager: WorktreeManager;
+  let queue: JobQueue;
+
+  beforeAll(() => {
+    dbHolder = createTestDb();
+    bus = new EventBus();
+    workflow = new WorkflowService({ db: dbHolder.db, bus });
+    worktreeManager = new WorktreeManager({ rootDir: makeTempDir('aikanban-test-verif-runner-') });
+    queue = new JobQueue(dbHolder.db);
+  });
+
+  afterAll(() => {
+    dbHolder.close();
+  });
+
+  test('a missing vulnerability scanner ends the story BLOCKED(environment) naming the scanner (W0-4)', async () => {
+    const repoPath = makeTempRepo({ name: 'verif-runner-enoent-repo' });
+    const project = seedProject(dbHolder.db, {
+      repoPath,
+      settings: {
+        ...defaultProjectSettings(),
+        secretsOnlyVerification: true,
+        vulnerabilityScan: { enabled: true, threshold: 'high' },
+      },
+    });
+
+    const { worktreePath } = await worktreeManager.ensureStoryWorktree({ repoPath, storyKey: 'VRF-13', baseBranch: 'main' });
+    fs.writeFileSync(path.join(worktreePath, 'package-lock.json'), '{"name": "runner-enoent", "lockfileVersion": 3}');
+    execFileSync('git', ['add', '.'], { cwd: worktreePath });
+    execFileSync('git', ['-c', 'user.name=aik', '-c', 'user.email=aik@localhost', 'commit', '-m', 'feat: VRF-13'], { cwd: worktreePath });
+    const story = seedStory(dbHolder.db, project.id, {
+      key: 'VRF-13',
+      baseSha: execFileSync('git', ['rev-parse', 'HEAD~1'], { cwd: worktreePath, encoding: 'utf8' }).trim(),
+      candidateSha: execFileSync('git', ['rev-parse', 'HEAD'], { cwd: worktreePath, encoding: 'utf8' }).trim(),
+      candidateTree: execFileSync('git', ['rev-parse', 'HEAD^{tree}'], { cwd: worktreePath, encoding: 'utf8' }).trim(),
+      status: 'TESTING',
+    });
+
+    const runner = new AgentRunner({
+      db: dbHolder.db,
+      queue,
+      workflow,
+      bus,
+      planner: { planStory: vi.fn().mockResolvedValue({ ok: true }) } as unknown as PlannerAgent,
+      implementer: { implementStory: vi.fn().mockResolvedValue({ ok: true }) } as unknown as ImplementerAgent,
+      verification: new VerificationRunner({
+        db: dbHolder.db,
+        workflow,
+        bus,
+        worktreeManager,
+        logsDir: makeTempDir('aikanban-verif-runner-logs-'),
+        vulnerabilityScanner: async () => ({ stdout: '', stderr: '', exitCode: 1, spawnError: 'ENOENT' }),
+      }),
+      reviewer: { reviewStory: vi.fn().mockResolvedValue({ ok: true }) } as unknown as ReviewerAgent,
+    });
+
+    await runner.tick();
+    await runner.drain();
+
+    const updated = dbHolder.db.select().from(userStories).where(eq(userStories.id, story.id)).get();
+    expect(updated?.status).toBe('BLOCKED');
+    expect(updated?.blockedReason).toBe('environment');
+    expect(updated?.blockedDetail).toContain('osv-scanner not found');
+  });
 });

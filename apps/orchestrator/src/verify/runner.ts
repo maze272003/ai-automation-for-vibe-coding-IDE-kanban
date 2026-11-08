@@ -40,7 +40,8 @@ export interface VerificationRunnerDeps {
   redact?: (text: string) => string;
   /** When provided, checks running for a story are registered as interruptible work (EXE-13). */
   interrupts?: RunInterruptRegistry;
-  vulnerabilityScanner?: (lockfiles: string[], cwd: string) => Promise<{ stdout: string; stderr: string; exitCode: number }>;
+  /** When the scanner process could not start, its error code (e.g. 'ENOENT') — the scan fails closed. */
+  vulnerabilityScanner?: (lockfiles: string[], cwd: string) => Promise<{ stdout: string; stderr: string; exitCode: number; spawnError?: string }>;
   cleanInstallRunner?: (worktreePath: string) => Promise<CleanInstallResult>;
   isolationRunner?: IsolationRunner;
 }
@@ -73,7 +74,7 @@ export class VerificationRunner {
   private readonly vulnerabilityScanner?: (
     lockfiles: string[],
     cwd: string,
-  ) => Promise<{ stdout: string; stderr: string; exitCode: number }>;
+  ) => Promise<{ stdout: string; stderr: string; exitCode: number; spawnError?: string }>;
   private readonly cleanInstallRunner?: (worktreePath: string) => Promise<CleanInstallResult>;
   private readonly isolationRunner?: IsolationRunner;
 
@@ -169,7 +170,7 @@ export class VerificationRunner {
     }
 
     const infrastructure = this.db
-      .select({ key: verificationChecks.checkKey, status: verificationChecks.status })
+      .select({ key: verificationChecks.checkKey, status: verificationChecks.status, outputTail: verificationChecks.outputTail })
       .from(verificationChecks)
       .where(
         and(
@@ -191,7 +192,12 @@ export class VerificationRunner {
         status: 'error',
         blockedReason: 'environment',
         verificationRunId: run.id,
-        error: `Mandatory checks cannot run: ${infrastructure.map((c) => `${c.key} (${c.status})`).join(', ')}`,
+        error: `Mandatory checks cannot run: ${infrastructure
+          .map((c) => {
+            const firstLine = (c.outputTail ?? '').split('\n')[0]?.trim() ?? '';
+            return `${c.key} (${c.status}${firstLine ? `: ${firstLine}` : ''})`;
+          })
+          .join(', ')}`,
       };
     }
 

@@ -4,7 +4,8 @@ import { draggable } from '@atlaskit/pragmatic-drag-and-drop/element/adapter';
 import { memo, useEffect, useRef, useState } from 'react';
 import { cn } from '../../lib/cn.ts';
 import { BLOCKED_REASON_THEME, PRIORITY_THEME, STATUS_THEME } from '../../lib/status-theme.ts';
-import { performEvent, type StoryActionEvent } from '../../lib/transitions.ts';
+import { approvePlan, performEvent, type StoryActionEvent } from '../../lib/transitions.ts';
+import { planBadge } from '../../lib/plan-view.ts';
 import { Badge } from '../ui/badge.tsx';
 import { useToast } from '../ui/toast.tsx';
 import { MoveMenu } from './move-menu.tsx';
@@ -27,6 +28,7 @@ function CardImpl({ story, onMove, onOpenTerminal }: CardProps) {
   const ref = useRef<HTMLDivElement>(null);
   const toast = useToast();
   const [busyAction, setBusyAction] = useState<StoryActionEvent | null>(null);
+  const [approving, setApproving] = useState(false);
 
   useEffect(() => {
     const el = ref.current;
@@ -57,6 +59,20 @@ function CardImpl({ story, onMove, onOpenTerminal }: CardProps) {
   };
 
   const priority = PRIORITY_THEME[story.priority];
+  const plan = planBadge(story);
+
+  const approvePlanAction = async () => {
+    setApproving(true);
+    try {
+      const result = await approvePlan(story);
+      if (result.ok) toast(`Plan approved for ${story.key}`, 'info');
+      else toast(result.reason, 'error');
+    } catch (e) {
+      toast(String(e), 'error');
+    } finally {
+      setApproving(false);
+    }
+  };
   const status = STATUS_THEME[story.status];
   const blocked = story.blocked ? BLOCKED_REASON_THEME[story.blocked.reason] : null;
 
@@ -99,6 +115,7 @@ function CardImpl({ story, onMove, onOpenTerminal }: CardProps) {
           <Badge key={l} tone="muted">{l}</Badge>
         ))}
         {story.hold && <Badge tone="warn">on hold</Badge>}
+        {plan && <Badge tone={plan.tone === 'warning' ? 'warn' : 'default'}>{plan.label}</Badge>}
         {story.blocked && (
           <Badge
             tone="danger"
@@ -155,6 +172,23 @@ function CardImpl({ story, onMove, onOpenTerminal }: CardProps) {
           <span className={cn('text-[10px] uppercase', story.lastRun.status === 'succeeded' ? 'text-success' : 'text-muted-2')}>
             {story.lastRun.status}
           </span>
+        </button>
+      )}
+
+      {story.planningStatus === 'plan_proposed' && (
+        <button
+          type="button"
+          data-testid={`card-approve-plan-${story.key}`}
+          onClick={(e) => {
+            e.stopPropagation();
+            void approvePlanAction();
+          }}
+          disabled={approving || story.activePlanVersion === null}
+          className="mt-2.5 flex w-full items-center justify-center gap-1.5 rounded-[8px] border border-success/40 bg-success/15 px-2.5 py-1.5 text-xs font-bold text-success-foreground transition-colors hover:bg-success/25 disabled:cursor-not-allowed disabled:opacity-50"
+          title={`Approve plan v${story.activePlanVersion ?? ''} for ${story.key}`}
+        >
+          <span aria-hidden="true">✓</span>
+          {approving ? 'Approving…' : 'Approve plan'}
         </button>
       )}
 

@@ -4,6 +4,7 @@ export class ApiRequestError extends Error {
   readonly status: number;
   readonly code: string;
   readonly failedGuards: FailedGuard[];
+  readonly details: unknown;
 
   constructor(status: number, body: unknown) {
     const err = (body as ApiError | null)?.error;
@@ -12,6 +13,7 @@ export class ApiRequestError extends Error {
     this.status = status;
     this.code = err?.code ?? 'INTERNAL';
     this.failedGuards = err?.failedGuards ?? [];
+    this.details = err?.details;
   }
 
   /** Human-readable explanation, preferring the guard reasons. */

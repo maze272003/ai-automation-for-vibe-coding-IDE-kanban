@@ -44,9 +44,8 @@ function purgeIn(tx: PurgeTx, projectId: number): { stories: number } {
   const IN = storyIds.length > 0 ? `(${storyIds.map((r) => String(r.id)).join(', ')})` : '(SELECT id FROM user_stories WHERE project_id = 0)';
   const S = `story_id IN ${IN}`;
   const stmts: string[] = [
-    // Deviation from the plan: `model_usage.asset_run_id` does not exist in the schema
-    // (migration 0000 defines only `agent_run_id`); the DELETE below already clears that FK stem.
-    `DELETE FROM model_usage WHERE agent_run_id IN (SELECT id FROM agent_runs WHERE ${S})`,
+    `DELETE FROM model_usage WHERE project_id = ${projectId} OR ${S} OR agent_run_id IN (SELECT id FROM agent_runs WHERE ${S})`,
+    `DELETE FROM run_skills WHERE agent_run_id IN (SELECT id FROM agent_runs WHERE ${S})`,
     `DELETE FROM plans WHERE ${S}`, // clarifications cascade via plans.story_id
     `DELETE FROM review_ac_results WHERE review_id IN (SELECT id FROM reviews WHERE ${S}) OR acceptance_criterion_id IN (SELECT id FROM acceptance_criteria WHERE ${S})`,
     `DELETE FROM review_findings WHERE review_id IN (SELECT id FROM reviews WHERE ${S})`,

@@ -8,6 +8,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {
   extractAssistantText,
+  extractSessionUsage,
   findSessionFailure,
   DEFAULT_OFFICE_PREFERENCES,
   parseOfficePreferences,
@@ -311,6 +312,7 @@ export async function listOpencodeModels(dataDir: string): Promise<OpencodeModel
 
 /** One-shot chat against the chosen model; used by Settings' model test. */
 export async function opencodeChat(dataDir: string, model: { providerID: string; id: string }, prompt: string): Promise<OpencodeChatResult> {
+  const startedAt = Date.now();
   try {
     const s = await getServer(dataDir);
     if (!s) return { ok: false, error: 'OpenCode is not installed (see Settings)' };
@@ -345,7 +347,7 @@ export async function opencodeChat(dataDir: string, model: { providerID: string;
     // tool call without any text; the answer is the last assistant message that carries text.
     const text = extractAssistantText(data);
     if (!text) return { ok: false, error: 'The model returned no text' };
-    return { ok: true, text };
+    return { ok: true, text, usage: extractSessionUsage(data), durationMs: Date.now() - startedAt };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : String(e) };
   }

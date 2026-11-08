@@ -2,7 +2,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { agentRuns, plans, storyEvents, userStories } from '@aik/db';
+import { agentRuns, modelUsage, plans, runSkills, storyEvents, userStories } from '@aik/db';
 import { eq } from 'drizzle-orm';
 import { purgeProjectData } from '../src/projects/purge-repo.ts';
 import { WorktreeManager } from '../src/git/worktree.ts';
@@ -63,12 +63,20 @@ describe('DELETE /projects/:id (sanctioned purge)', () => {
     // Arrange-only pointer setup (a succeeded run keeps the project non-busy): the story now
     // back-references plans/agent_runs, which the purge deletes before user_stories.
     forceStory(t.db, s.id, { activePlanId: plan.id, activeRunId: run.id });
+    t.db.insert(runSkills).values({ agentRunId: run.id, skillId: 'test', skillName: 'Test', createdAt: new Date() }).run();
+    t.db.insert(modelUsage).values([
+      { projectId: id, createdAt: new Date() },
+      { storyId: s.id, createdAt: new Date() },
+      { agentRunId: run.id, createdAt: new Date() },
+    ]).run();
     const res = await inject('DELETE', `/projects/${id}`);
     expect(res.statusCode).toBe(200);
     expect(res.json()).toEqual({ ok: true, stories: 1, discardedWorktrees: [] });
     expect(t.db.select().from(userStories).where(eq(userStories.projectId, id)).all()).toHaveLength(0);
     expect(t.db.select().from(plans).where(eq(plans.storyId, s.id)).all()).toHaveLength(0);
     expect(t.db.select().from(agentRuns).where(eq(agentRuns.storyId, s.id)).all()).toHaveLength(0);
+    expect(t.db.select().from(runSkills).all()).toHaveLength(0);
+    expect(t.db.select().from(modelUsage).all()).toHaveLength(0);
   });
 });
 

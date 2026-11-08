@@ -1,6 +1,6 @@
 // apps/orchestrator/src/stories/dto.ts
 import { BLOCKED_HINTS, type StoryDTO } from '@aik/contracts';
-import { acceptanceCriteria, agentRuns, modelProfiles, plans, pullRequests, storyDependencies, userStories, type AikDbOrTx } from '@aik/db';
+import { acceptanceCriteria, agentRuns, modelProfiles, modelUsage, plans, pullRequests, storyDependencies, userStories, type AikDbOrTx } from '@aik/db';
 import { and, asc, desc, eq, inArray, isNull } from 'drizzle-orm';
 import type { StoryRow } from '../workflow/snapshot.ts';
 
@@ -60,7 +60,10 @@ export function toStoryDTO(db: AikDbOrTx, r: StoryRow): StoryDTO {
         .get()
     : undefined;
   const pr = db.select().from(pullRequests).where(eq(pullRequests.storyId, r.id)).orderBy(desc(pullRequests.id)).limit(1).get();
+  const costs = db.select({ costUsd: modelUsage.costUsd, costSource: modelUsage.costSource }).from(modelUsage).where(eq(modelUsage.storyId, r.id)).all();
   return {
+    costUsd: costs.some((c) => c.costUsd !== null) ? costs.reduce((sum, c) => sum + (c.costUsd ?? 0), 0) : null,
+    costComplete: costs.every((c) => c.costSource !== 'unknown'),
     id: r.id, key: r.key, projectId: r.projectId, title: r.title, description: r.description, priority: r.priority, rank: r.rank,
     labels: r.labels, complexity: r.complexity, revision: r.revision, status: r.status, statusVersion: r.statusVersion,
     planningStatus: r.planningStatus, activePlanVersion: plan?.version ?? null, hold: r.hold,

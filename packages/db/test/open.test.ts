@@ -19,7 +19,7 @@ describe('openDatabase', () => {
     const p = paths();
     const { sqlite, backupFile, close } = openDatabase(p);
     const tables = sqlite.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '__drizzle%'").all() as { name: string }[];
-    expect(tables).toHaveLength(29);
+    expect(tables).toHaveLength(30);
     const triggers = sqlite.prepare("SELECT name FROM sqlite_master WHERE type='trigger'").all() as { name: string }[];
     expect(triggers).toHaveLength(IMMUTABLE_TABLES.length * 2);
     expect(sqlite.pragma('journal_mode', { simple: true })).toBe('wal');
