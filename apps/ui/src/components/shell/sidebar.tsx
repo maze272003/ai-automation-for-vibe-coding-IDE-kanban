@@ -2,6 +2,7 @@
 import type { ProjectDTO } from '@aik/contracts';
 import { Link } from '@tanstack/react-router';
 import { cn } from '../../lib/cn.ts';
+import { openShortcutHelp } from '../../lib/shortcut-help.ts';
 import { StatusCard } from './status-card.tsx';
 
 export interface SidebarProps {
@@ -44,6 +45,11 @@ export function Sidebar({ projects, orchestratorState, dataDir }: SidebarProps) 
           Settings
         </Link>
       </nav>
+      <nav aria-label="Operations" className="flex flex-col gap-0.5">
+        <p className="px-1 text-[10px] font-bold uppercase tracking-wider text-muted-2">Operations</p>
+        <Link to="/diagnostics" className={navItem}>Diagnostics</Link>
+        <button type="button" className={`${navItem} text-left`} onClick={openShortcutHelp}>Keyboard shortcuts</button>
+      </nav>
 
       <div className="min-h-0 flex-1 overflow-y-auto">
         <p className="px-1 pb-1 pt-2 text-[10px] font-bold uppercase tracking-[0.1em] text-muted-2">
@@ -76,6 +82,7 @@ export function Sidebar({ projects, orchestratorState, dataDir }: SidebarProps) 
                   <span aria-label="unavailable" className="ml-auto h-1.5 w-1.5 rounded-full bg-warning" />
                 )}
               </Link>
+              <Link to="/projects/$projectId/settings" params={{ projectId: String(p.id) }} aria-label={`Settings for ${p.name}`} className="ml-2 px-2 text-xs text-muted hover:text-foreground">⚙ Project settings</Link>
             </li>
           ))}
         </ul>

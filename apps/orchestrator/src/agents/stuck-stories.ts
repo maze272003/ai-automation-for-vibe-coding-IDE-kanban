@@ -4,7 +4,7 @@
 // the runner's discoverers use, so discoverer and sweep can never diverge on keys or bounds.
 import type { BlockedReason } from '@aik/contracts';
 import {
-  agentRuns, durableJobs, projects, reviews, storyEvents, userStories, verificationRuns, type AikDb,
+  agentRuns, durableJobs, projects, storyEvents, userStories, verificationRuns, type AikDb,
 } from '@aik/db';
 import type { WorkflowEvent } from '@aik/workflow';
 import { and, desc, eq, inArray, isNotNull, isNull, like, notInArray } from 'drizzle-orm';
@@ -13,14 +13,9 @@ import type { JobKind, JobQueue } from '../jobs/queue.ts';
 import { createRedactor } from '../secrets/redactor.ts';
 import { systemClock, type Clock } from '../time.ts';
 import type { WorkflowService } from '../workflow/service.ts';
-import { emitRunFinished } from './run-events.ts';
-
-/**
- * Mirrors `MAX_PLANNING_ATTEMPTS` in runner.ts (kept local so the runner never imports back
- * from this module). A story that failed planning this many times is parked in NEW with no
- * budget left; only the sweep can move it to BLOCKED.
- */
-const MAX_PLANNING_ATTEMPTS = 3;
+import { finishRun } from './finish-run.ts';
+import { failedPlannerRunsSinceReset, MAX_PLANNING_ATTEMPTS } from './planning-budget.ts';
+import { settledReviewFor } from './review-status.ts';
 
 /**
  * How many times a stage may be re-enqueued per status version (RE2): r0 plus two retries,
@@ -254,7 +249,9 @@ export function sweepStuckStories(deps: SweepDeps): SweepSummary {
           summary.skipped += 1;
           break;
         }
-        const failedPlans = failedPlannerRuns(db, story.id);
+        // B7: the budget is per planning round — failures before the last human reset
+        // (edit_definition or recover→NEW) do not count.
+        const failedPlans = failedPlannerRunsSinceReset(db, story.id);
         if (failedPlans >= MAX_PLANNING_ATTEMPTS) {
           block('invalid_agent_output', redact(`Planning failed ${failedPlans} times; the planning budget is exhausted`));
         } else {
@@ -301,27 +298,19 @@ export function sweepStuckStories(deps: SweepDeps): SweepSummary {
           summary.skipped += 1;
           break;
         }
-        const review = db
-          .select({ verdict: reviews.verdict })
-          .from(reviews)
-          .where(and(eq(reviews.storyId, story.id), eq(reviews.commitSha, story.candidateSha)))
-          .orderBy(desc(reviews.id))
-          .limit(1)
-          .get();
-        if (!review) {
+        // W0-7: only a SETTLED review (APPROVED/CHANGES_REQUESTED) settles the round. A story
+        // whose only review for the SHA is BLOCKED was resumed after the block and must be
+        // reviewed again — exactly like a story with no review at all.
+        const settled = settledReviewFor(db, story.id, story.candidateSha);
+        if (!settled) {
           stage('review', `review_${story.id}_${story.candidateSha}`, false);
           break;
         }
-        if (review.verdict === 'APPROVED') {
+        if (settled.verdict === 'APPROVED') {
           refire({ type: 'review_approved', sha: story.candidateSha });
           break;
         }
-        if (review.verdict === 'CHANGES_REQUESTED') {
-          refire({ type: 'review_changes_requested', sha: story.candidateSha });
-          break;
-        }
-        // A BLOCKED verdict already blocks the story via finishReview.
-        summary.skipped += 1;
+        refire({ type: 'review_changes_requested', sha: story.candidateSha });
         break;
       }
 
@@ -340,12 +329,14 @@ export function sweepStuckStories(deps: SweepDeps): SweepSummary {
           break;
         }
         if (run.status === 'running') {
-          db
-            .update(agentRuns)
-            .set({ status: 'interrupted', exitReason: 'Orphaned by integrity sweep', endedAt: new Date(now()) })
-            .where(eq(agentRuns.id, run.id))
-            .run();
-          emitRunFinished(db, new Date(now()), run.id, 'interrupted', 'Orphaned by integrity sweep');
+          finishRun(db, new Date(now()), {
+            runId: run.id,
+            status: 'interrupted',
+            exitReason: 'Orphaned by integrity sweep',
+            usage: null,
+            model: null,
+            durationMs: null,
+          });
           block('interrupted', redact(`run ${run.id} was still running with no live job; marked interrupted by the integrity sweep`));
           break;
         }
@@ -356,12 +347,4 @@ export function sweepStuckStories(deps: SweepDeps): SweepSummary {
   }
 
   return summary;
-}
-
-function failedPlannerRuns(db: AikDb, storyId: number): number {
-  return db
-    .select({ id: agentRuns.id })
-    .from(agentRuns)
-    .where(and(eq(agentRuns.storyId, storyId), eq(agentRuns.role, 'planner'), eq(agentRuns.status, 'failed')))
-    .all().length;
 }

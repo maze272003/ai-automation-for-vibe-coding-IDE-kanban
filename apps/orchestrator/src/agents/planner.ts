@@ -1,4 +1,3 @@
-import { PlanV1 } from '@aik/contracts';
 import { acceptanceCriteria, agentRuns, clarifications, plans, projects, userStories, type AikDb } from '@aik/db';
 import { eq } from 'drizzle-orm';
 import crypto from 'node:crypto';
@@ -6,8 +5,11 @@ import type { EventBus } from '../events/bus.ts';
 import { systemClock, type Clock } from '../time.ts';
 import type { WorkflowService } from '../workflow/service.ts';
 import type { RunInterruptRegistry } from './interrupts.ts';
-import { emitRunFinished, emitRunStarted, appendRunActivity } from './run-events.ts';
+import { finishRun } from './finish-run.ts';
+import { parsePlanText } from './plan-parse.ts';
+import { emitRunStarted, appendRunActivity } from './run-events.ts';
 import { ensureModelProfile, ROLE_TIMEOUTS, type ModelRef, type OpenCodeRuntime, type RunOneShotOutput } from './runtime.ts';
+import { recordRunSkills } from '../skills/run-skills.ts';
 import type { SkillBridgeService } from '../skills/bridge.ts';
 
 export interface PlannerAgentDeps {
@@ -90,6 +92,7 @@ export class PlannerAgent {
       .returning()
       .get();
     const startSeq = emitRunStarted(this.db, new Date(this.now()), run.id);
+    const durationMs = (): number => Math.max(new Date(this.now()).getTime() - run.startedAt.getTime(), 0);
 
     // Attach active run to story so the UI Kanban card immediately shows the working terminal badge
     this.db
@@ -144,6 +147,7 @@ export class PlannerAgent {
         isWorktree: false,
       });
       skillPromptHint = injection.promptHint ? `\n${injection.promptHint}\n` : '';
+      recordRunSkills(this.db, new Date(this.now()), run.id, injection.delivered);
     }
 
     const prompt = `You are an expert AI software architect and planner.
@@ -180,6 +184,7 @@ correct plan — never invent business rules or assumptions to fill gaps. If the
 context above already provide everything needed, return an empty list.
 Output only the JSON code block.`;
 
+    const turnStartedAt = Date.now();
     let result: RunOneShotOutput;
     try {
       result = await this.runtime.runOneShot({
@@ -223,23 +228,27 @@ Output only the JSON code block.`;
     if (result.interrupted) {
       // The stop request already transitioned the story to BLOCKED(interrupted)/CANCELLED; a fail
       // transition here would just GUARD_FAILED, and no attempt was consumed (EXE-13).
-      this.db
-        .update(agentRuns)
-        .set({ status: 'interrupted', exitReason: 'Interrupted by a stop request', endedAt: new Date(this.now()) })
-        .where(eq(agentRuns.id, run.id))
-        .run();
-      emitRunFinished(this.db, new Date(this.now()), run.id, 'interrupted', 'Interrupted by a stop request');
+      finishRun(this.db, new Date(this.now()), {
+        runId: run.id,
+        status: 'interrupted',
+        exitReason: 'Interrupted by a stop request',
+        usage: result.usage ?? null,
+        model: result.model ?? null,
+        durationMs: durationMs(),
+      });
       this.bus.notify(1);
       return { ok: false, error: `The planning run for ${story.key} was interrupted by a stop request` };
     }
 
     if (!result.ok || !result.text) {
-      this.db
-        .update(agentRuns)
-        .set({ status: 'failed', exitReason: result.error ?? 'No response', endedAt: new Date(this.now()) })
-        .where(eq(agentRuns.id, run.id))
-        .run();
-      emitRunFinished(this.db, new Date(this.now()), run.id, 'failed', result.error ?? 'No response');
+      finishRun(this.db, new Date(this.now()), {
+        runId: run.id,
+        status: result.timedOut ? 'timed_out' : 'failed',
+        exitReason: result.error ?? 'No response',
+        usage: result.usage ?? null,
+        model: result.model ?? null,
+        durationMs: durationMs(),
+      });
       this.db
         .update(userStories)
         .set({ activeRunId: null, planningStatus: 'planning_failed', updatedAt: new Date(this.now()) })
@@ -249,7 +258,87 @@ Output only the JSON code block.`;
       return { ok: false, error: result.error ?? 'Planning failed' };
     }
 
-    const planContent = this.parsePlan(result.text, story.title);
+    // W0-3: the answer must parse as a PlanV1. A prose or invalid answer gets exactly ONE
+    // corrective turn carrying the validation error; a second failure ends the run honestly as
+    // planning_failed — a plan is never fabricated from unusable output.
+    let parsed = parsePlanText(result.text);
+    let final = result;
+    if (!parsed.ok && result.sessionId) {
+      const sessionId = result.sessionId;
+      // The corrective turn stays stoppable: re-register the interrupt handle for it.
+      this.interrupts?.register(story.id, {
+        runId: run.id,
+        stop: async () => {
+          await this.runtime.interrupt(sessionId, project.repoPath);
+        },
+      });
+      let corrective: RunOneShotOutput;
+      try {
+        corrective = await this.runtime.continueSession({
+          sessionId,
+          directory: project.repoPath,
+          prompt: `Your previous answer could not be used as a plan: ${parsed.error}\nReply again with ONLY the plan as one JSON object that matches the schema given earlier, inside a \`\`\`json block. Do not add any other text.`,
+          timeoutMs: Math.max(ROLE_TIMEOUTS.planner - (Date.now() - turnStartedAt), 30_000),
+          shouldStop: () => this.interrupts?.isStopRequested(story.id) ?? false,
+        });
+      } finally {
+        this.interrupts?.unregister(story.id);
+      }
+      final = corrective;
+
+      if (corrective.interrupted) {
+        finishRun(this.db, new Date(this.now()), {
+          runId: run.id,
+          status: 'interrupted',
+          exitReason: 'Interrupted by a stop request',
+          usage: corrective.usage ?? null,
+          model: corrective.model ?? result.model ?? null,
+          durationMs: durationMs(),
+        });
+        this.bus.notify(1);
+        return { ok: false, error: `The planning run for ${story.key} was interrupted by a stop request` };
+      }
+
+      if (!corrective.ok || !corrective.text) {
+        finishRun(this.db, new Date(this.now()), {
+          runId: run.id,
+          status: corrective.timedOut ? 'timed_out' : 'failed',
+          exitReason: corrective.error ?? 'No response',
+          usage: corrective.usage ?? null,
+          model: corrective.model ?? result.model ?? null,
+          durationMs: durationMs(),
+        });
+        this.db
+          .update(userStories)
+          .set({ activeRunId: null, planningStatus: 'planning_failed', updatedAt: new Date(this.now()) })
+          .where(eq(userStories.id, story.id))
+          .run();
+        this.bus.notify(1);
+        return { ok: false, error: corrective.error ?? 'Planning failed' };
+      }
+
+      parsed = parsePlanText(corrective.text);
+    }
+
+    if (!parsed.ok) {
+      finishRun(this.db, new Date(this.now()), {
+        runId: run.id,
+        status: 'failed',
+        exitReason: `invalid_plan_output: ${parsed.error.slice(0, 300)}`,
+        usage: final.usage ?? null,
+        model: final.model ?? null,
+        durationMs: durationMs(),
+      });
+      this.db
+        .update(userStories)
+        .set({ activeRunId: null, planningStatus: 'planning_failed', updatedAt: new Date(this.now()) })
+        .where(eq(userStories.id, story.id))
+        .run();
+      this.bus.notify(1);
+      return { ok: false, error: 'The planner did not produce a valid plan' };
+    }
+
+    const planContent = parsed.plan;
     const questions = planContent.clarificationQuestions;
 
     // Save plan as proposed
@@ -282,12 +371,15 @@ Output only the JSON code block.`;
         .run();
     });
 
-    this.db
-      .update(agentRuns)
-      .set({ status: 'succeeded', endedAt: new Date(this.now()) })
-      .where(eq(agentRuns.id, run.id))
-      .run();
-    emitRunFinished(this.db, new Date(this.now()), run.id, 'succeeded');
+    // The last result carries the cumulative session usage, so both turns are counted once.
+    finishRun(this.db, new Date(this.now()), {
+      runId: run.id,
+      status: 'succeeded',
+      exitReason: null,
+      usage: final.usage ?? null,
+      model: final.model ?? null,
+      durationMs: durationMs(),
+    });
 
     this.db
       .update(userStories)
@@ -311,32 +403,5 @@ Output only the JSON code block.`;
     }
 
     return { ok: true, planId: savedPlan.id };
-  }
-
-  private parsePlan(text: string, fallbackTitle: string): PlanV1 {
-    try {
-      const match = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/) ?? [null, text];
-      const jsonStr = match[1] ?? text;
-      const parsed = JSON.parse(jsonStr.trim()) as unknown;
-      return PlanV1.parse(parsed);
-    } catch {
-      // Graceful fallback for non-strict LLM formatting
-      return {
-        schemaVersion: 1,
-        summary: text.slice(0, 300) || `Implementation plan for ${fallbackTitle}`,
-        assumptions: [],
-        clarificationQuestions: [],
-        acceptanceCriteria: [],
-        subtasks: [{ id: '1', description: `Implement ${fallbackTitle}`, files: [] }],
-        affectedFiles: [],
-        requiredTests: [],
-        migrations: { required: false, notes: '' },
-        securitySensitive: [],
-        dependencyChanges: [],
-        conflictsWith: [],
-        complexity: 'M',
-        risks: [],
-      };
-    }
   }
 }

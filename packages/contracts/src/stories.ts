@@ -21,6 +21,8 @@ export const StoryDTO = z.object({
   planningStatus: z.enum(PLANNING_STATUS),
   activePlanVersion: z.number().int().nullable(),
   hold: z.boolean(),
+  costUsd: z.number().nullable(),
+  costComplete: z.boolean(),
   blocked: z
     .object({ reason: z.enum(BLOCKED_REASON), from: z.enum(STORY_STATUS).nullable(), detail: z.string(), hint: z.string() })
     .nullable(),
@@ -120,7 +122,7 @@ export const TransitionRequest = z
       findings: z.array(z.object({ text: z.string().trim().min(1).max(5000), file: z.string().max(500).optional() })).min(1),
     }),
     z.object({ event: z.literal('approve_publish'), sha: Sha }),
-    z.object({ event: z.literal('approve_merge'), sha: Sha, method: z.enum(['merge', 'squash']).optional() }),
+    z.object({ event: z.literal('approve_merge'), sha: Sha, method: z.enum(['merge', 'squash']).optional(), acknowledgedProtectedPaths: z.array(z.string().min(1).max(500)).max(200).optional(), note: z.string().trim().max(2000).optional() }),
     z.object({ event: z.literal('override_remote_review'), sha: Sha, note: z.string().trim().min(1).max(2000) }),
     z.object({ event: z.literal('recover'), target: z.enum(['READY', 'NEW', 'resume']), extraAttempts: z.number().int().min(0).max(5).optional() }),
     z.object({ event: z.literal('cancel') }),

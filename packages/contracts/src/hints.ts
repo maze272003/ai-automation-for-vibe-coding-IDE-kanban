@@ -14,5 +14,5 @@ export const BLOCKED_HINTS: Record<BlockedReason, string> = {
   interrupted: 'Work was interrupted (restart or stop). Resume to continue.',
   invalid_agent_output: 'The agent returned output that failed validation. Retry or switch models.',
   model_limit: 'The prompt exceeds the model context. Choose a larger-context model.',
-  environment: 'A required tool, disk space, or the repository path is unavailable. Fix it, then resume.',
+  environment: 'A required tool, disk space, or the repository path is unavailable. Install or fix it, or turn the check off in the project settings, then resume.',
 };

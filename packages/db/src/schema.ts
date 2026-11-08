@@ -1,10 +1,10 @@
 import {
   BLOCKED_REASON, OFFICE_SIDES, OFFICE_WINGS, PLANNING_STATUS, PRIORITY, ROLE, STORY_STATUS,
-  type PlanV1, type ProjectSettings, type ReviewV1, type RoomCustomization,
+  type CostSource, type PlanV1, type ProjectSettings, type ReviewV1, type RoomCustomization,
 } from '@aik/contracts';
 import { sql } from 'drizzle-orm';
 import {
-  check, index, integer, primaryKey, sqliteTable, text, uniqueIndex, type AnySQLiteColumn,
+  check, index, integer, primaryKey, real, sqliteTable, text, uniqueIndex, type AnySQLiteColumn,
 } from 'drizzle-orm/sqlite-core';
 import type { ChecksSummary, OutboxPayload, ProbeResult, QuotaState, ReviewsSummary, StoryEventPayload } from './json-types.ts';
 
@@ -211,7 +211,7 @@ export const agentRuns = sqliteTable('agent_runs', {
   status: text('status', { enum: ['queued', 'running', 'succeeded', 'failed', 'interrupted', 'timed_out', 'cancelled'] }).notNull(),
   failureClass: text('failure_class', { enum: ['agent', 'infrastructure'] }),
   exitReason: text('exit_reason'),
-  usage: text('usage', { mode: 'json' }).$type<{ requests: number; inTok: number; outTok: number }>(),
+  usage: text('usage', { mode: 'json' }).$type<{ requests: number; inTok: number; outTok: number; cachedInTok?: number; costUsd?: number | null; costSource?: CostSource }>(),
   logPath: text('log_path'),
   idempotencyKey: text('idempotency_key').notNull(),
   startedAt: ts('started_at'),
@@ -366,17 +366,46 @@ export const roleRoutes = sqliteTable('role_routes', {
   modelProfileId: integer('model_profile_id').notNull().references(() => modelProfiles.id),
 }, (t) => [uniqueIndex('rr_uq').on(t.projectId, t.role, t.position)]);
 
+export const COST_SOURCES = ['reported', 'estimated', 'free', 'unknown'] as const;
+
+/**
+ * One row per provider request (OpenCode probes/fallbacks: profile, HTTP status, latency) or
+ * per agent run (CLI runtimes: cost and token totals, no profile/status/latency).
+ */
 export const modelUsage = sqliteTable('model_usage', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   agentRunId: integer('agent_run_id').references(() => agentRuns.id),
-  modelProfileId: integer('model_profile_id').notNull().references(() => modelProfiles.id),
-  httpStatus: integer('http_status').notNull(),
+  modelProfileId: integer('model_profile_id').references(() => modelProfiles.id),
+  httpStatus: integer('http_status'),
   inputTokens: integer('input_tokens'),
   outputTokens: integer('output_tokens'),
-  latencyMs: integer('latency_ms').notNull(),
+  latencyMs: integer('latency_ms'),
   fallbackFrom: integer('fallback_from').references(() => modelProfiles.id),
   createdAt: ts('created_at').notNull(),
-}, (t) => [index('mu_profile_time_idx').on(t.modelProfileId, t.createdAt)]);
+  runtime: text('runtime').notNull().default('opencode'),
+  modelSlug: text('model_slug'),
+  effort: text('effort'),
+  costUsd: real('cost_usd'),
+  cachedInputTokens: integer('cached_input_tokens'),
+  durationMs: integer('duration_ms'),
+  costSource: text('cost_source', { enum: COST_SOURCES }).notNull().default('unknown'),
+  storyId: integer('story_id').references(() => userStories.id),
+  projectId: integer('project_id').references(() => projects.id),
+}, (t) => [
+  index('mu_profile_time_idx').on(t.modelProfileId, t.createdAt),
+  index('mu_project_time_idx').on(t.projectId, t.createdAt),
+  index('mu_story_idx').on(t.storyId),
+]);
+
+/** Which vault skills were delivered to an agent run (`skillId` is the vault `skills.id`). */
+export const runSkills = sqliteTable('run_skills', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  agentRunId: integer('agent_run_id').notNull().references(() => agentRuns.id),
+  skillId: text('skill_id').notNull(),
+  skillName: text('skill_name').notNull(),
+  contentSha256: text('content_sha256'), // sha256 hex of the delivered body
+  createdAt: ts('created_at').notNull(),
+}, (t) => [uniqueIndex('rs_run_skill_uq').on(t.agentRunId, t.skillId)]);
 
 // ───────────── System ─────────────
 export const appSettings = sqliteTable('app_settings', {

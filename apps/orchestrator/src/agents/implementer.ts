@@ -12,8 +12,10 @@ import { describeHits, scanStagedDiff } from '../secrets/scan.ts';
 import { systemClock, type Clock } from '../time.ts';
 import type { WorkflowService } from '../workflow/service.ts';
 import type { RunInterruptRegistry } from './interrupts.ts';
-import { emitRunFinished, emitRunStarted, appendRunActivity } from './run-events.ts';
+import { finishRun } from './finish-run.ts';
+import { emitRunStarted, appendRunActivity } from './run-events.ts';
 import { ensureModelProfile, ROLE_TIMEOUTS, type ModelRef, type OpenCodeRuntime, type RunOneShotOutput } from './runtime.ts';
+import { recordRunSkills } from '../skills/run-skills.ts';
 import type { SkillBridgeService } from '../skills/bridge.ts';
 
 export interface ImplementerAgentDeps {
@@ -116,6 +118,7 @@ export class ImplementerAgent {
       .returning()
       .get();
     const startSeq = emitRunStarted(this.db, new Date(this.now()), run.id);
+    const durationMs = (): number => Math.max(new Date(this.now()).getTime() - run.startedAt.getTime(), 0);
 
     // 3. Claim the implementation in the state machine.
     const claim = this.workflow.transition({
@@ -145,6 +148,7 @@ export class ImplementerAgent {
         isWorktree: true,
       });
       skillPromptHint = injection.promptHint ? `\n${injection.promptHint}\n` : '';
+      recordRunSkills(this.db, new Date(this.now()), run.id, injection.delivered);
     }
 
     const activePlan = story.activePlanId
@@ -197,29 +201,31 @@ export class ImplementerAgent {
     if (result.interrupted) {
       // The stop request already transitioned the story to BLOCKED(interrupted)/CANCELLED; a fail
       // transition here would just GUARD_FAILED, and no attempt was consumed (EXE-13).
-      this.db
-        .update(agentRuns)
-        .set({ status: 'interrupted', exitReason: 'Interrupted by a stop request', endedAt: new Date(this.now()) })
-        .where(eq(agentRuns.id, run.id))
-        .run();
-      emitRunFinished(this.db, new Date(this.now()), run.id, 'interrupted', 'Interrupted by a stop request');
+      finishRun(this.db, new Date(this.now()), {
+        runId: run.id,
+        status: 'interrupted',
+        exitReason: 'Interrupted by a stop request',
+        usage: result.usage ?? null,
+        model: result.model ?? null,
+        durationMs: durationMs(),
+      });
       this.bus.notify(1);
       return { ok: false, error: `The implementation run for ${story.key} was interrupted by a stop request` };
     }
 
     if (!result.ok) {
-      return this.failAttempt(story, run.id, result.error ?? 'The model run failed', true);
+      return this.failAttempt(story, run.id, result.error ?? 'The model run failed', true, result);
     }
 
     // 5. Candidate capture is orchestrator-owned (spec §13.3).
     gitOut(worktreePath, 'add', '-A');
     const staged = gitOut(worktreePath, 'status', '--porcelain').trim();
-    if (!staged) return this.failAttempt(story, run.id, 'The model made no file changes', true);
+    if (!staged) return this.failAttempt(story, run.id, 'The model made no file changes', true, result);
 
     const secrets = scanStagedDiff(worktreePath);
     if (secrets.length > 0) {
       gitOut(worktreePath, 'reset');
-      return this.failAttempt(story, run.id, `Potential secret in the staged diff: ${describeHits(secrets)}`, true);
+      return this.failAttempt(story, run.id, `Potential secret in the staged diff: ${describeHits(secrets)}`, true, result);
     }
 
     const attempt = story.attemptCount + 1;
@@ -234,12 +240,15 @@ export class ImplementerAgent {
       .filter(Boolean);
     const protectedPaths = findProtectedPaths(changedFiles, settings.protectedPaths);
 
-    this.db
-      .update(agentRuns)
-      .set({ status: 'succeeded', resultSha: candidateSha, endedAt: new Date(this.now()) })
-      .where(eq(agentRuns.id, run.id))
-      .run();
-    emitRunFinished(this.db, new Date(this.now()), run.id, 'succeeded');
+    this.db.update(agentRuns).set({ resultSha: candidateSha }).where(eq(agentRuns.id, run.id)).run();
+    finishRun(this.db, new Date(this.now()), {
+      runId: run.id,
+      status: 'succeeded',
+      exitReason: null,
+      usage: result.usage ?? null,
+      model: result.model ?? null,
+      durationMs: durationMs(),
+    });
 
     const commitTransition = this.workflow.transition({
       storyId: story.id,
@@ -367,8 +376,8 @@ ${repairSections ? `${repairSections}\n\n` : ''}${skillPromptHint ? `${skillProm
     });
   }
 
-  private failAttempt(story: StoryRow, runId: number, error: string, agentCaused: boolean): ImplementStoryResult {
-    this.failRun(runId, error);
+  private failAttempt(story: StoryRow, runId: number, error: string, agentCaused: boolean, result?: RunOneShotOutput): ImplementStoryResult {
+    this.failRun(runId, error, result);
     this.setActiveRun(story.id, null);
     // PK-7: the orchestrator's model gateway emits the [aik-provider-error] marker (possibly nested
     // inside a longer OpenCode error string) when the upstream provider fails. Classify it before
@@ -403,13 +412,16 @@ ${repairSections ? `${repairSections}\n\n` : ''}${skillPromptHint ? `${skillProm
     this.bus.notify(1);
   }
 
-  private failRun(runId: number, reason: string): void {
-    this.db
-      .update(agentRuns)
-      .set({ status: 'failed', exitReason: reason, endedAt: new Date(this.now()) })
-      .where(eq(agentRuns.id, runId))
-      .run();
-    emitRunFinished(this.db, new Date(this.now()), runId, 'failed', reason);
+  private failRun(runId: number, reason: string, result?: RunOneShotOutput): void {
+    const started = this.db.select({ startedAt: agentRuns.startedAt }).from(agentRuns).where(eq(agentRuns.id, runId)).get();
+    finishRun(this.db, new Date(this.now()), {
+      runId,
+      status: result?.timedOut ? 'timed_out' : 'failed',
+      exitReason: reason,
+      usage: result?.usage ?? null,
+      model: result?.model ?? null,
+      durationMs: started?.startedAt ? Math.max(new Date(this.now()).getTime() - started.startedAt.getTime(), 0) : null,
+    });
     this.bus.notify(1);
   }
 }

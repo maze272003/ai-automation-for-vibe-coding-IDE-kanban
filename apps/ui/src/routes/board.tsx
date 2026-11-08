@@ -10,6 +10,7 @@ import { Input } from '../components/ui/input.tsx';
 import { Select } from '../components/ui/select.tsx';
 import { Skeleton } from '../components/ui/skeleton.tsx';
 import { api } from '../lib/api.ts';
+import { needsChecksBanner } from '../lib/project-settings.ts';
 import { useStories, type StoryQuery } from '../lib/stories.ts';
 
 /** Milliseconds between the last keystroke and the search request. */
@@ -60,6 +61,7 @@ export function BoardPage() {
           >
             Git
           </Link>
+          <Link to="/projects/$projectId/settings" params={{ projectId: String(id) }} data-testid="tab-settings" className="rounded-control px-2.5 py-1 text-xs font-semibold text-muted">⚙ Settings</Link>
         </nav>
         <Input
           aria-label="Search stories"
@@ -90,6 +92,10 @@ export function BoardPage() {
           + New story
         </Button>
       </TopBar>
+      {project && needsChecksBanner(project.settings) && <div data-testid="checks-banner" className="flex items-center gap-3 border-b border-warning/40 bg-warning/10 px-4 py-3 text-sm">
+        <p>Stories will stop at testing until you add checks</p>
+        <Link data-testid="checks-banner-open" to="/projects/$projectId/settings" params={{ projectId: String(id) }} search={{ section: 'verification' }} className="font-semibold underline">Add checks</Link>
+      </div>}
       {error && (
         <p role="alert" className="px-4 py-2 text-sm text-danger-foreground">
           {error}

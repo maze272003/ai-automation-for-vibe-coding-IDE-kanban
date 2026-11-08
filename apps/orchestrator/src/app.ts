@@ -8,7 +8,7 @@ import { RunInterruptRegistry } from './agents/interrupts.ts';
 import { PlannerAgent } from './agents/planner.ts';
 import { ReviewerAgent } from './agents/reviewer.ts';
 import { AgentRunner } from './agents/runner.ts';
-import { OpenCodeRuntime } from './agents/runtime.ts';
+import { OpenCodeRuntime, resolveOpenCodeService } from './agents/runtime.ts';
 import { registerEventRoutes } from './api/routes/events.ts';
 import { registerFileRoutes } from './api/routes/files.ts';
 import { registerGitHubRoutes } from './api/routes/github.ts';
@@ -20,7 +20,7 @@ import { registerProviderRoutes } from './api/routes/providers.ts';
 import { registerProjectRoutes } from './api/routes/projects.ts';
 import { registerStoryRoutes } from './api/routes/stories.ts';
 import { createApiServer } from './api/server.ts';
-import { DiagnosticsService } from './maintenance/diagnostics.ts';
+import { DiagnosticsService, type DiagnosticsComponentHealth } from './maintenance/diagnostics.ts';
 import { RetentionService } from './maintenance/retention.ts';
 import { UsageMetricsService } from './metrics/usage-service.ts';
 import { dataPaths } from './config.ts';
@@ -53,7 +53,7 @@ import { systemClock } from './time.ts';
 import { VerificationRunner } from './verify/runner.ts';
 import { WorkflowService } from './workflow/service.ts';
 import { SkillBridgeService } from './skills/bridge.ts';
-import { pullRequests } from '@aik/db';
+import { githubConnections, providers, pullRequests } from '@aik/db';
 import { eq } from 'drizzle-orm';
 
 export interface OrchestratorOptions {
@@ -304,10 +304,53 @@ export async function startOrchestrator(opts: OrchestratorOptions): Promise<Runn
     githubMerge,
   });
   const usageMetrics = new UsageMetricsService({ db });
-  registerMetricsRoutes(app, { metrics: usageMetrics });
+  registerMetricsRoutes(app, { metrics: usageMetrics, db, now: systemClock });
   const retention = new RetentionService({ db, worktreeRoot: paths.worktrees, logsDir: paths.logs });
-  const diagnostics = new DiagnosticsService({ db, logsDir: paths.logs, version: opts.versions?.app, redactor });
-  registerMaintenanceRoutes(app, { retention, diagnostics });
+  let gatewayStarted = false;
+  // The gateway only starts once the API port is bound, so its health probe reads that mutable
+  // flag (set after `startGateway` resolves); every probe failure degrades to "unavailable".
+  const guardedProbe = (probe: () => DiagnosticsComponentHealth): DiagnosticsComponentHealth => {
+    try {
+      return probe();
+    } catch {
+      return { status: 'unavailable', detail: 'probe failed' };
+    }
+  };
+  const diagnostics = new DiagnosticsService({
+    db,
+    logsDir: paths.logs,
+    backupsDir: paths.backups,
+    version: opts.versions?.app,
+    electronVersion: opts.versions?.electron ?? null,
+    redactor,
+    extraComponents: () => ({
+      opencode: guardedProbe(() =>
+        resolveOpenCodeService()
+          ? { status: 'ok', detail: 'OpenCode service configured' }
+          : { status: 'unavailable', detail: 'OpenCode service not configured' },
+      ),
+      gateway: guardedProbe(() =>
+        gatewayStarted
+          ? { status: 'ok', detail: 'gateway listening' }
+          : { status: 'unavailable', detail: 'gateway not started' },
+      ),
+      github: guardedProbe(() =>
+        db
+          .select({ id: githubConnections.id })
+          .from(githubConnections)
+          .where(eq(githubConnections.status, 'connected'))
+          .get()
+          ? { status: 'ok', detail: 'GitHub connected' }
+          : { status: 'unavailable', detail: 'GitHub not connected' },
+      ),
+      ollama: guardedProbe(() =>
+        db.select({ id: providers.id }).from(providers).where(eq(providers.kind, 'ollama')).get()
+          ? { status: 'ok', detail: 'Ollama configured' }
+          : { status: 'unavailable', detail: 'Ollama not configured' },
+      ),
+    }),
+  });
+  registerMaintenanceRoutes(app, { db, now: systemClock, retention, diagnostics });
   registerEventRoutes(app, { db, bus, heartbeatMs: opts.heartbeatMs });
   await app.listen({ host: '127.0.0.1', port: 0 });
   port = (app.server.address() as AddressInfo).port;
@@ -327,6 +370,7 @@ export async function startOrchestrator(opts: OrchestratorOptions): Promise<Runn
           logger: { info: (obj, msg) => logger.info(obj as Record<string, unknown>, msg), warn: (obj, msg) => logger.warn(obj as Record<string, unknown>, msg) },
         })
       : null;
+  gatewayStarted = gateway !== null;
   logger.info({ port, gatewayPort: gateway?.port ?? null, recovered: swept }, 'orchestrator listening');
 
   return {

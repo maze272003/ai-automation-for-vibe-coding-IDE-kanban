@@ -3,10 +3,11 @@ import {
   apiIdempotency,
   durableJobs,
   outboxEvents,
+  userStories,
   workspaces,
   type AikDb,
 } from '@aik/db';
-import { and, eq, inArray, lt } from 'drizzle-orm';
+import { and, eq, inArray, isNull, lt, or } from 'drizzle-orm';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -44,7 +45,17 @@ export class RetentionService {
         .where(
           and(
             lt(durableJobs.updatedAt, cutoff),
-            inArray(durableJobs.status, ['succeeded', 'failed', 'dead', 'cancelled']),
+            or(
+              inArray(durableJobs.status, ['succeeded', 'cancelled']),
+              and(
+                inArray(durableJobs.status, ['failed', 'dead']),
+                or(
+                  isNull(durableJobs.storyId),
+                  inArray(durableJobs.storyId, this.db.select({ id: userStories.id })
+                    .from(userStories).where(inArray(userStories.status, ['DONE', 'CANCELLED']))),
+                ),
+              ),
+            ),
           ),
         )
         .returning()

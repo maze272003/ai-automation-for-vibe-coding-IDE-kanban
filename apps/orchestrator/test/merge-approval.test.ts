@@ -1,13 +1,14 @@
-import { durableJobs, mergeApprovals } from '@aik/db';
+import { durableJobs, mergeApprovals, storyEvents } from '@aik/db';
 import { eq } from 'drizzle-orm';
-import { afterEach, beforeEach, describe, expect, test } from 'vitest';
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { ApiHttpError } from '../src/api/errors.ts';
 import { EventBus } from '../src/events/bus.ts';
 import type { LocalMerger } from '../src/git/merger.ts';
 import { JobQueue } from '../src/jobs/queue.ts';
 import { StoryService } from '../src/stories/service.ts';
 import { WorkflowService } from '../src/workflow/service.ts';
-import { createTestDb, seedProject, seedStory } from './helpers/db.ts';
+import { createTestDb, forceStory, seedProject, seedStory } from './helpers/db.ts';
+import { makeTempRepo } from './helpers/temp.ts';
 
 const fakeMerger = {} as LocalMerger;
 
@@ -39,7 +40,7 @@ describe('approve_merge request validation', () => {
   });
 
   const awaitingMergeStory = (sha: string) => {
-    const project = seedProject(t.db);
+    const project = seedProject(t.db, { repoPath: makeTempRepo() });
     return seedStory(t.db, project.id, {
       key: 'APR-1',
       title: 'Approve me',
@@ -64,6 +65,64 @@ describe('approve_merge request validation', () => {
     expect(jobs).toHaveLength(1);
     expect(jobs[0]).toMatchObject({ kind: 'merge', status: 'queued', sideEffecting: true });
     expect(jobs[0]?.payload).toEqual({ sha, approvalId: approval!.id });
+    expect(approval?.note).toBeNull();
+    expect(t.db.select().from(storyEvents).all()).toHaveLength(0);
+  });
+
+  const candidateEvent = (storyId: number, candidateSha: string, protectedPaths: string[]) => {
+    t.db.insert(storyEvents).values({ storyId, type: 'transition', actor: 'agent:implementer', payload: { event: { type: 'candidate_committed', candidateSha, protectedPaths } }, createdAt: new Date() }).run();
+  };
+
+  test('refuses a protected candidate without acknowledgement without writing approval or job', () => {
+    const sha = 'a'.repeat(40);
+    const story = awaitingMergeStory(sha);
+    candidateEvent(story.id, sha, ['.github/workflows/ci.yml']);
+    const error = failureOf(() => stories.transition(story.id, { event: 'approve_merge', sha, expectedVersion: 4 }));
+    expect(error).toMatchObject({ statusCode: 409, code: 'GUARD_FAILED', failedGuards: [{ guard: 'protected_paths_acknowledged', reason: expect.any(String) }], details: { protectedPaths: ['.github/workflows/ci.yml'] } });
+    expect(t.db.select().from(mergeApprovals).all()).toHaveLength(0);
+    expect(t.db.select().from(durableJobs).all()).toHaveLength(0);
+    expect(stories.getDetails(story.id).protectedPaths).toEqual(['.github/workflows/ci.yml']);
+  });
+
+  test('records acknowledged paths and note once for the current candidate', () => {
+    const sha = 'a'.repeat(40);
+    const story = awaitingMergeStory(sha);
+    candidateEvent(story.id, sha, ['.github/workflows/ci.yml']);
+    const request = { event: 'approve_merge' as const, sha, expectedVersion: 4, acknowledgedProtectedPaths: ['.github\\workflows\\ci.yml'], note: 'checked' };
+    stories.transition(story.id, request, 'ack-first');
+    stories.transition(story.id, request, 'ack-second');
+    expect(JSON.parse(t.db.select().from(mergeApprovals).get()!.note!)).toEqual({ protectedPathsAcknowledged: ['.github/workflows/ci.yml'], text: 'checked' });
+    const events = t.db.select().from(storyEvents).where(eq(storyEvents.type, 'protected_paths_acknowledged')).all();
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({ actor: 'human', fromStatus: null, toStatus: null, payload: { candidateSha: sha, paths: ['.github/workflows/ci.yml'] }, idempotencyKey: `ppa_${story.id}_${sha}` });
+  });
+
+  test('rejects an old path list after a newer candidate without writing anything', () => {
+    const oldSha = 'a'.repeat(40);
+    const sha = 'c'.repeat(40);
+    const story = awaitingMergeStory(oldSha);
+    candidateEvent(story.id, oldSha, ['old.yml']);
+    candidateEvent(story.id, sha, ['new.yml']);
+    forceStory(t.db, story.id, { candidateSha: sha });
+    const error = failureOf(() => stories.transition(story.id, { event: 'approve_merge', sha, expectedVersion: 4, acknowledgedProtectedPaths: ['old.yml'] }));
+    expect(error).toMatchObject({ statusCode: 409, details: { protectedPaths: ['new.yml'] } });
+    expect(t.db.select().from(mergeApprovals).all()).toHaveLength(0);
+    expect(t.db.select().from(durableJobs).all()).toHaveLength(0);
+  });
+
+  test('rolls back the approval, acknowledgement and job if enqueue fails after writing', () => {
+    const sha = 'a'.repeat(40);
+    const story = awaitingMergeStory(sha);
+    candidateEvent(story.id, sha, ['protected.yml']);
+    const enqueue = queue.enqueue.bind(queue);
+    vi.spyOn(queue, 'enqueue').mockImplementationOnce((input) => {
+      enqueue(input);
+      throw new Error('enqueue failed');
+    });
+    expect(() => stories.transition(story.id, { event: 'approve_merge', sha, expectedVersion: 4, acknowledgedProtectedPaths: ['protected.yml'] })).toThrow('enqueue failed');
+    expect(t.db.select().from(mergeApprovals).all()).toHaveLength(0);
+    expect(t.db.select().from(durableJobs).all()).toHaveLength(0);
+    expect(t.db.select().from(storyEvents).where(eq(storyEvents.type, 'protected_paths_acknowledged')).all()).toHaveLength(0);
   });
 
   test('retries a failed merge when it is approved again', () => {

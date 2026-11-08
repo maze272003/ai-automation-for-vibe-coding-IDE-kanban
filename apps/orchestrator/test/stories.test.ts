@@ -338,6 +338,22 @@ describe('GET /stories/:id/agent-run', () => {
 });
 
 describe('GET /stories/:id/details', () => {
+  it('exposes current plan metadata and the previous rejected plan in details', async () => {
+    const s = await createStory({ title: 'Revised plan' });
+    seedPlan(ctx.t.db, s.id, { status: 'rejected', rejectionFeedback: 'Too broad' });
+    const current = seedPlan(ctx.t.db, s.id, { version: 2, status: 'proposed' });
+    const r = await ctx.inject('GET', `/stories/${s.id}/details`);
+    expect(r.json().planMeta).toEqual({ version: 2, status: 'proposed', approvedBy: null, createdAt: current.createdAt.getTime() });
+    expect(r.json().previousPlan).toMatchObject({ version: 1, content: { summary: 'Plan' }, rejectionFeedback: 'Too broad' });
+  });
+
+  it('returns null previousPlan when no earlier rejected plan exists in details', async () => {
+    const s = await createStory({ title: 'First plan' });
+    expect((await ctx.inject('GET', `/stories/${s.id}/details`)).json()).toMatchObject({ plan: null, planMeta: null, previousPlan: null });
+    seedPlan(ctx.t.db, s.id);
+    expect((await ctx.inject('GET', `/stories/${s.id}/details`)).json().previousPlan).toBeNull();
+  });
+
   it('exposes plan, verification and review findings, flagging unverified locations', async () => {
     const s = await createStory({ title: 'Detail me', description: 'd', acceptanceCriteria: ['It works'] });
     const sha = 'a'.repeat(40);

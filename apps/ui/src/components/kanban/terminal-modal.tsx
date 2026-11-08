@@ -1,10 +1,12 @@
-// apps/ui/src/components/kanban/terminal-modal.tsx
 import { ACTIVE_STATUSES, type PlanV1, type StoryDTO } from '@aik/contracts';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ApiRequestError, api } from '../../lib/api.ts';
 import { baseName } from '../../lib/files.ts';
+import { approveMergeBody, canApproveMerge, isProtectedPathsGuardError } from '../../lib/merge-ack.ts';
+import { diffPlanLines } from '../../lib/plan-view.ts';
+import { formatCheckExit, runLogEmptyState } from '../../lib/run-log-view.ts';
 import { STATUS_THEME } from '../../lib/status-theme.ts';
-import { answerClarifications, performEvent, rejectPlan, type ClarificationAnswer } from '../../lib/transitions.ts';
+import { answerClarifications, approvePlan, performEvent, rejectPlan, type ClarificationAnswer } from '../../lib/transitions.ts';
 import { useToast } from '../ui/toast.tsx';
 import { ClarificationAnswersForm, RejectPlanDialog, type ClarificationQuestion } from './clarifications-dialog.tsx';
 import { PullRequestCard } from '../github/pull-request-card.tsx';
@@ -51,6 +53,9 @@ interface AgentRunResponse {
 
 interface StoryDetailsResponse {
   plan: PlanV1 | null;
+  planMeta: { version: number; status: string; approvedBy: string | null; createdAt: number } | null;
+  previousPlan: { version: number; content: PlanV1; rejectionFeedback: string | null } | null;
+  protectedPaths: string[];
   verification: {
     status: string;
     commitSha: string;
@@ -276,10 +281,12 @@ export function TerminalModal({
   const [autoScroll, setAutoScroll] = useState(true);
   const [copied, setCopied] = useState(false);
   const [merging, setMerging] = useState(false);
+  const [mergeAcked, setMergeAcked] = useState(false);
   const [reverting, setReverting] = useState(false);
   const [stopping, setStopping] = useState(false);
   const [rejectOpen, setRejectOpen] = useState(false);
   const [rejecting, setRejecting] = useState(false);
+  const [approvingPlan, setApprovingPlan] = useState(false);
   const [answering, setAnswering] = useState(false);
   const [elapsed, setElapsed] = useState('');
   const logContainerRef = useRef<HTMLDivElement>(null);
@@ -352,7 +359,9 @@ export function TerminalModal({
 
   const sessionId = data?.run?.opencodeSessionId;
   const isRunning = story.status === 'IN_PROGRESS' || story.planningStatus === 'planning' || data?.run?.status === 'running';
+  const emptyLog = runLogEmptyState({ hasRun: Boolean(data?.run), isRunning });
   const statusTheme = STATUS_THEME[story.status];
+  const protectedPaths = details?.protectedPaths ?? [];
 
   const handleCopyCommand = async () => {
     if (!sessionId) return;
@@ -382,17 +391,19 @@ export function TerminalModal({
     if (!story.candidateSha) return;
     setMerging(true);
     try {
-      await api.post(`/stories/${story.id}/transitions`, {
-        event: 'approve_merge',
-        sha: story.candidateSha,
-        expectedVersion: story.statusVersion,
-      });
+      await api.post(`/stories/${story.id}/transitions`, approveMergeBody(story, protectedPaths, mergeAcked, ''));
       toast('Merge approved and queued for execution!', 'info');
       await onChanged?.();
       onClose();
     } catch (err) {
       if (err instanceof ApiRequestError) {
-        if (err.code === 'VERSION_CONFLICT') {
+        if (isProtectedPathsGuardError(err)) {
+          // The protected-path list changed under the user (a newer candidate was committed
+          // while the dialog was open): show the new list and require a fresh acknowledgement.
+          await fetchDetails();
+          setMergeAcked(false);
+          toast('The protected paths changed — review them again.', 'error');
+        } else if (err.code === 'VERSION_CONFLICT') {
           // The modal's story snapshot is stale; refresh the board so the next attempt
           // uses the current statusVersion instead of failing identically forever.
           await onChanged?.();
@@ -460,6 +471,23 @@ export function TerminalModal({
     needsClarification && details?.plan
       ? details.plan.clarificationQuestions.map((question, i) => ({ ordinal: i + 1, question }))
       : [];
+
+  const handleApprovePlan = async () => {
+    setApprovingPlan(true);
+    try {
+      const result = await approvePlan(story);
+      if (!result.ok) {
+        toast(result.reason, 'error');
+        return;
+      }
+      toast('Plan approved; implementation can start', 'info');
+      await onChanged?.();
+    } catch (err) {
+      toast(String(err), 'error');
+    } finally {
+      setApprovingPlan(false);
+    }
+  };
 
   const handleRejectPlan = async (feedback: string | null) => {
     setRejectOpen(false);
@@ -592,8 +620,9 @@ export function TerminalModal({
               <button
                 type="button"
                 onClick={handleApproveMerge}
-                disabled={merging || !story.candidateSha}
-                className="flex cursor-pointer items-center gap-1.5 rounded border border-success/40 bg-success/15 px-3 py-1.5 text-xs font-bold text-success-foreground transition-colors hover:bg-success/25 disabled:opacity-50"
+                disabled={merging || !story.candidateSha || !canApproveMerge(protectedPaths, mergeAcked)}
+                title={protectedPaths.length > 0 && !mergeAcked ? 'Acknowledge the protected-path changes first' : 'Approve the candidate and merge it'}
+                className="flex cursor-pointer items-center gap-1.5 rounded border border-success/40 bg-success/15 px-3 py-1.5 text-xs font-bold text-success-foreground transition-colors hover:bg-success/25 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 <span>✓</span>
                 <span>{merging ? 'Merging...' : 'Approve & Merge'}</span>
@@ -646,6 +675,29 @@ export function TerminalModal({
             </button>
           </div>
         </div>
+
+        {story.status === 'AWAITING_MERGE' && protectedPaths.length > 0 && (
+          <div
+            data-testid={`merge-ack-box-${story.key}`}
+            className="space-y-2 border-b border-warning/40 bg-warning/10 px-4 py-2.5 text-xs text-warning-foreground"
+          >
+            <p className="font-semibold">This candidate changes protected paths:</p>
+            <ul className="list-disc pl-5 font-mono text-[11px]">
+              {protectedPaths.map((p) => (
+                <li key={p}>{p}</li>
+              ))}
+            </ul>
+            <label className="flex cursor-pointer items-center gap-2">
+              <input
+                type="checkbox"
+                data-testid={`merge-ack-${story.key}`}
+                checked={mergeAcked}
+                onChange={(e) => setMergeAcked(e.target.checked)}
+              />
+              I reviewed the changes to these protected paths
+            </label>
+          </div>
+        )}
 
         {story.status === 'BLOCKED' && story.blocked?.reason === 'post_merge_failed' && (
           <div className="flex items-center justify-between border-b border-danger/40 bg-danger/10 px-4 py-2 text-xs text-danger-foreground">
@@ -810,9 +862,9 @@ export function TerminalModal({
                 )}
                 {!loading && filteredEvents.length === 0 && (
                   <div className="rounded-card border border-dashed border-border p-8 text-center text-muted-2">
-                    <p className="font-semibold text-muted">Agent session started</p>
+                    <p className="font-semibold text-muted">{emptyLog.title}</p>
                     <p className="mt-1 text-[11px]">
-                      {isRunning ? 'Analyzing repository and preparing reasoning thoughts...' : 'No message logs recorded.'}
+                      {emptyLog.detail}
                     </p>
                   </div>
                 )}
@@ -831,18 +883,29 @@ export function TerminalModal({
                   <div>
                     <h3 className="text-sm font-semibold text-warning-foreground">Plan v{story.activePlanVersion} proposed</h3>
                     <p className="mt-0.5 text-[11px] text-muted">
-                      Approve it by dragging the card to Ready, or reject it — the planner re-plans with your feedback.
+                      Review the plan, then approve it or reject it — the planner re-plans with your feedback.
                     </p>
                   </div>
-                  <button
-                    type="button"
-                    data-testid={`modal-reject-plan-${story.key}`}
-                    onClick={() => setRejectOpen(true)}
-                    disabled={rejecting}
-                    className="shrink-0 cursor-pointer rounded border border-danger/40 bg-danger/15 px-3 py-1.5 text-xs font-bold text-danger-foreground transition-colors hover:bg-danger/25 disabled:opacity-50"
-                  >
-                    {rejecting ? 'Rejecting…' : 'Reject plan…'}
-                  </button>
+                  <div className="flex shrink-0 items-center gap-2">
+                    <button
+                      type="button"
+                      data-testid={`modal-approve-plan-${story.key}`}
+                      onClick={handleApprovePlan}
+                      disabled={approvingPlan || story.activePlanVersion === null}
+                      className="cursor-pointer rounded border border-success/40 bg-success/15 px-3 py-1.5 text-xs font-bold text-success-foreground transition-colors hover:bg-success/25 disabled:opacity-50"
+                    >
+                      {approvingPlan ? 'Approving…' : 'Approve plan'}
+                    </button>
+                    <button
+                      type="button"
+                      data-testid={`modal-reject-plan-${story.key}`}
+                      onClick={() => setRejectOpen(true)}
+                      disabled={rejecting}
+                      className="shrink-0 cursor-pointer rounded border border-danger/40 bg-danger/15 px-3 py-1.5 text-xs font-bold text-danger-foreground transition-colors hover:bg-danger/25 disabled:opacity-50"
+                    >
+                      {rejecting ? 'Rejecting…' : 'Reject plan…'}
+                    </button>
+                  </div>
                 </div>
               )}
 
@@ -878,6 +941,44 @@ export function TerminalModal({
                     </div>
                   </div>
 
+                  {details.plan.assumptions.length > 0 && (
+                    <div className="space-y-2 rounded-card border border-border bg-surface-3 p-4">
+                      <h3 className="text-sm font-semibold text-foreground">Assumptions</h3>
+                      <ul className="list-disc space-y-1 pl-5 text-foreground">
+                        {details.plan.assumptions.map((text, i) => (
+                          <li key={i}>{text}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+
+                  {details.plan.risks.length > 0 && (
+                    <div className="space-y-2 rounded-card border border-border bg-surface-3 p-4">
+                      <h3 className="text-sm font-semibold text-foreground">Risks</h3>
+                      <ul className="list-disc space-y-1 pl-5 text-foreground">
+                        {details.plan.risks.map((text, i) => (
+                          <li key={i}>{text}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+
+                  {details.plan.acceptanceCriteria.length > 0 && (
+                    <div className="space-y-2 rounded-card border border-border bg-surface-3 p-4">
+                      <h3 className="text-sm font-semibold text-foreground">Acceptance criteria</h3>
+                      <div className="space-y-2">
+                        {details.plan.acceptanceCriteria.map((ac) => (
+                          <div key={ac.ref} className="space-y-0.5">
+                            <p className="text-foreground">
+                              <span className="font-mono text-[11px] text-muted">{ac.ref}:</span> {ac.text}
+                            </p>
+                            <p className="pl-4 text-[11px] text-muted-2">verify: {ac.verification}</p>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
                   <div className="space-y-3">
                     <h3 className="text-xs font-semibold uppercase tracking-wider text-muted">Subtasks & Steps</h3>
                     <div className="space-y-2">
@@ -902,6 +1003,35 @@ export function TerminalModal({
                       ))}
                     </div>
                   </div>
+
+                  {details.previousPlan && (
+                    <details className="rounded-card border border-border bg-surface-2 p-4">
+                      <summary className="cursor-pointer select-none text-sm font-semibold text-foreground">
+                        Changes since version {details.previousPlan.version}
+                      </summary>
+                      {details.previousPlan.rejectionFeedback && (
+                        <p className="mt-2 border-l-2 border-warning/50 pl-3 text-xs italic text-muted">
+                          Previous rejection feedback: “{details.previousPlan.rejectionFeedback}”
+                        </p>
+                      )}
+                      <div className="mt-2 space-y-0.5 overflow-x-auto font-mono text-[11px]">
+                        {diffPlanLines(details.previousPlan.content, details.plan).map((line, idx) => (
+                          <div
+                            key={idx}
+                            className={
+                              line.kind === 'added'
+                                ? 'whitespace-pre text-emerald-300'
+                                : line.kind === 'removed'
+                                  ? 'whitespace-pre text-rose-300'
+                                  : 'whitespace-pre text-muted'
+                            }
+                          >
+                            {`${line.kind === 'added' ? '+ ' : line.kind === 'removed' ? '- ' : '  '}${line.text}`}
+                          </div>
+                        ))}
+                      </div>
+                    </details>
+                  )}
                 </>
               ) : (
                 <div className="py-12 text-center text-muted-2">
@@ -941,7 +1071,7 @@ export function TerminalModal({
                             <span className={`rounded px-2 py-0.5 font-mono text-[11px] ${
                               c.status === 'passed' ? 'bg-success/10 text-success' : 'bg-danger/10 text-danger'
                             }`}>
-                              {c.status} (exit {c.exitCode ?? 0})
+                              {c.status} {formatCheckExit(c.exitCode)}
                             </span>
                           </div>
                           <code className="block rounded border border-border bg-surface-3 p-2 font-mono text-xs text-muted">

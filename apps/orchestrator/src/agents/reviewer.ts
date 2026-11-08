@@ -1,5 +1,5 @@
 // apps/orchestrator/src/agents/reviewer.ts
-import { ReviewV1, ProjectSettings, parseProviderFailure, type BlockedReason, type ReviewV1 as ReviewOutput, type StoryStatus } from '@aik/contracts';
+import { ReviewV1, ProjectSettings, parseProviderFailure, type BlockedReason, type ReviewV1 as ReviewOutput, type SessionUsage, type StoryStatus } from '@aik/contracts';
 import {
   acceptanceCriteria, agentRuns, plans, projects, reviewAcResults, reviewFindings, reviews, userStories,
   verificationChecks, verificationRuns, type AikDb,
@@ -13,8 +13,10 @@ import type { WorktreeManager } from '../git/worktree.ts';
 import { systemClock, type Clock } from '../time.ts';
 import type { WorkflowService } from '../workflow/service.ts';
 import type { RunInterruptRegistry } from './interrupts.ts';
-import { emitRunFinished, emitRunStarted, appendRunActivity } from './run-events.ts';
+import { finishRun } from './finish-run.ts';
+import { emitRunStarted, appendRunActivity } from './run-events.ts';
 import { ensureModelProfile, ROLE_TIMEOUTS, type ModelRef, type OpenCodeRuntime, type RunOneShotOutput } from './runtime.ts';
+import { recordRunSkills } from '../skills/run-skills.ts';
 import type { SkillBridgeService } from '../skills/bridge.ts';
 
 export interface ReviewerAgentDeps {
@@ -236,6 +238,7 @@ export class ReviewerAgent {
             isWorktree: true,
           });
           skillPromptHint = injection.promptHint ? `\n${injection.promptHint}\n` : '';
+          recordRunSkills(this.db, new Date(this.now()), run.id, injection.delivered);
         }
 
         const prompt = this.buildPrompt({
@@ -287,12 +290,14 @@ export class ReviewerAgent {
           // The stop request already transitioned the story to BLOCKED(interrupted)/CANCELLED; a fail
           // transition here would just GUARD_FAILED, and no attempt was consumed. Never retry after
           // a stop (EXE-13).
-          this.db
-            .update(agentRuns)
-            .set({ status: 'interrupted', exitReason: 'Interrupted by a stop request', endedAt: new Date(this.now()) })
-            .where(eq(agentRuns.id, run.id))
-            .run();
-          emitRunFinished(this.db, new Date(this.now()), run.id, 'interrupted', 'Interrupted by a stop request');
+          finishRun(this.db, new Date(this.now()), {
+            runId: run.id,
+            status: 'interrupted',
+            exitReason: 'Interrupted by a stop request',
+            usage: result.usage ?? null,
+            model: result.model ?? null,
+            durationMs: Math.max(new Date(this.now()).getTime() - run.startedAt.getTime(), 0),
+          });
           this.bus.notify(1);
           return { ok: false, error: `The review run for ${story.key} was interrupted by a stop request` };
         }
@@ -303,13 +308,13 @@ export class ReviewerAgent {
           lastError = head !== candidate
             ? `The review worktree moved from the candidate (${head} != ${candidate})`
             : 'The reviewer modified the review worktree; the review was discarded';
-          this.failRun(run.id, lastError);
+          this.failRun(run.id, lastError, result);
           continue;
         }
 
         if (!result.ok || !result.text) {
           lastError = result.error ?? 'The reviewer returned no text';
-          this.failRun(run.id, lastError);
+          this.failRun(run.id, lastError, result);
           continue;
         }
 
@@ -317,7 +322,7 @@ export class ReviewerAgent {
         if (!parsed.ok) {
           lastError = parsed.error;
           lastFailureKind = 'invalid_output';
-          this.failRun(run.id, `Invalid reviewer output: ${parsed.error}`);
+          this.failRun(run.id, `Invalid reviewer output: ${parsed.error}`, result);
           correction = `Your previous output failed validation: ${parsed.error}. Reply with only the corrected fenced JSON block.`;
           continue;
         }
@@ -327,6 +332,9 @@ export class ReviewerAgent {
           candidate,
           raw: parsed.value,
           runId: run.id,
+          runStartedAt: run.startedAt,
+          usage: result.usage ?? null,
+          model: result.model ?? null,
           acs,
           priorFindings,
           priorBlockingIds,
@@ -361,13 +369,16 @@ export class ReviewerAgent {
     candidate: string;
     raw: ReviewOutput;
     runId: number;
+    runStartedAt: Date;
+    usage: SessionUsage | null;
+    model: ModelRef | null;
     acs: (AcceptanceCriterionRef & { text: string })[];
     priorFindings: (typeof reviewFindings.$inferSelect)[];
     priorBlockingIds: Set<string>;
     diffFiles: ReadonlySet<string>;
     worktreePath: string;
   }): ReviewStoryResult {
-    const { storyId, candidate, raw, runId, acs, priorFindings, priorBlockingIds, diffFiles, worktreePath } = input;
+    const { storyId, candidate, raw, runId, runStartedAt, usage, model, acs, priorFindings, priorBlockingIds, diffFiles, worktreePath } = input;
     const normalized = normalizeReview(raw, acs, priorBlockingIds);
     const repoHasFile = (file: string): boolean => {
       const resolved = path.resolve(worktreePath, file);
@@ -430,11 +441,15 @@ export class ReviewerAgent {
         tx.insert(reviewAcResults).values({ reviewId: row.id, acceptanceCriterionId: acId, status: result.status, evidence: result.evidence }).run();
       }
 
-      tx.update(agentRuns)
-        .set({ status: 'succeeded', resultSha: candidate, endedAt: new Date(this.now()) })
-        .where(eq(agentRuns.id, runId))
-        .run();
-      emitRunFinished(tx, new Date(this.now()), runId, 'succeeded');
+      tx.update(agentRuns).set({ resultSha: candidate }).where(eq(agentRuns.id, runId)).run();
+      finishRun(tx, new Date(this.now()), {
+        runId,
+        status: 'succeeded',
+        exitReason: null,
+        usage,
+        model,
+        durationMs: Math.max(new Date(this.now()).getTime() - runStartedAt.getTime(), 0),
+      });
       return row;
     });
 
@@ -533,13 +548,16 @@ ${correction ? `\nCorrection: ${correction}` : ''}`;
     this.bus.notify(1);
   }
 
-  private failRun(runId: number, reason: string): void {
-    this.db
-      .update(agentRuns)
-      .set({ status: 'failed', exitReason: reason, endedAt: new Date(this.now()) })
-      .where(eq(agentRuns.id, runId))
-      .run();
-    emitRunFinished(this.db, new Date(this.now()), runId, 'failed', reason);
+  private failRun(runId: number, reason: string, result?: RunOneShotOutput): void {
+    const started = this.db.select({ startedAt: agentRuns.startedAt }).from(agentRuns).where(eq(agentRuns.id, runId)).get();
+    finishRun(this.db, new Date(this.now()), {
+      runId,
+      status: result?.timedOut ? 'timed_out' : 'failed',
+      exitReason: reason,
+      usage: result?.usage ?? null,
+      model: result?.model ?? null,
+      durationMs: started?.startedAt ? Math.max(new Date(this.now()).getTime() - started.startedAt.getTime(), 0) : null,
+    });
     this.bus.notify(1);
   }
 

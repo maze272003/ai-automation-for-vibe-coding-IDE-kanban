@@ -4,6 +4,7 @@ import type { AppSettings, OfficePreferences, OpencodeMode, OpencodeModelInfo, O
 import { GitHubSettingsCard } from '../components/settings/github-settings.tsx';
 import { ProvidersCard } from '../components/settings/providers-card.tsx';
 import { TopBar } from '../components/shell/top-bar.tsx';
+import { openShortcutHelp } from '../lib/shortcut-help.ts';
 import { Button } from '../components/ui/button.tsx';
 import { Card } from '../components/ui/card.tsx';
 import { Label } from '../components/ui/label.tsx';
@@ -184,6 +185,9 @@ function ModelPicker({ status, mode, onModeChange }: ModelPickerProps) {
     setBusy(true);
     setReply(null);
     const result = await window.api.opencodeChat({ providerID, id }, prompt);
+    if (result.ok) {
+      void api.post('/metrics/usage/probe', { providerId: providerID, modelId: id, usage: result.usage ?? null, durationMs: result.durationMs ?? null }).catch(() => undefined);
+    }
     setReply(result.ok ? result.text : `✗ ${result.error}`);
     setBusy(false);
   };
@@ -433,7 +437,7 @@ export function SettingsPage() {
 
   return (
     <div className="flex h-full flex-col">
-      <TopBar title="Settings" subtitle="Appearance, runtime and diagnostics" />
+      <TopBar title="Settings" subtitle="Appearance, runtime and diagnostics"><Button onClick={openShortcutHelp}>Keyboard shortcuts</Button></TopBar>
       <div className="min-h-0 flex-1 overflow-y-auto">
         <div className="mx-auto w-full max-w-3xl space-y-3 p-6">
           <Card data-testid="settings-appearance" className="p-4">

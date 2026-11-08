@@ -4,6 +4,7 @@ import { RAW_CATALOG } from './catalog.data.ts';
 import type { CatalogModel, CatalogOverrides, CatalogProvider, CostClass } from './types.ts';
 
 export * from './types.ts';
+export * from './pricing.ts';
 
 interface RawModel {
   id?: string;

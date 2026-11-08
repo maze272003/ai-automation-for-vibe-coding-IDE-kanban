@@ -1,5 +1,5 @@
 import { ProjectSettings, type BlockedReason } from '@aik/contracts';
-import { durableJobs, mergeApprovals, plans, projects, reviews, storyEvents, userStories, verificationRuns, agentRuns, type AikDb } from '@aik/db';
+import { durableJobs, mergeApprovals, plans, projects, storyEvents, userStories, verificationRuns, type AikDb } from '@aik/db';
 import { and, desc, eq, inArray, isNull } from 'drizzle-orm';
 import type { EventBus } from '../events/bus.ts';
 import { heavyLane } from '../jobs/lane.ts';
@@ -11,17 +11,11 @@ import type { WorkflowService } from '../workflow/service.ts';
 import type { LocalMerger } from '../git/merger.ts';
 import type { GitHubMergeService } from '../github/merge-service.ts';
 import type { ImplementerAgent } from './implementer.ts';
+import { failedPlannerRunsSinceReset, lastPlanningReset, MAX_PLANNING_ATTEMPTS } from './planning-budget.ts';
 import type { PlannerAgent } from './planner.ts';
 import type { ReviewerAgent } from './reviewer.ts';
+import { settledReviewFor } from './review-status.ts';
 import { enqueueStage, sweepStuckStories, type StageDeps, type StageKind, type StageStory } from './stuck-stories.ts';
-
-/**
- * How many times a story may fail planning before the runner stops retrying it. A failed plan
- * used to leave the story parked in NEW/planning_failed forever (the only recovery path needs
- * BLOCKED), which silently stalled the board; the retry is bounded so a permanently broken
- * story still ends up waiting for a human.
- */
-const MAX_PLANNING_ATTEMPTS = 3;
 
 /**
  * How many lanes may run a heavy job at the same time. Each lane is one repository, so this is
@@ -286,27 +280,20 @@ export class AgentRunner {
       // old `<story>_<revision>` key would collide and silently enqueue nothing. The version
       // is computed exactly like planner.planStory (existing plans + 1) so the key matches
       // the version the planner will save. The failed-plan counter is part of the key too, so
-      // a retry after a failed plan is a new job instead of a no-op on the failed one.
+      // a retry after a failed plan is a new job instead of a no-op on the failed one, and
+      // the reset id scopes the budget to the current planning round (B7).
       const planCount = this.db.select({ id: plans.id }).from(plans).where(eq(plans.storyId, story.id)).all().length;
-      const failedPlans = story.planningStatus === 'planning_failed' ? this.failedPlanCount(story.id) : 0;
+      const reset = lastPlanningReset(this.db, story.id);
+      const failedPlans = story.planningStatus === 'planning_failed' ? failedPlannerRunsSinceReset(this.db, story.id) : 0;
       if (failedPlans >= MAX_PLANNING_ATTEMPTS) continue;
       this.queue.enqueue({
         kind: 'plan',
         slot: heavyLane(story.repoPath),
         storyId: story.id,
         sideEffecting: false,
-        idempotencyKey: `auto_plan_${story.id}_${story.revision}_v${planCount + 1}_a${failedPlans}`,
+        idempotencyKey: `auto_plan_${story.id}_${story.revision}_v${planCount + 1}_a${failedPlans}_s${reset?.eventId ?? 0}`,
       });
     }
-  }
-
-  /** How many planner runs for this story ended in failure (the planning retry budget). */
-  private failedPlanCount(storyId: number): number {
-    return this.db
-      .select({ id: agentRuns.id })
-      .from(agentRuns)
-      .where(and(eq(agentRuns.storyId, storyId), eq(agentRuns.role, 'planner'), eq(agentRuns.status, 'failed')))
-      .all().length;
   }
 
   private discoverImplementation(): void {
@@ -381,12 +368,11 @@ export class AgentRunner {
     for (const story of stories) {
       if (!story.candidateSha) continue;
       if (this.hasActiveJob(story.id, 'review')) continue;
-      const existing = this.db
-        .select({ id: reviews.id })
-        .from(reviews)
-        .where(and(eq(reviews.storyId, story.id), eq(reviews.commitSha, story.candidateSha)))
-        .get();
-      if (existing) continue;
+      // W0-7: only a SETTLED review (APPROVED/CHANGES_REQUESTED) counts. A story whose only
+      // review for the candidate SHA is BLOCKED was resumed after the block and must be
+      // re-queued for a fresh review.
+      const settled = settledReviewFor(this.db, story.id, story.candidateSha);
+      if (settled) continue;
       this.enqueueStage(story, 'review', `review_${story.id}_${story.candidateSha}`, { sideEffecting: false });
     }
   }

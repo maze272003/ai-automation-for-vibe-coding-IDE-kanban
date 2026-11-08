@@ -2,6 +2,7 @@
 import {
   durableJobs,
   mergeApprovals,
+  modelUsage,
   outboxEvents,
   reviews,
   storyEvents,
@@ -58,6 +59,34 @@ describe('REL-7 Retention Pruning & Diagnostics Export', () => {
 
   afterAll(() => {
     dbHolder.close();
+  });
+
+  test('keeps retry evidence for live stories and retains historical usage', async () => {
+    const oldDate = new Date(Date.now() - 40 * 86400 * 1000);
+    const live = seedStory(dbHolder.db, projectId, { status: 'REWORK' });
+    const done = seedStory(dbHolder.db, projectId, { status: 'DONE' });
+    const cases = [
+      { storyId: live.id, status: 'failed' as const, keep: true },
+      { storyId: done.id, status: 'failed' as const, keep: false },
+      { storyId: live.id, status: 'succeeded' as const, keep: false },
+      { storyId: null, status: 'dead' as const, keep: false },
+    ];
+    const jobs = cases.map((entry, index) => ({
+      ...entry,
+      row: dbHolder.db.insert(durableJobs).values({
+        kind: 'verify', slot: 'light', storyId: entry.storyId, status: entry.status,
+        payload: {}, sideEffecting: false, runAfter: oldDate,
+        idempotencyKey: `retention-evidence-${index}`, createdAt: oldDate, updatedAt: oldDate,
+      }).returning().get(),
+    }));
+    const usage = dbHolder.db.insert(modelUsage).values({
+      storyId: live.id, projectId, createdAt: oldDate, costSource: 'unknown',
+    }).returning().get();
+    await retentionService.prune();
+    for (const { row, keep } of jobs) {
+      expect(Boolean(dbHolder.db.select().from(durableJobs).where(eq(durableJobs.id, row.id)).get())).toBe(keep);
+    }
+    expect(dbHolder.db.select().from(modelUsage).where(eq(modelUsage.id, usage.id)).get()).toBeDefined();
   });
 
   test('prunes expired jobs, outbox events, and removed workspaces past retention window', async () => {

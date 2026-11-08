@@ -60,6 +60,11 @@ describe('StoryListQuery', () => {
 });
 
 describe('TransitionRequest', () => {
+  it('accepts bounded protected-path acknowledgement and a trimmed merge note', () => {
+    const request = { event: 'approve_merge', sha: 'a'.repeat(40), expectedVersion: 5, acknowledgedProtectedPaths: ['.github/workflows/ci.yml'], note: ' checked ' };
+    expect(TransitionRequest.parse(request)).toMatchObject({ acknowledgedProtectedPaths: request.acknowledgedProtectedPaths, note: 'checked' });
+    expect(TransitionRequest.safeParse({ ...request, acknowledgedProtectedPaths: Array.from({ length: 201 }, () => 'x') }).success).toBe(false);
+  });
   it('parses each human event with expectedVersion', () => {
     expect(TransitionRequest.parse({ event: 'cancel', expectedVersion: 2 })).toEqual({ event: 'cancel', expectedVersion: 2 });
     expect(TransitionRequest.parse({ event: 'recover', target: 'resume', expectedVersion: 0 })).toMatchObject({ target: 'resume' });
